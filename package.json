@@ -1,0 +1,22 @@
+{
+  "name": "vowe",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:packages": "pnpm -r --filter \"./packages/**\" run build",
+    "dev": "pnpm run build:packages && pnpm --filter @vowe/desktop run dev",
+    "start": "pnpm run build:packages && pnpm --filter @vowe/desktop run start",
+    "typecheck": "pnpm -r run typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@10.0.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  }
+}
