@@ -1,10 +1,13 @@
 import type { ReactElement } from 'react';
 import type { AgentSession } from '@vowe/core';
 
+import { CheckIcon, formatAgo } from './ui.js';
+
 interface Props {
   session: AgentSession;
   llmConfigured: boolean;
-  onShowEvidence: (eventIds: string[]) => void;
+  refreshing: boolean;
+  onShowEvidence: () => void;
   onRefresh: () => void;
 }
 
@@ -15,76 +18,76 @@ interface Props {
 export function SemanticPanel({
   session,
   llmConfigured,
+  refreshing,
   onShowEvidence,
   onRefresh,
 }: Props): ReactElement {
   const state = session.semanticState;
 
-  return (
-    <div className="card">
-      <h2>
-        Interpreted state{' '}
-        {state ? (
-          <span className={`badge ${state.source === 'llm' ? 'llm' : ''}`}>
-            {state.source}
-          </span>
-        ) : null}
-        {!llmConfigured && (
-          <span className="badge warn" style={{ marginLeft: 6 }}>
-            no LLM configured
-          </span>
-        )}
-      </h2>
-
-      {!state && (
-        <p style={{ color: 'var(--muted)' }}>
-          Nothing interpreted yet. It will appear once events have been
+  if (!state) {
+    return (
+      <section className="now" aria-label="Interpreted state">
+        <p className="empty-state">
+          Nothing interpreted yet. A summary appears once events have been
           observed.
         </p>
-      )}
-
-      {state && (
-        <>
-          <dl className="kv">
-            <dt>Task</dt>
-            <dd>{state.task ?? session.task ?? 'not yet known'}</dd>
-            <dt>Phase</dt>
-            <dd>{state.phase}</dd>
-            <dt>Current activity</dt>
-            <dd>{state.currentActivity}</dd>
-            <dt>Recent progress</dt>
-            <dd>
-              {state.recentProgress.length === 0 ? (
-                'nothing notable yet'
-              ) : (
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
-                  {state.recentProgress.map((item, index) => (
-                    <li key={index}>{item}</li>
-                  ))}
-                </ul>
-              )}
-            </dd>
-            <dt>Last meaningful update</dt>
-            <dd>{state.lastMeaningfulUpdate}</dd>
-          </dl>
-
-          <div className="row" style={{ marginTop: 12 }}>
-            <button
-              onClick={() => onShowEvidence(state.provenance.eventIds)}
-              disabled={state.provenance.eventIds.length === 0}
-            >
-              Show the {state.provenance.eventIds.length} events behind this
-            </button>
-            <button onClick={onRefresh}>Re-interpret now</button>
-          </div>
-        </>
-      )}
-
-      {!state && (
-        <div className="row" style={{ marginTop: 12 }}>
-          <button onClick={onRefresh}>Interpret now</button>
+        <div>
+          <button className="btn" disabled={refreshing} onClick={onRefresh}>
+            {refreshing ? 'Interpreting…' : 'Interpret now'}
+          </button>
         </div>
+      </section>
+    );
+  }
+
+  const cited = state.provenance.eventIds.length;
+
+  return (
+    <section className="now" aria-label="Interpreted state">
+      <div className="meta">
+        <span className="phase-chip">{state.phase}</span>
+        <span>Updated {formatAgo(state.updatedAt)}</span>
+      </div>
+
+      <p className="headline">{state.currentActivity}</p>
+
+      <p className="task">
+        <span className="k">Task</span>
+        {state.task ?? session.task ?? 'Not yet known'}
+      </p>
+
+      {state.recentProgress.length > 0 && (
+        <ul className="progress">
+          {state.recentProgress.map((item, index) => (
+            <li key={index}>
+              <CheckIcon />
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
       )}
-    </div>
+
+      <p className="latest">
+        <span className="k">Last meaningful update</span>
+        {state.lastMeaningfulUpdate}
+      </p>
+
+      <div className="provenance">
+        <span>
+          {state.source === 'llm'
+            ? 'Summarised by the model from'
+            : llmConfigured
+              ? 'Vowe’s deterministic reading of'
+              : 'No model configured · Vowe’s deterministic reading of'}
+        </span>
+        <button
+          className="link-btn"
+          disabled={cited === 0}
+          onClick={onShowEvidence}
+        >
+          {cited} observed {cited === 1 ? 'event' : 'events'}
+        </button>
+      </div>
+    </section>
   );
 }

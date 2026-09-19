@@ -59,6 +59,8 @@ export interface VoweApi {
   startLive(sessionId: string, sdpOffer: string): Promise<LiveStartResult>;
   stopLive(): Promise<void>;
   getLiveStatus(): Promise<LiveStatus>;
+  /** Native folder picker for choosing where a new session runs. */
+  chooseFolder(): Promise<string | null>;
 
   onSessionsChanged(listener: () => void): () => void;
   onSessionEvent(listener: (event: NormalizedEvent) => void): () => void;
@@ -116,6 +118,7 @@ export const IPC = {
   startLive: 'vowe:live:start',
   stopLive: 'vowe:live:stop',
   liveStatus: 'vowe:live:status',
+  chooseFolder: 'vowe:dialog:choose-folder',
   sessionsChanged: 'vowe:sessions:changed',
   sessionEvent: 'vowe:session:event',
   observationChanged: 'vowe:observe:changed',

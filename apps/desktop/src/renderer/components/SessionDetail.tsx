@@ -1,17 +1,30 @@
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+  type ReactElement,
+} from 'react';
 
 import type { AgentSession, ConversationEntry, NormalizedEvent } from '@vowe/core';
 
 import { EventInspector } from './EventInspector.js';
-import { ObservationPanel } from './ObservationPanel.js';
 import { SemanticPanel } from './SemanticPanel.js';
-import { VoPanel } from './VoPanel.js';
+import {
+  PanelIcon,
+  RefreshIcon,
+  formatClock,
+  messageOf,
+  originLabel,
+  providerName,
+  statusLabel,
+  whyNoControl,
+} from './ui.js';
 
 interface Props {
   session: AgentSession;
   llmConfigured: boolean;
-  voiceConfigured: boolean;
-  voiceUnavailableReason: string | null;
 }
 
 /** Event kinds worth showing in the narrative stream. The rest live in the inspector. */
@@ -27,23 +40,24 @@ const NARRATIVE_KINDS = new Set([
   'permission_requested',
 ]);
 
+/** Observed kinds that want the developer's attention. */
+const ATTENTION_KINDS = new Set(['permission_requested', 'session_waiting']);
+
 type StreamItem =
   | { type: 'conversation'; at: string; entry: ConversationEntry }
   | { type: 'event'; at: string; event: NormalizedEvent };
 
-export function SessionDetail({
-  session,
-  llmConfigured,
-  voiceConfigured,
-  voiceUnavailableReason,
-}: Props): ReactElement {
+type Mode = 'ask' | 'instruct';
+
+export function SessionDetail({ session, llmConfigured }: Props): ReactElement {
   const [events, setEvents] = useState<NormalizedEvent[]>([]);
   const [conversation, setConversation] = useState<ConversationEntry[]>([]);
   const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState<'ask' | 'send' | null>(null);
+  const [mode, setMode] = useState<Mode>('ask');
+  const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [evidence, setEvidence] = useState<string[] | null>(null);
-  const [catchingUp, setCatchingUp] = useState(false);
+  const [evidence, setEvidence] = useState<'cited' | 'all' | null>(null);
 
   const reload = useCallback(async () => {
     const [nextEvents, nextConversation] = await Promise.all([
@@ -76,182 +90,276 @@ export function SessionDetail({
     return items.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   }, [conversation, events]);
 
-  const ask = async () => {
-    const question = draft.trim();
-    if (!question) return;
-    setBusy('ask');
-    setError(null);
-    try {
-      await window.vowe.askCompanion(session.id, question);
-      setDraft('');
-      await reload();
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const send = async () => {
-    const text = draft.trim();
-    if (!text) return;
-    setBusy('send');
-    setError(null);
-    try {
-      await window.vowe.sendInstruction(session.id, text);
-      setDraft('');
-      await reload();
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(null);
-    }
-  };
-
   const canInstruct = session.capabilities.sendInstruction;
+  // A session can lose its control channel at any moment; never stay armed.
+  const effectiveMode: Mode = canInstruct ? mode : 'ask';
+  const instructing = effectiveMode === 'instruct';
+
+  const submit = async () => {
+    const text = draft.trim();
+    if (!text || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // Two different paths through the application, on purpose.
+      if (instructing) {
+        await window.vowe.sendInstruction(session.id, text);
+      } else {
+        await window.vowe.askCompanion(session.id, text);
+      }
+      setDraft('');
+      await reload();
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const refresh = () => {
+    setRefreshing(true);
+    void window.vowe
+      .refreshInterpretation(session.id)
+      .then(() => reload())
+      .catch((cause) => setError(messageOf(cause)))
+      .finally(() => setRefreshing(false));
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      void submit();
+    }
+  };
+
+  const hint = !canInstruct
+    ? whyNoControl(session)
+    : instructing
+      ? 'Delivered to the running agent as a new message'
+      : 'Answered from what Vowe has observed · never reaches the agent';
+
+  const subtitle = [
+    session.cwd ?? 'Unknown folder',
+    providerName(session.provider),
+    originLabel(session),
+  ].join(' · ');
 
   return (
     <section className="detail">
-      <header>
-        <strong>{session.displayLabel}</strong>
-        <div style={{ marginTop: 6, color: 'var(--muted)', fontSize: 12 }}>
-          <span className={`dot ${session.status}`} /> {session.status} ·{' '}
-          {session.provider} · {session.attachMode} · {session.cwd ?? 'unknown cwd'}
-        </div>
-      </header>
-
-      <div className="detail-body">
-        <VoPanel
-          session={session}
-          voiceConfigured={voiceConfigured}
-          voiceUnavailableReason={voiceUnavailableReason}
-          catchingUp={catchingUp}
-        />
-
-        <ObservationPanel
-          session={session}
-          events={events}
-          onShowEvidence={setEvidence}
-          onCatchingUpChange={setCatchingUp}
-        />
-
-        <SemanticPanel
-          session={session}
-          llmConfigured={llmConfigured}
-          onShowEvidence={setEvidence}
-          onRefresh={() => {
-            void window.vowe
-              .refreshInterpretation(session.id)
-              .then(() => reload());
-          }}
-        />
-
-        <div className="card">
-          <h2>Conversation &amp; progress</h2>
-          {stream.length === 0 && (
-            <p style={{ color: 'var(--muted)' }}>Nothing observed yet.</p>
-          )}
-          <div className="stream">
-            {stream.map((item) =>
-              item.type === 'conversation' ? (
-                <div
-                  key={item.entry.id}
-                  className={`entry ${item.entry.role}`}
-                >
-                  <div className="who">{labelForRole(item.entry.role)}</div>
-                  <div className="text">{item.entry.text}</div>
-                </div>
-              ) : (
-                <div key={item.event.id} className="entry observed">
-                  <div className="who">
-                    observed · {item.event.kind} · {formatTime(item.event.at)}
-                  </div>
-                  <div className="text">{item.event.summary}</div>
-                </div>
-              ),
-            )}
-          </div>
-        </div>
-
-        <EventInspector
-          sessionId={session.id}
-          events={events}
-          highlightIds={evidence}
-          onClearHighlight={() => setEvidence(null)}
-        />
-      </div>
-
-      <div className="composer">
-        <textarea
-          rows={3}
-          value={draft}
-          placeholder="Ask Vowe about this session, or write an instruction for the agent."
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <div className="actions">
-          <button
-            className="primary"
-            disabled={busy !== null || !draft.trim()}
-            onClick={() => void ask()}
-          >
-            {busy === 'ask' ? 'Thinking…' : 'Ask Vowe'}
-          </button>
-          <button
-            className="danger-ish"
-            disabled={busy !== null || !draft.trim() || !canInstruct}
-            title={
-              canInstruct
-                ? 'Sends this text to the coding agent.'
-                : whyNoControl(session)
-            }
-            onClick={() => void send()}
-          >
-            {busy === 'send' ? 'Sending…' : 'Send to agent'}
-          </button>
-          <span className="hint">
-            {canInstruct
-              ? 'Asking never reaches the agent. Sending always does.'
-              : whyNoControl(session)}
+      <header className="detail-header titlebar-drag">
+        <div className="titles">
+          <span className="title">{session.displayLabel}</span>
+          <span className="subtitle" title={subtitle}>
+            {subtitle}
           </span>
         </div>
-        {error && <div className="error">{error}</div>}
+        <span className="status-pill">
+          <span className={`dot small ${session.status}`} />
+          {statusLabel(session.status)}
+        </span>
+        <button
+          className={`icon-btn${refreshing ? ' spinning' : ''}`}
+          aria-label="Re-interpret now"
+          title="Re-interpret now"
+          disabled={refreshing}
+          onClick={refresh}
+        >
+          <RefreshIcon />
+        </button>
+        <button
+          className={`tool-btn${evidence ? ' on' : ''}`}
+          aria-pressed={evidence !== null}
+          onClick={() =>
+            setEvidence(
+              evidence
+                ? null
+                : session.semanticState?.provenance.eventIds.length
+                  ? 'cited'
+                  : 'all',
+            )
+          }
+        >
+          <PanelIcon />
+          Evidence
+        </button>
+      </header>
+
+      <div className="detail-main">
+        <div className="detail-scroll">
+          <SemanticPanel
+            session={session}
+            llmConfigured={llmConfigured}
+            refreshing={refreshing}
+            onShowEvidence={() => setEvidence('cited')}
+            onRefresh={refresh}
+          />
+
+          <section className="activity" aria-label="Activity">
+            <h2>Activity</h2>
+            {stream.length === 0 ? (
+              <p className="none">Nothing observed yet.</p>
+            ) : (
+              <div className="timeline">
+                {stream.map((item) => (
+                  <StreamRow
+                    key={item.type === 'event' ? item.event.id : item.entry.id}
+                    item={item}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+
+        {evidence && (
+          <EventInspector
+            sessionId={session.id}
+            events={events}
+            citedIds={session.semanticState?.provenance.eventIds ?? []}
+            view={evidence}
+            onViewChange={setEvidence}
+            onClose={() => setEvidence(null)}
+          />
+        )}
+      </div>
+
+      <div className="composer-wrap">
+        <div className={`composer${instructing ? ' instruct' : ''}`}>
+          <div className="top">
+            <div className="segmented" role="group" aria-label="Who this goes to">
+              <button
+                aria-pressed={!instructing}
+                onClick={() => setMode('ask')}
+              >
+                Ask Vowe
+              </button>
+              <button
+                aria-pressed={instructing}
+                disabled={!canInstruct}
+                title={canInstruct ? 'Send an instruction to the agent' : whyNoControl(session)}
+                onClick={() => setMode('instruct')}
+              >
+                Instruct agent
+              </button>
+            </div>
+            <span className="hint">{hint}</span>
+          </div>
+          <label htmlFor="composer-input" className="visually-hidden">
+            {instructing ? 'Instruction for the agent' : 'Question for Vowe'}
+          </label>
+          <textarea
+            id="composer-input"
+            rows={2}
+            value={draft}
+            placeholder={
+              instructing
+                ? 'Tell the agent what to do next…'
+                : 'Ask about this session — what it changed, why it’s stuck, what’s left…'
+            }
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={onKeyDown}
+          />
+          <div className="bottom">
+            {error && <span className="error">{error}</span>}
+            <span className="kbd">⌘↩</span>
+            <button
+              className={`btn small ${instructing ? 'instr' : 'primary'}`}
+              disabled={busy || !draft.trim()}
+              onClick={() => void submit()}
+            >
+              {busy
+                ? instructing
+                  ? 'Sending…'
+                  : 'Thinking…'
+                : instructing
+                  ? 'Send to agent'
+                  : 'Ask'}
+            </button>
+          </div>
+        </div>
       </div>
     </section>
   );
 }
 
-function whyNoControl(session: AgentSession): string {
-  if (session.attachMode === 'external-live') {
-    return 'This session is running in a terminal Vowe does not own, so it can be observed but not instructed.';
-  }
-  if (session.status === 'finished') return 'This session is finished.';
-  return 'This session cannot currently receive instructions.';
-}
+function StreamRow({ item }: { item: StreamItem }): ReactElement {
+  const time = <span className="time">{formatClock(item.at)}</span>;
 
-function labelForRole(role: ConversationEntry['role']): string {
-  switch (role) {
+  if (item.type === 'event') {
+    const { event } = item;
+    if (event.kind === 'user_instruction') {
+      return (
+        <>
+          {time}
+          <div className="block">
+            <span className="who">Prompt to the agent</span>
+            <span className="text">{event.summary}</span>
+          </div>
+        </>
+      );
+    }
+    return (
+      <>
+        {time}
+        <span
+          className={`observed${ATTENTION_KINDS.has(event.kind) ? ' attention' : ''}`}
+        >
+          {event.summary}
+        </span>
+      </>
+    );
+  }
+
+  const { entry } = item;
+  switch (entry.role) {
     case 'user_question':
-      return 'You → Vowe';
+      return (
+        <>
+          {time}
+          <div className="said">
+            <span className="who ask">You asked Vowe</span>
+            <span className="text">{entry.text}</span>
+          </div>
+        </>
+      );
     case 'companion_answer':
-      return 'Vowe';
+      return (
+        <>
+          <span />
+          <div className="block ask">
+            <span className="who ask">
+              Vowe · from observed events, not sent to the agent
+            </span>
+            <span className="text">{entry.text}</span>
+          </div>
+        </>
+      );
     case 'user_instruction':
-      return 'You → agent';
+      return (
+        <>
+          {time}
+          <div className="block instr">
+            <span className="who instr">You instructed the agent</span>
+            <span className="text">{entry.text}</span>
+          </div>
+        </>
+      );
     case 'instruction_result':
-      return 'control channel';
+      return (
+        <>
+          <span />
+          <span className="observed">
+            <span className="who instr">Control channel · </span>
+            {entry.text}
+          </span>
+        </>
+      );
     default:
-      return 'note';
+      return (
+        <>
+          {time}
+          <span className="note">{entry.text}</span>
+        </>
+      );
   }
-}
-
-function formatTime(at: string): string {
-  const date = new Date(at);
-  return Number.isNaN(date.getTime()) ? at : date.toLocaleTimeString();
-}
-
-function messageOf(cause: unknown): string {
-  const raw = cause instanceof Error ? cause.message : String(cause);
-  // Electron prefixes IPC errors with the handler path; keep the useful half.
-  const marker = "Error: ";
-  const index = raw.lastIndexOf(marker);
-  return index === -1 ? raw : raw.slice(index + marker.length);
 }
