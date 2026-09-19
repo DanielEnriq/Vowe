@@ -20,6 +20,7 @@ const api: VoweApi = {
   sendInstruction: (sessionId, text) =>
     ipcRenderer.invoke(IPC.sendInstruction, sessionId, text),
   launchSession: (cwd, prompt) => ipcRenderer.invoke(IPC.launch, cwd, prompt),
+  chooseFolder: () => ipcRenderer.invoke(IPC.chooseFolder),
 
   onSessionsChanged: (listener) => {
     const handler = () => listener();

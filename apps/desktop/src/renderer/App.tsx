@@ -3,13 +3,15 @@ import { useCallback, useEffect, useState, type ReactElement } from 'react';
 import type { AgentSession } from '@vowe/core';
 import type { AppStatus } from '../shared/ipc.js';
 
-import { SessionList } from './components/SessionList.js';
+import { NewSessionSheet } from './components/NewSessionSheet.js';
 import { SessionDetail } from './components/SessionDetail.js';
+import { SessionList } from './components/SessionList.js';
 
 export function App(): ReactElement {
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [status, setStatus] = useState<AppStatus | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setSessions(await window.vowe.listSessions());
@@ -23,6 +25,7 @@ export function App(): ReactElement {
     });
   }, [refresh]);
 
+  const closeSheet = useCallback(() => setSheetOpen(false), []);
   const selected = sessions.find((session) => session.id === selectedId) ?? null;
 
   return (
@@ -30,12 +33,11 @@ export function App(): ReactElement {
       <SessionList
         sessions={sessions}
         selectedId={selectedId}
+        status={status}
         onSelect={setSelectedId}
-        onLaunched={(session) => {
-          void refresh();
-          setSelectedId(session.id);
-        }}
+        onNewSession={() => setSheetOpen(true)}
       />
+
       {selected ? (
         <SessionDetail
           key={selected.id}
@@ -43,23 +45,65 @@ export function App(): ReactElement {
           llmConfigured={status?.llmConfigured ?? false}
         />
       ) : (
-        <div className="detail">
-          <header>
-            <strong>No session selected</strong>
-          </header>
-          <div className="empty">
-            {sessions.length === 0
-              ? 'No coding-agent sessions discovered yet. Start one in a terminal, or start one here from the panel on the left — either way it will appear in this list.'
-              : 'Select a session to see what it appears to be doing, ask about its work, or send it an instruction.'}
-            {status && !status.llmConfigured && (
-              <p>
-                No <code>ANTHROPIC_API_KEY</code> is configured, so Vowe will
-                observe and record sessions but cannot interpret them or answer
-                questions about them.
-              </p>
-            )}
+        <section className="detail">
+          <header className="detail-header titlebar-drag" />
+          <div className="placeholder">
+            <div className="inner">
+              {sessions.length === 0 ? (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <h1>Waiting for a coding session</h1>
+                    <p>
+                      Start Claude Code in any terminal and it appears here
+                      within a few seconds. Vowe only watches: it won’t touch
+                      the session unless you send it an instruction.
+                    </p>
+                  </div>
+                  <div>
+                    <button className="btn primary" onClick={() => setSheetOpen(true)}>
+                      New session…
+                    </button>
+                  </div>
+                  <p className="fine">
+                    Sessions started from Vowe can also be instructed later.
+                    Ones started in a terminal can be watched and asked about.
+                  </p>
+                </>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <h1>Pick a session</h1>
+                  <p>
+                    See what it appears to be doing, ask Vowe about its work,
+                    or send it an instruction.
+                  </p>
+                </div>
+              )}
+
+              {status && !status.llmConfigured && (
+                <div className="notice">
+                  <strong>Summaries and answers are off</strong>
+                  <p>
+                    No Anthropic API key is set. Vowe still finds sessions,
+                    records every event and shows their status. To turn on
+                    summaries and Ask Vowe, set the key and restart:
+                  </p>
+                  <code>export ANTHROPIC_API_KEY=sk-ant-…</code>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        </section>
+      )}
+
+      {sheetOpen && (
+        <NewSessionSheet
+          onClose={closeSheet}
+          onLaunched={(session) => {
+            setSheetOpen(false);
+            void refresh();
+            setSelectedId(session.id);
+          }}
+        />
       )}
     </div>
   );

@@ -1,13 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useState, type ReactElement } from 'react';
 
 import type { NormalizedEvent } from '@vowe/core';
 
+import { CloseIcon } from './ui.js';
+
 interface Props {
   sessionId: string;
+  /** The observed stream, as loaded for this session. */
   events: NormalizedEvent[];
-  /** Event ids cited by a semantic update, highlighted and scrolled to. */
-  highlightIds: string[] | null;
-  onClearHighlight: () => void;
+  /** Event ids cited by the current interpretation. */
+  citedIds: string[];
+  /** Which list to show; the owner switches to "cited" when evidence is requested. */
+  view: 'cited' | 'all';
+  onViewChange: (view: 'cited' | 'all') => void;
+  onClose: () => void;
 }
 
 /**
@@ -16,105 +22,104 @@ interface Props {
  * description of a session.
  */
 export function EventInspector({
+  sessionId,
   events,
-  highlightIds,
-  onClearHighlight,
+  citedIds,
+  view,
+  onViewChange,
+  onClose,
 }: Props): ReactElement {
-  const [open, setOpen] = useState(false);
+  const [cited, setCited] = useState<NormalizedEvent[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const firstHighlight = useRef<HTMLTableRowElement | null>(null);
 
-  const highlighted = useMemo(
-    () => new Set(highlightIds ?? []),
-    [highlightIds],
-  );
-
+  // Cited events may be older than the loaded window, so fetch them by id.
+  const citedKey = citedIds.join(',');
   useEffect(() => {
-    if (highlightIds?.length) {
-      setOpen(true);
-      firstHighlight.current?.scrollIntoView({ block: 'center' });
+    let cancelled = false;
+    if (citedIds.length === 0) {
+      setCited([]);
+      return;
     }
-  }, [highlightIds]);
+    void window.vowe
+      .getEventsByIds(sessionId, citedIds)
+      .then((found) => {
+        if (!cancelled) setCited([...found].sort((a, b) => a.seq - b.seq));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, citedKey]);
 
-  const visible = open ? events : [];
-  let markedFirst = false;
+  const citedSet = useMemo(() => new Set(citedIds), [citedIds]);
+  const shown = view === 'cited' ? cited : events;
 
   return (
-    <div className="card">
-      <h2>
-        Observed events ({events.length}){' '}
-        <button
-          style={{ float: 'right', padding: '2px 8px', fontSize: 12 }}
-          onClick={() => setOpen((value) => !value)}
-        >
-          {open ? 'Hide' : 'Inspect'}
+    <aside className="evidence" aria-label="Evidence">
+      <div className="evidence-head">
+        <div className="titles">
+          <span className="title">Evidence</span>
+          <span className="sub">
+            {view === 'cited'
+              ? 'The events behind the current summary'
+              : 'Everything observed in this session'}
+          </span>
+        </div>
+        <button className="icon-btn" aria-label="Close evidence" onClick={onClose}>
+          <CloseIcon />
         </button>
-      </h2>
+      </div>
 
-      {open && highlightIds?.length ? (
-        <p style={{ color: 'var(--muted)', fontSize: 12 }}>
-          Highlighting the {highlightIds.length} events cited by the current
-          interpretation.{' '}
-          <button
-            style={{ padding: '1px 8px', fontSize: 11 }}
-            onClick={onClearHighlight}
-          >
-            Clear
-          </button>
-        </p>
-      ) : null}
+      <div className="segmented stretch" role="group" aria-label="Which events">
+        <button
+          aria-pressed={view === 'cited'}
+          onClick={() => onViewChange('cited')}
+        >
+          Cited · {citedIds.length}
+        </button>
+        <button aria-pressed={view === 'all'} onClick={() => onViewChange('all')}>
+          All · {events.length}
+        </button>
+      </div>
 
-      {open && (
-        <table className="events-table">
-          <tbody>
-            {visible.map((event) => {
-              const isHighlighted = highlighted.has(event.id);
-              const ref =
-                isHighlighted && !markedFirst
-                  ? ((markedFirst = true), firstHighlight)
-                  : undefined;
-              return (
-                <tr
-                  key={event.id}
-                  ref={ref}
-                  className={isHighlighted ? 'evidence' : undefined}
-                >
-                  <td className="kind">#{event.seq}</td>
-                  <td className="kind">{event.kind}</td>
-                  <td className="summary">
-                    <div>{event.summary}</div>
-                    <button
-                      style={{ padding: '1px 8px', fontSize: 11, marginTop: 4 }}
-                      onClick={() =>
-                        setExpanded(expanded === event.id ? null : event.id)
-                      }
-                    >
-                      {expanded === event.id ? 'Hide raw' : 'Raw'}
-                    </button>
-                    {expanded === event.id && (
-                      <>
-                        <div
-                          style={{
-                            color: 'var(--muted)',
-                            fontSize: 11,
-                            marginTop: 6,
-                          }}
-                        >
-                          {event.rawRef.source}:{event.rawRef.line} (byte{' '}
-                          {event.rawRef.byteOffset})
-                        </div>
-                        <pre className="raw">
-                          {JSON.stringify(event.raw, null, 2)}
-                        </pre>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </div>
+      <div className="evidence-list">
+        {shown.length === 0 && (
+          <p className="none">
+            {view === 'cited'
+              ? 'The current summary doesn’t cite any events.'
+              : 'Nothing observed yet.'}
+          </p>
+        )}
+        {shown.map((event) => {
+          const open = expanded === event.id;
+          const isCited = view === 'all' && citedSet.has(event.id);
+          return (
+            <div
+              key={event.id}
+              className={`ev${open ? ' open cited' : isCited ? ' cited' : ''}`}
+            >
+              <button
+                className="ev-row"
+                aria-expanded={open}
+                onClick={() => setExpanded(open ? null : event.id)}
+              >
+                <span className="seq">#{event.seq}</span>
+                <span className="kind">{event.kind}</span>
+                <span className="sum">{event.summary}</span>
+              </button>
+              {open && (
+                <>
+                  <span className="ev-ref">
+                    {event.rawRef.source} · line {event.rawRef.line} · byte{' '}
+                    {event.rawRef.byteOffset}
+                  </span>
+                  <pre>{JSON.stringify(event.raw, null, 2)}</pre>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </aside>
   );
 }

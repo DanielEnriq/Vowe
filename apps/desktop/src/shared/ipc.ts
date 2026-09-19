@@ -31,6 +31,9 @@ export interface VoweApi {
 
   launchSession(cwd: string, prompt: string): Promise<AgentSession>;
 
+  /** Native folder picker for choosing where a new session runs. */
+  chooseFolder(): Promise<string | null>;
+
   onSessionsChanged(listener: () => void): () => void;
   onSessionEvent(listener: (event: NormalizedEvent) => void): () => void;
 }
@@ -59,6 +62,7 @@ export const IPC = {
   ask: 'vowe:companion:ask',
   sendInstruction: 'vowe:agent:send-instruction',
   launch: 'vowe:agent:launch',
+  chooseFolder: 'vowe:dialog:choose-folder',
   sessionsChanged: 'vowe:sessions:changed',
   sessionEvent: 'vowe:session:event',
 } as const;

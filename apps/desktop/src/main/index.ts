@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { BrowserWindow, app, ipcMain } from 'electron';
+import { BrowserWindow, app, dialog, ipcMain, nativeTheme } from 'electron';
 
 import {
   CompanionService,
@@ -148,14 +148,30 @@ function registerIpc(): void {
   ipcMain.handle(IPC.launch, async (_event, cwd: string, prompt: string) =>
     (await requireServices()).registry.launchSession(PROVIDER, { cwd, prompt }),
   );
+
+  ipcMain.handle(IPC.chooseFolder, async () => {
+    const options: Electron.OpenDialogOptions = {
+      properties: ['openDirectory', 'createDirectory'],
+    };
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
 }
 
 function createWindow(): void {
   window = new BrowserWindow({
     width: 1280,
     height: 860,
+    minWidth: 900,
+    minHeight: 560,
     title: 'Vowe',
-    backgroundColor: '#0f1115',
+    // Matches --win in the renderer so there is no flash before first paint.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e20' : '#ffffff',
+    // The sidebar runs to the top edge; the traffic lights sit in its first 52px.
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: { x: 18, y: 18 },
     webPreferences: {
       preload: path.join(dirname, '../preload/index.mjs'),
       sandbox: false,
