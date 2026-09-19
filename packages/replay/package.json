@@ -1,0 +1,19 @@
+{
+  "name": "@vowe/replay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "replay": "node --experimental-strip-types src/replay.ts",
+    "sanitize": "node --experimental-strip-types src/sanitize-cli.ts"
+  },
+  "dependencies": {
+    "@vowe/adapter-claude-code": "workspace:*",
+    "@vowe/core": "workspace:*",
+    "@vowe/decision-jev": "workspace:*",
+    "@vowe/llm": "workspace:*"
+  },
+  "devDependencies": { "@types/node": "^22.10.2", "typescript": "^5.7.2" }
+}

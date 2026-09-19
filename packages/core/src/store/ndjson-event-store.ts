@@ -7,7 +7,14 @@ import path from 'node:path';
 import type { AdapterEvent, NormalizedEvent } from '../types/events.js';
 import type { AgentSession, SemanticState } from '../types/session.js';
 import type { ConversationEntry } from '../types/conversation.js';
-import type { EventQuery, EventStore } from './event-store.js';
+import type {
+  CommunicationDecision,
+  ObservationState,
+  SurfaceUpdate,
+  TraceWindow,
+  WindowNote,
+} from '../observation/trace-window.js';
+import type { EventQuery, EventStore, WindowQuery } from './event-store.js';
 
 interface SessionRecords {
   events: NormalizedEvent[];
@@ -17,6 +24,16 @@ interface SessionRecords {
   semantic: SemanticState[];
   conversation: ConversationEntry[];
   lastSeq: number;
+  windows: TraceWindow[];
+  windowsById: Map<string, TraceWindow>;
+  notes: WindowNote[];
+  notesByWindow: Map<string, WindowNote>;
+  /**
+   * Surface updates are rewritten in place as decisions land, so the in-memory
+   * view is keyed by id and the log is replayed last-write-wins.
+   */
+  surfaceUpdates: Map<string, SurfaceUpdate>;
+  observation: ObservationState | null;
 }
 
 function rawKey(event: AdapterEvent): string {
@@ -32,6 +49,10 @@ function rawKey(event: AdapterEvent): string {
  *   sessions/<safeId>/events.ndjson     normalized events, raw payload included
  *   sessions/<safeId>/semantic.ndjson   semantic state history
  *   sessions/<safeId>/conversation.ndjson
+ *   sessions/<safeId>/windows.ndjson      L1 window ranges
+ *   sessions/<safeId>/window-notes.ndjson L1 interpretations
+ *   sessions/<safeId>/surface-updates.ndjson  communication candidates
+ *   sessions/<safeId>/observation.json    observation cursor + preference
  *
  * Sized for an MVP: whole streams live in memory. The `EventStore` interface
  * exists so this can become SQLite when that stops being true.
@@ -164,6 +185,120 @@ export class NdjsonEventStore implements EventStore {
     return all.slice(all.length - limit);
   }
 
+  // ----------------------------------------------------------- observation
+
+  async appendWindow(window: TraceWindow): Promise<void> {
+    const records = this.ensureRecords(window.sessionId);
+    if (records.windowsById.has(window.id)) return;
+    records.windows.push(window);
+    records.windowsById.set(window.id, window);
+    await this.appendLine(
+      this.sessionFile(window.sessionId, 'windows'),
+      window,
+    );
+  }
+
+  getWindows(sessionId: string, query: WindowQuery = {}): TraceWindow[] {
+    const all = this.records.get(sessionId)?.windows ?? [];
+    const filtered =
+      query.sinceIndex === undefined
+        ? all
+        : all.filter((w) => w.index > query.sinceIndex!);
+    if (query.limit === undefined || filtered.length <= query.limit) {
+      return [...filtered];
+    }
+    return filtered.slice(filtered.length - query.limit);
+  }
+
+  getWindow(sessionId: string, windowId: string): TraceWindow | null {
+    return this.records.get(sessionId)?.windowsById.get(windowId) ?? null;
+  }
+
+  async appendWindowNote(note: WindowNote): Promise<void> {
+    const records = this.ensureRecords(note.sessionId);
+    records.notes.push(note);
+    records.notesByWindow.set(note.windowId, note);
+    await this.appendLine(
+      this.sessionFile(note.sessionId, 'window-notes'),
+      note,
+    );
+  }
+
+  getWindowNotes(sessionId: string, limit?: number): WindowNote[] {
+    const all = this.records.get(sessionId)?.notes ?? [];
+    if (limit === undefined || all.length <= limit) return [...all];
+    return all.slice(all.length - limit);
+  }
+
+  getWindowNoteForWindow(
+    sessionId: string,
+    windowId: string,
+  ): WindowNote | null {
+    return this.records.get(sessionId)?.notesByWindow.get(windowId) ?? null;
+  }
+
+  async appendSurfaceUpdate(update: SurfaceUpdate): Promise<void> {
+    const records = this.ensureRecords(update.sessionId);
+    records.surfaceUpdates.set(update.id, update);
+    await this.appendLine(
+      this.sessionFile(update.sessionId, 'surface-updates'),
+      update,
+    );
+  }
+
+  async recordCommunicationDecision(
+    sessionId: string,
+    surfaceUpdateId: string,
+    decision: CommunicationDecision,
+  ): Promise<SurfaceUpdate | null> {
+    const existing = this.records
+      .get(sessionId)
+      ?.surfaceUpdates.get(surfaceUpdateId);
+    if (!existing) return null;
+    const next: SurfaceUpdate = {
+      ...existing,
+      decision,
+      decidedAt: new Date().toISOString(),
+    };
+    await this.appendSurfaceUpdate(next);
+    return next;
+  }
+
+  async markSurfaceUpdateDelivered(
+    sessionId: string,
+    surfaceUpdateId: string,
+  ): Promise<SurfaceUpdate | null> {
+    const existing = this.records
+      .get(sessionId)
+      ?.surfaceUpdates.get(surfaceUpdateId);
+    if (!existing) return null;
+    const next: SurfaceUpdate = {
+      ...existing,
+      deliveredAt: new Date().toISOString(),
+    };
+    await this.appendSurfaceUpdate(next);
+    return next;
+  }
+
+  getSurfaceUpdates(sessionId: string, limit?: number): SurfaceUpdate[] {
+    const all = [...(this.records.get(sessionId)?.surfaceUpdates.values() ?? [])];
+    all.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    if (limit === undefined || all.length <= limit) return all;
+    return all.slice(all.length - limit);
+  }
+
+  getObservationState(sessionId: string): ObservationState | null {
+    return this.records.get(sessionId)?.observation ?? null;
+  }
+
+  async setObservationState(state: ObservationState): Promise<void> {
+    const records = this.ensureRecords(state.sessionId);
+    records.observation = state;
+    await this.queue(() =>
+      this.writeJsonAtomic(this.observationPath(state.sessionId), state),
+    );
+  }
+
   // --------------------------------------------------------- adapter scratch
 
   getAdapterState(provider: string): unknown {
@@ -189,6 +324,12 @@ export class NdjsonEventStore implements EventStore {
         semantic: [],
         conversation: [],
         lastSeq: 0,
+        windows: [],
+        windowsById: new Map(),
+        notes: [],
+        notesByWindow: new Map(),
+        surfaceUpdates: new Map(),
+        observation: null,
       };
       this.records.set(sessionId, records);
     }
@@ -214,6 +355,29 @@ export class NdjsonEventStore implements EventStore {
         records.conversation.push(value as ConversationEntry);
       },
     );
+    await this.readLines(this.sessionFile(sessionId, 'windows'), (value) => {
+      const window = value as TraceWindow;
+      if (records.windowsById.has(window.id)) return;
+      records.windows.push(window);
+      records.windowsById.set(window.id, window);
+    });
+    await this.readLines(this.sessionFile(sessionId, 'window-notes'), (value) => {
+      const note = value as WindowNote;
+      records.notes.push(note);
+      records.notesByWindow.set(note.windowId, note);
+    });
+    await this.readLines(
+      this.sessionFile(sessionId, 'surface-updates'),
+      (value) => {
+        // Later records for the same id supersede earlier ones, which is how a
+        // decision attaches to a candidate in an append-only log.
+        const update = value as SurfaceUpdate;
+        records.surfaceUpdates.set(update.id, update);
+      },
+    );
+    records.observation = await this.readJson<ObservationState>(
+      this.observationPath(sessionId),
+    );
 
     const provider = this.sessions.get(sessionId)?.provider;
     if (provider && !this.adapterState.has(provider)) {
@@ -232,13 +396,28 @@ export class NdjsonEventStore implements EventStore {
 
   private sessionFile(
     sessionId: string,
-    kind: 'events' | 'semantic' | 'conversation',
+    kind:
+      | 'events'
+      | 'semantic'
+      | 'conversation'
+      | 'windows'
+      | 'window-notes'
+      | 'surface-updates',
   ): string {
     return path.join(
       this.root,
       'sessions',
       safeName(sessionId),
       `${kind}.ndjson`,
+    );
+  }
+
+  private observationPath(sessionId: string): string {
+    return path.join(
+      this.root,
+      'sessions',
+      safeName(sessionId),
+      'observation.json',
     );
   }
 

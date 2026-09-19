@@ -1,6 +1,20 @@
 import type { AdapterEvent, NormalizedEvent } from '../types/events.js';
 import type { AgentSession, SemanticState } from '../types/session.js';
 import type { ConversationEntry } from '../types/conversation.js';
+import type {
+  CommunicationDecision,
+  ObservationState,
+  SurfaceUpdate,
+  TraceWindow,
+  WindowNote,
+} from '../observation/trace-window.js';
+
+export interface WindowQuery {
+  /** Return at most this many windows, taken from the end. */
+  limit?: number;
+  /** Only windows with `index` strictly greater than this. */
+  sinceIndex?: number;
+}
 
 export interface EventQuery {
   /** Return at most this many events, taken from the end of the stream. */
@@ -42,6 +56,40 @@ export interface EventStore {
 
   appendConversationEntry(entry: ConversationEntry): Promise<void>;
   getConversation(sessionId: string, limit?: number): ConversationEntry[];
+
+  // ------------------------------------------------------ observation (L1)
+
+  /**
+   * Window definitions. These are ranges, not content: the trace they point at
+   * stays where the provider wrote it.
+   */
+  appendWindow(window: TraceWindow): Promise<void>;
+  getWindows(sessionId: string, query?: WindowQuery): TraceWindow[];
+  getWindow(sessionId: string, windowId: string): TraceWindow | null;
+
+  appendWindowNote(note: WindowNote): Promise<void>;
+  getWindowNotes(sessionId: string, limit?: number): WindowNote[];
+  getWindowNoteForWindow(sessionId: string, windowId: string): WindowNote | null;
+
+  /** Communication candidates produced by `surface_update`. */
+  appendSurfaceUpdate(update: SurfaceUpdate): Promise<void>;
+  recordCommunicationDecision(
+    sessionId: string,
+    surfaceUpdateId: string,
+    decision: CommunicationDecision,
+  ): Promise<SurfaceUpdate | null>;
+  markSurfaceUpdateDelivered(
+    sessionId: string,
+    surfaceUpdateId: string,
+  ): Promise<SurfaceUpdate | null>;
+  getSurfaceUpdates(sessionId: string, limit?: number): SurfaceUpdate[];
+
+  /**
+   * The observation cursor and the session's communication preference.
+   * Returning `null` means this session has never been observed.
+   */
+  getObservationState(sessionId: string): ObservationState | null;
+  setObservationState(state: ObservationState): Promise<void>;
 
   /**
    * Opaque per-adapter scratch state (tail offsets, launch tables, ...).

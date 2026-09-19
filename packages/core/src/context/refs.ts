@@ -1,0 +1,123 @@
+/**
+ * References into observed material.
+ *
+ * A ref is the unit of provenance in the observation harness: every L1 note,
+ * every surface-update candidate and every delegated answer carries refs back
+ * to the material it was derived from. Refs are addresses, never copies.
+ *
+ * Each ref has a compact string form so a model can read one out of a search
+ * result and hand it straight back to `open_context` without the application
+ * having to maintain a side table of handles.
+ */
+
+export type ContextSource = 'windows' | 'trace' | 'transcript' | 'repo';
+
+export type ContextRef =
+  /** An interpreted window: its L1 note plus the L0 range beneath it. */
+  | { kind: 'window'; sessionId: string; windowId: string }
+  /** A range of the native trace, addressed by normalized event sequence. */
+  | { kind: 'trace'; sessionId: string; startSeq: number; endSeq: number }
+  /** One normalized event, and through it one raw provider record. */
+  | { kind: 'event'; sessionId: string; eventId: string }
+  /** A point in the worker/user exchange. */
+  | { kind: 'transcript'; sessionId: string; eventId: string }
+  /** A location in the working tree. */
+  | { kind: 'repo'; path: string; line?: number }
+  /** The current diff, optionally narrowed to one path. */
+  | { kind: 'diff'; sessionId: string; path?: string };
+
+/**
+ * The string form. Kept terse because these travel through model context, and
+ * unambiguous because they travel back.
+ */
+export function formatRef(ref: ContextRef): string {
+  switch (ref.kind) {
+    case 'window':
+      return `window:${ref.sessionId}:${ref.windowId}`;
+    case 'trace':
+      return `trace:${ref.sessionId}:${ref.startSeq}-${ref.endSeq}`;
+    case 'event':
+      return `event:${ref.sessionId}:${ref.eventId}`;
+    case 'transcript':
+      return `transcript:${ref.sessionId}:${ref.eventId}`;
+    case 'repo':
+      return ref.line === undefined ? `repo:${ref.path}` : `repo:${ref.path}#${ref.line}`;
+    case 'diff':
+      return ref.path ? `diff:${ref.sessionId}:${ref.path}` : `diff:${ref.sessionId}`;
+  }
+}
+
+/** Returns `null` rather than throwing: a model can and will produce nonsense. */
+export function parseRef(value: string | ContextRef): ContextRef | null {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  const separator = trimmed.indexOf(':');
+  if (separator === -1) return null;
+  const kind = trimmed.slice(0, separator);
+  const rest = trimmed.slice(separator + 1);
+
+  switch (kind) {
+    case 'window': {
+      const [sessionId, windowId] = splitLast(rest);
+      if (!sessionId || !windowId) return null;
+      return { kind: 'window', sessionId, windowId };
+    }
+    case 'trace': {
+      const [sessionId, range] = splitLast(rest);
+      if (!sessionId || !range) return null;
+      const match = /^(\d+)-(\d+)$/.exec(range);
+      if (!match) return null;
+      return {
+        kind: 'trace',
+        sessionId,
+        startSeq: Number(match[1]),
+        endSeq: Number(match[2]),
+      };
+    }
+    case 'event':
+    case 'transcript': {
+      const [sessionId, eventId] = splitLast(rest);
+      if (!sessionId || !eventId) return null;
+      return { kind, sessionId, eventId };
+    }
+    case 'repo': {
+      const hash = rest.lastIndexOf('#');
+      if (hash === -1) return rest ? { kind: 'repo', path: rest } : null;
+      const path = rest.slice(0, hash);
+      const line = Number(rest.slice(hash + 1));
+      if (!path) return null;
+      return Number.isFinite(line) ? { kind: 'repo', path, line } : { kind: 'repo', path };
+    }
+    case 'diff': {
+      const separated = splitLast(rest);
+      if (separated[1]) {
+        return { kind: 'diff', sessionId: separated[0]!, path: separated[1] };
+      }
+      return rest ? { kind: 'diff', sessionId: rest } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Session ids are `${provider}:${providerSessionId}` and therefore contain a
+ * colon themselves, so the trailing component is what gets split off.
+ */
+function splitLast(value: string): [string | null, string | null] {
+  const index = value.lastIndexOf(':');
+  if (index === -1) return [value || null, null];
+  return [value.slice(0, index) || null, value.slice(index + 1) || null];
+}
+
+export function dedupeRefs(refs: ContextRef[]): ContextRef[] {
+  const seen = new Set<string>();
+  const out: ContextRef[] = [];
+  for (const ref of refs) {
+    const key = formatRef(ref);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(ref);
+  }
+  return out;
+}

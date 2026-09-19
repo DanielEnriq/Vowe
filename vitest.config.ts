@@ -1,0 +1,30 @@
+import { defineConfig } from 'vitest/config';
+
+/**
+ * One runner for the whole workspace.
+ *
+ * Tests import package sources directly rather than built `dist` output, so a
+ * test run never depends on build order. `@vowe/*` resolves to each package's
+ * `src/index.ts`; the `.js` extensions the sources use (NodeNext) are mapped
+ * back to their TypeScript originals.
+ */
+export default defineConfig({
+  test: {
+    include: ['packages/*/test/**/*.test.ts'],
+    environment: 'node',
+    // Replay and store tests write real files under a temp root.
+    testTimeout: 30_000,
+  },
+  resolve: {
+    alias: [
+      { find: '@vowe/core', replacement: new URL('./packages/core/src/index.ts', import.meta.url).pathname },
+      { find: '@vowe/llm', replacement: new URL('./packages/llm/src/index.ts', import.meta.url).pathname },
+      { find: '@vowe/decision-jev', replacement: new URL('./packages/decision-jev/src/index.ts', import.meta.url).pathname },
+      { find: '@vowe/live-openai', replacement: new URL('./packages/live-openai/src/index.ts', import.meta.url).pathname },
+      {
+        find: '@vowe/adapter-claude-code',
+        replacement: new URL('./packages/adapter-claude-code/src/index.ts', import.meta.url).pathname,
+      },
+    ],
+  },
+});
