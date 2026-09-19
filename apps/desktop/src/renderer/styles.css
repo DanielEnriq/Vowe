@@ -187,3 +187,35 @@ pre.raw {
 .error { color: var(--bad); margin-top: 8px; font-size: 13px; }
 .launch { padding: 12px 16px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
 .row { display: flex; gap: 8px; align-items: center; }
+
+/* Observation panel: L1 notes, surfaced candidates, the preference box. */
+.card h3 {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.card input[type='text'],
+.card input:not([type]) {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: inherit;
+  padding: 7px 9px;
+  font: inherit;
+}
+
+button.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 2px 0;
+  font: inherit;
+}
+
+button.link:hover {
+  text-decoration: underline;
+}

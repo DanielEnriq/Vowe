@@ -41,6 +41,8 @@ export function App(): ReactElement {
           key={selected.id}
           session={selected}
           llmConfigured={status?.llmConfigured ?? false}
+          voiceConfigured={status?.voiceConfigured ?? false}
+          voiceUnavailableReason={status?.voiceUnavailableReason ?? null}
         />
       ) : (
         <div className="detail">
@@ -53,9 +55,17 @@ export function App(): ReactElement {
               : 'Select a session to see what it appears to be doing, ask about its work, or send it an instruction.'}
             {status && !status.llmConfigured && (
               <p>
-                No <code>ANTHROPIC_API_KEY</code> is configured, so Vowe will
-                observe and record sessions but cannot interpret them or answer
-                questions about them.
+                No <code>ANTHROPIC_API_KEY</code> or <code>OPENROUTER_API_KEY</code>{' '}
+                is configured, so Vowe will observe and record sessions but cannot
+                interpret them or answer questions about them.
+              </p>
+            )}
+            {status && !status.voiceConfigured && (
+              <p>
+                Vo voice is unavailable.{' '}
+                {status.voiceUnavailableReason ??
+                  'No voice credential is configured.'}{' '}
+                Observation is unaffected.
               </p>
             )}
           </div>

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import OpenAI from 'openai';
-import { SidebandWS } from 'openai/resources/live/sideband/ws';
+import type { SidebandWS } from 'openai/resources/live/sideband/ws';
 import type { ConnectServerEvent } from 'openai/resources/live/sideband/sideband';
 
 import type {
@@ -99,6 +99,11 @@ export class OpenAiLiveTransport implements LiveTransport {
   async attachSideband(liveSessionId: string): Promise<LiveSideband | null> {
     const client = this.requireClient();
     try {
+      // Imported lazily. The SDK's sideband socket depends on `ws`, which is an
+      // optional peer dependency, and a module-level import would make a
+      // missing optional dependency crash the whole application at load — for a
+      // feature that is supposed to degrade quietly when it is unavailable.
+      const { SidebandWS } = await import('openai/resources/live/sideband/ws');
       const socket = new SidebandWS(client, { session_id: liveSessionId });
       return new OpenAiSideband(liveSessionId, socket, this.onError);
     } catch (error) {

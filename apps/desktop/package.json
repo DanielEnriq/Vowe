@@ -13,6 +13,8 @@
   "dependencies": {
     "@vowe/adapter-claude-code": "workspace:*",
     "@vowe/core": "workspace:*",
+    "@vowe/decision-jev": "workspace:*",
+    "@vowe/live-openai": "workspace:*",
     "@vowe/llm": "workspace:*"
   },
   "devDependencies": {

@@ -3,11 +3,15 @@ import { useCallback, useEffect, useMemo, useState, type ReactElement } from 're
 import type { AgentSession, ConversationEntry, NormalizedEvent } from '@vowe/core';
 
 import { EventInspector } from './EventInspector.js';
+import { ObservationPanel } from './ObservationPanel.js';
 import { SemanticPanel } from './SemanticPanel.js';
+import { VoPanel } from './VoPanel.js';
 
 interface Props {
   session: AgentSession;
   llmConfigured: boolean;
+  voiceConfigured: boolean;
+  voiceUnavailableReason: string | null;
 }
 
 /** Event kinds worth showing in the narrative stream. The rest live in the inspector. */
@@ -27,13 +31,19 @@ type StreamItem =
   | { type: 'conversation'; at: string; entry: ConversationEntry }
   | { type: 'event'; at: string; event: NormalizedEvent };
 
-export function SessionDetail({ session, llmConfigured }: Props): ReactElement {
+export function SessionDetail({
+  session,
+  llmConfigured,
+  voiceConfigured,
+  voiceUnavailableReason,
+}: Props): ReactElement {
   const [events, setEvents] = useState<NormalizedEvent[]>([]);
   const [conversation, setConversation] = useState<ConversationEntry[]>([]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState<'ask' | 'send' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<string[] | null>(null);
+  const [catchingUp, setCatchingUp] = useState(false);
 
   const reload = useCallback(async () => {
     const [nextEvents, nextConversation] = await Promise.all([
@@ -111,6 +121,20 @@ export function SessionDetail({ session, llmConfigured }: Props): ReactElement {
       </header>
 
       <div className="detail-body">
+        <VoPanel
+          session={session}
+          voiceConfigured={voiceConfigured}
+          voiceUnavailableReason={voiceUnavailableReason}
+          catchingUp={catchingUp}
+        />
+
+        <ObservationPanel
+          session={session}
+          events={events}
+          onShowEvidence={setEvidence}
+          onCatchingUpChange={setCatchingUp}
+        />
+
         <SemanticPanel
           session={session}
           llmConfigured={llmConfigured}
