@@ -43,7 +43,9 @@ export function formatRef(ref: ContextRef): string {
     case 'repo':
       return ref.line === undefined ? `repo:${ref.path}` : `repo:${ref.path}#${ref.line}`;
     case 'diff':
-      return ref.path ? `diff:${ref.sessionId}:${ref.path}` : `diff:${ref.sessionId}`;
+      // `#` separates the path, not `:`. A session id contains a colon of its
+      // own, so `diff:a:b` cannot be told apart from a session id with a path.
+      return ref.path ? `diff:${ref.sessionId}#${ref.path}` : `diff:${ref.sessionId}`;
   }
 }
 
@@ -89,11 +91,14 @@ export function parseRef(value: string | ContextRef): ContextRef | null {
       return Number.isFinite(line) ? { kind: 'repo', path, line } : { kind: 'repo', path };
     }
     case 'diff': {
-      const separated = splitLast(rest);
-      if (separated[1]) {
-        return { kind: 'diff', sessionId: separated[0]!, path: separated[1] };
-      }
-      return rest ? { kind: 'diff', sessionId: rest } : null;
+      const hash = rest.indexOf('#');
+      if (hash === -1) return rest ? { kind: 'diff', sessionId: rest } : null;
+      const sessionId = rest.slice(0, hash);
+      const path = rest.slice(hash + 1);
+      if (!sessionId) return null;
+      return path
+        ? { kind: 'diff', sessionId, path }
+        : { kind: 'diff', sessionId };
     }
     default:
       return null;

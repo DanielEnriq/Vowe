@@ -89,6 +89,16 @@ export class CommunicationPolicy {
         },
       });
       if (!result) return null;
+      // A `DecisionRouter` is an interface anyone can implement, and this class
+      // is what defines the action set — so validate rather than trust. An
+      // unrecognized action falls through to the next strategy.
+      if (!(result.choice in ACTIONS)) {
+        this.onError(
+          'policy:router',
+          new Error(`Decision model returned an unknown action: ${result.choice}`),
+        );
+        return null;
+      }
 
       const decision: CommunicationDecision = {
         action: result.choice,

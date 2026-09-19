@@ -82,6 +82,16 @@ export class ObserverRunner {
 
   private builder: WindowBuilder | null = null;
   private state: ObservationState;
+  /**
+   * How far the *builder* has consumed, which runs ahead of the interpretation
+   * cursor whenever a window is in flight.
+   *
+   * These are two different high-water marks and conflating them re-windows
+   * trace that arrives mid-observation: the persisted cursor deliberately does
+   * not advance until a note is written, so it cannot also be what decides
+   * which events have already been read.
+   */
+  private ingestedThroughSeq: number;
   /** Windows closed but not yet interpreted, in order. */
   private readonly queue: TraceWindow[] = [];
   private draining = false;
@@ -106,6 +116,7 @@ export class ObserverRunner {
     this.state =
       this.store.getObservationState(options.sessionId) ??
       emptyObservationState(options.sessionId);
+    this.ingestedThroughSeq = this.state.processedThroughSeq;
   }
 
   get observationState(): ObservationState {
@@ -119,6 +130,11 @@ export class ObserverRunner {
       this.draining ||
       this.state.processedThroughSeq < this.store.lastSeq(this.sessionId)
     );
+  }
+
+  /** Highest sequence folded into a window, interpreted or not. */
+  get ingestedThrough(): number {
+    return this.ingestedThroughSeq;
   }
 
   /** The developer's stated terms for being interrupted. */
@@ -171,7 +187,7 @@ export class ObserverRunner {
   /** Pull new events out of the store and window them. Synchronous and cheap. */
   private ingest(closeTail: boolean): void {
     const events = this.store.getEvents(this.sessionId, {
-      sinceSeq: this.state.processedThroughSeq,
+      sinceSeq: this.ingestedThroughSeq,
     });
     if (!this.builder) {
       this.builder = new WindowBuilder({
@@ -180,7 +196,10 @@ export class ObserverRunner {
         ...(this.policy ? { policy: this.policy } : {}),
       });
     }
-    if (events.length) this.queue.push(...this.builder.push(events));
+    if (events.length) {
+      this.ingestedThroughSeq = events[events.length - 1]!.seq;
+      this.queue.push(...this.builder.push(events));
+    }
     if (closeTail) {
       const tail = this.builder.flush();
       if (tail) this.queue.push(tail);
