@@ -119,6 +119,41 @@ Every `SemanticState` carries `provenance.eventIds`. The UI resolves those back
 to stored events, each expandable to its raw record. That is how you check what
 evidence produced Vowe's description of a session.
 
+## The observation harness
+
+The interpretation layer above is a *snapshot*: one debounced pass over recent
+events, overwriting a single state object. It answers "what is this session
+doing right now?" and nothing else.
+
+Following long work needs something different — bounded windows, an
+understanding that accumulates, a way to look things up, and a decision about
+whether any of it is worth interrupting a human about. That is the observation
+harness, and it is additive: `SemanticState` and `InterpretationRunner` are
+unchanged and still drive the interpreted-state panel.
+
+```
+L0 native trace → WindowBuilder → ObserverRunner → L1 notes
+                                       ↓
+                             CommunicationPolicy
+                                       ↓
+                                  LiveBridge → Vo ↔ user
+```
+
+Three new boundaries, each with deliberately different reach:
+
+| Object | Holds | Cannot |
+|---|---|---|
+| `ObserverRunner` | store, navigator, observation model | reach a worker — no adapter, no registry |
+| `DelegatedQuestionRunner` | store, navigator, model | surface anything, or reach a worker |
+| `LiveBridge` | transport, observation service, delegated runner | read the trace itself |
+
+`DecisionRouter` and `LiveTransport` join `AgentAdapter` and `LlmClient` as
+interfaces whose implementations live in their own packages, so `@vowe/core`
+still imports no vendor SDK at all.
+
+See [the observation harness](observer-harness.md),
+[context navigation](context-navigation.md) and [the live bridge](live-bridge.md).
+
 ## Persistence
 
 `NdjsonEventStore` writes append-only NDJSON under
@@ -130,7 +165,15 @@ adapters/<provider>.json             opaque adapter state
 sessions/<id>/events.ndjson          normalized events, raw payload included
 sessions/<id>/semantic.ndjson        semantic state history
 sessions/<id>/conversation.ndjson    companion conversation
+sessions/<id>/windows.ndjson         L1 window ranges
+sessions/<id>/window-notes.ndjson    L1 interpretations
+sessions/<id>/surface-updates.ndjson communication candidates + decisions
+sessions/<id>/observation.json       observation cursor + preference
 ```
+
+Windows store ranges, never material: the raw trace stays where the provider
+wrote it, and `observation.json` is what lets a restart resume rather than
+reinterpret.
 
 Rebuilt into memory at startup; a truncated final line from an interrupted
 write is tolerated. `appendEvent` is idempotent on `rawRef`, so re-reading a
