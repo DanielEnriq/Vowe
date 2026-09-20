@@ -13,7 +13,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "probe": "node --experimental-strip-types src/probe.ts"
   },
   "dependencies": {
     "@vowe/core": "workspace:*",
