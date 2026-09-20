@@ -56,6 +56,15 @@ export interface AnthropicLlmClientOptions {
   baseURL?: string;
   /** Ceiling on tool-use iterations per observation or investigation. */
   maxToolIterations?: number;
+  /**
+   * How hard the model works per call.
+   *
+   * The other latency lever besides model choice, and the one that matters most
+   * for observation: a window is interpreted once, continuously, while the
+   * developer is waiting to be told something. Exposed rather than hardcoded so
+   * it can be tuned from replay against a real fixture.
+   */
+  effort?: 'low' | 'medium' | 'high';
   /** Overridden in tests; otherwise the SDK default. */
   client?: Anthropic;
 }
@@ -71,6 +80,7 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
   private readonly client: Anthropic;
   private readonly model: string;
   private readonly maxToolIterations: number;
+  private readonly effort: 'low' | 'medium' | 'high';
 
   constructor(options: AnthropicLlmClientOptions = {}) {
     this.client =
@@ -79,8 +89,13 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
         apiKey: options.apiKey,
         ...(options.baseURL ? { baseURL: options.baseURL } : {}),
       });
-    this.model = options.model ?? 'claude-opus-5';
+    // Sonnet by default. Observation is the hot path — one call per window,
+    // continuously, while someone waits to hear whether anything happened — so
+    // it is the one place where latency is worth more than the last increment
+    // of capability. Override with VOWE_LLM_MODEL when it is not.
+    this.model = options.model ?? 'claude-sonnet-5';
     this.maxToolIterations = options.maxToolIterations ?? 12;
+    this.effort = options.effort ?? 'low';
   }
 
   /**
@@ -102,11 +117,13 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
 
     const baseURL = options.baseURL ?? process.env.VOWE_LLM_BASE_URL;
     const model = options.model ?? process.env.VOWE_LLM_MODEL;
+    const effort = options.effort ?? readEffort(process.env.VOWE_LLM_EFFORT);
     return new AnthropicLlmClient({
       ...options,
       apiKey,
       ...(baseURL ? { baseURL } : {}),
       ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
     });
   }
 
@@ -181,7 +198,7 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
       max_tokens: 8000,
       system: OBSERVER_SYSTEM,
       thinking: { type: 'adaptive' },
-      output_config: { effort: tools.read ? 'medium' : 'low' },
+      output_config: { effort: this.effort },
       tools: bound,
       max_iterations: this.maxToolIterations,
       messages: [{ role: 'user', content: renderObserverPrompt(input) }],
@@ -219,7 +236,10 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
       max_tokens: 16000,
       system: INVESTIGATE_SYSTEM,
       thinking: { type: 'adaptive' },
-      output_config: { effort: 'medium' },
+      // A delegated question has someone waiting on the answer out loud, but it
+      // is also the call most likely to be wrong if rushed, so it gets one step
+      // more effort than routine observation.
+      output_config: { effort: this.effort === 'low' ? 'medium' : this.effort },
       tools: [recordAnswerTool(capture), ...readTools(tools)],
       max_iterations: this.maxToolIterations,
       messages: [{ role: 'user', content: renderInvestigationPrompt(input) }],
@@ -244,6 +264,10 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
     if (!text) throw new Error('The investigation returned no answer.');
     return { spokenAnswer: firstSentence(text), fullAnswer: text, refs };
   }
+}
+
+function readEffort(value: string | undefined): 'low' | 'medium' | 'high' | undefined {
+  return value === 'low' || value === 'medium' || value === 'high' ? value : undefined;
 }
 
 function textOf(message: { content: unknown[] }): string {

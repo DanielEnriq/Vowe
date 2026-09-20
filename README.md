@@ -38,10 +38,35 @@ To reach a model through a gateway rather than the first-party API:
 ```bash
 export OPENROUTER_API_KEY=sk-or-v1-...
 export VOWE_LLM_BASE_URL=https://openrouter.ai/api
-export VOWE_LLM_MODEL=anthropic/claude-opus-5
+export VOWE_LLM_MODEL=anthropic/claude-sonnet-5
 export VOWE_JEV_BASE_URL=https://openrouter.ai/api/alpha/decisions
 export VOWE_JEV_MODEL=typesafe/jev-1.13
 ```
+
+### Speed
+
+Observation is the hot path — one model call per window, continuously, while
+someone waits to hear whether anything happened. So the defaults favour latency:
+Claude Sonnet 5 at `low` effort. Measured on the synthetic fixture (25 records,
+2 windows, both investigated with tools):
+
+| Model | Effort | Time |
+|---|---|---|
+| `claude-sonnet-5` | `low` (default) | 22s |
+| `claude-sonnet-5` | `medium` | 31s |
+| `claude-opus-5` | `medium` | 44s |
+
+Both levers are env-configurable, and `pnpm replay ... --observer llm` is how to
+re-measure after changing either:
+
+```bash
+export VOWE_LLM_MODEL=anthropic/claude-opus-5   # when capability beats latency
+export VOWE_LLM_EFFORT=medium                   # low | medium | high
+```
+
+Delegated questions always take one step more effort than routine observation:
+someone is waiting on that answer out loud, and it is the call most likely to be
+wrong if rushed.
 
 ## What it does
 
