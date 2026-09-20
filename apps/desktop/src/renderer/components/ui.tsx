@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 
-import type { AgentSession, SessionStatus } from '@vowe/core';
+import type { AgentSession, Project, SessionStatus } from '@vowe/core';
 
 /* Small stroke icons, drawn in currentColor. */
 
@@ -140,4 +140,106 @@ export function messageOf(cause: unknown): string {
   const marker = 'Error: ';
   const index = raw.lastIndexOf(marker);
   return index === -1 ? raw : raw.slice(index + marker.length);
+}
+
+export function ChevronIcon({ open }: { open: boolean }): ReactElement {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{
+        transform: open ? 'rotate(90deg)' : 'none',
+        transition: 'transform 120ms ease',
+      }}
+    >
+      <path d="M4.5 2.5L8 6l-3.5 3.5" />
+    </svg>
+  );
+}
+
+/* Projects. Grouping happens here, from data the renderer already holds. */
+
+export interface ProjectGroup {
+  project: Project;
+  /** Still doing something, most recent first. */
+  working: AgentSession[];
+  /** Finished or idle, most recent first. */
+  recent: AgentSession[];
+  lastActivityAt: number;
+}
+
+/**
+ * Group sessions under the repositories they belong to.
+ *
+ * Deterministic and cheap: no model, no derived state to keep in sync, just a
+ * pass over the sessions the renderer was already given. Sessions Vowe could
+ * not place come back separately rather than being dropped.
+ */
+export function groupByProject(
+  projects: Project[],
+  sessions: AgentSession[],
+): { groups: ProjectGroup[]; unplaced: AgentSession[] } {
+  const byRecent = [...sessions].sort(
+    (a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt),
+  );
+
+  const groups = new Map<string, ProjectGroup>();
+  for (const project of projects) {
+    groups.set(project.id, {
+      project,
+      working: [],
+      recent: [],
+      lastActivityAt: 0,
+    });
+  }
+
+  const unplaced: AgentSession[] = [];
+  for (const session of byRecent) {
+    const group = session.projectId ? groups.get(session.projectId) : undefined;
+    if (!group) {
+      unplaced.push(session);
+      continue;
+    }
+    (isLive(session) ? group.working : group.recent).push(session);
+    group.lastActivityAt = Math.max(
+      group.lastActivityAt,
+      Date.parse(session.lastActivityAt) || 0,
+    );
+  }
+
+  // A project with no sessions at all is history, not workspace: keep it out of
+  // the sidebar rather than showing an empty row forever.
+  const populated = [...groups.values()].filter(
+    (group) => group.working.length + group.recent.length > 0,
+  );
+
+  // Most recently active first, so whatever is happening now is at the top.
+  populated.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+  return { groups: populated, unplaced };
+}
+
+/** The one-line summary a project row and the Project Room both show. */
+export function describeActivity(group: ProjectGroup): string {
+  const parts: string[] = [];
+  if (group.working.length) {
+    parts.push(
+      `${group.working.length} agent${group.working.length === 1 ? '' : 's'} working`,
+    );
+  }
+  if (group.recent.length) {
+    parts.push(`${group.recent.length} completed recently`);
+  }
+  return parts.join(' · ') || 'No sessions yet';
+}
+
+/** `/Users/me/projects/Vowe` → `~/projects/Vowe`. Metadata, so keep it short. */
+export function tildePath(absolute: string): string {
+  return absolute.replace(/^(?:\/Users|\/home)\/[^/]+/, '~');
 }

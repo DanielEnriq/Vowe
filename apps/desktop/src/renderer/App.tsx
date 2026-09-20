@@ -1,20 +1,28 @@
-import { useCallback, useEffect, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
 
-import type { AgentSession } from '@vowe/core';
+import type { AgentSession, Project } from '@vowe/core';
 import type { AppStatus } from '../shared/ipc.js';
 
 import { NewSessionSheet } from './components/NewSessionSheet.js';
+import { ProjectRoom } from './components/ProjectRoom.js';
+import { ProjectSidebar, type Selection } from './components/ProjectSidebar.js';
 import { SessionDetail } from './components/SessionDetail.js';
-import { SessionList } from './components/SessionList.js';
+import { groupByProject } from './components/ui.js';
 
 export function App(): ReactElement {
+  const [projects, setProjects] = useState<Project[]>([]);
   const [sessions, setSessions] = useState<AgentSession[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<Selection>({ kind: 'none' });
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const refresh = useCallback(async () => {
-    setSessions(await window.vowe.listSessions());
+    const [nextProjects, nextSessions] = await Promise.all([
+      window.vowe.listProjects(),
+      window.vowe.listSessions(),
+    ]);
+    setProjects(nextProjects);
+    setSessions(nextSessions);
   }, []);
 
   useEffect(() => {
@@ -25,26 +33,53 @@ export function App(): ReactElement {
     });
   }, [refresh]);
 
+  const { groups, unplaced } = useMemo(
+    () => groupByProject(projects, sessions),
+    [projects, sessions],
+  );
+
   const closeSheet = useCallback(() => setSheetOpen(false), []);
-  const selected = sessions.find((session) => session.id === selectedId) ?? null;
+  const openSession = useCallback(
+    (sessionId: string) => setSelection({ kind: 'session', sessionId }),
+    [],
+  );
+
+  const selectedSession =
+    selection.kind === 'session'
+      ? (sessions.find((session) => session.id === selection.sessionId) ?? null)
+      : null;
+
+  const selectedGroup =
+    selection.kind === 'project'
+      ? (groups.find((group) => group.project.id === selection.projectId) ?? null)
+      : null;
+
+  const activeCount = groups.reduce((total, group) => total + group.working.length, 0);
 
   return (
     <div className="app">
-      <SessionList
+      <ProjectSidebar
+        projects={projects}
         sessions={sessions}
-        selectedId={selectedId}
+        selection={selection}
         status={status}
-        onSelect={setSelectedId}
+        onSelect={setSelection}
         onNewSession={() => setSheetOpen(true)}
       />
 
-      {selected ? (
+      {selectedSession ? (
         <SessionDetail
-          key={selected.id}
-          session={selected}
+          key={selectedSession.id}
+          session={selectedSession}
           llmConfigured={status?.llmConfigured ?? false}
           voiceConfigured={status?.voiceConfigured ?? false}
           voiceUnavailableReason={status?.voiceUnavailableReason ?? null}
+        />
+      ) : selectedGroup ? (
+        <ProjectRoom
+          key={selectedGroup.project.id}
+          group={selectedGroup}
+          onOpenSession={openSession}
         />
       ) : (
         <section className="detail">
@@ -57,26 +92,31 @@ export function App(): ReactElement {
                     <h1>Waiting for a coding session</h1>
                     <p>
                       Start Claude Code in any terminal and it appears here
-                      within a few seconds. Vowe only watches: it won’t touch
-                      the session unless you send it an instruction.
+                      within a few seconds, grouped under its repository. Vowe
+                      only watches: it won’t touch the session unless you send
+                      it an instruction.
                     </p>
                   </div>
                   <div>
                     <button className="btn primary" onClick={() => setSheetOpen(true)}>
-                      New session…
+                      New task…
                     </button>
                   </div>
-                  <p className="fine">
-                    Sessions started from Vowe can also be instructed later.
-                    Ones started in a terminal can be watched and asked about.
-                  </p>
                 </>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <h1>Pick a session</h1>
+                  <h1>Your agents are working</h1>
+                  <p className="overview">
+                    {countLabel(groups.length, 'project')}
+                    {' · '}
+                    {countLabel(activeCount, 'active session')}
+                    {unplaced.length > 0 && (
+                      <> · {countLabel(unplaced.length, 'session')} with no project</>
+                    )}
+                  </p>
                   <p>
-                    See what it appears to be doing, ask Vowe about its work,
-                    or send it an instruction.
+                    Open a project to see its work, or open a session to follow
+                    it live.
                   </p>
                 </div>
               )}
@@ -96,9 +136,9 @@ export function App(): ReactElement {
                   <p>
                     No <code className="inline">ANTHROPIC_API_KEY</code> or{' '}
                     <code className="inline">OPENROUTER_API_KEY</code> is set.
-                    Vowe still finds sessions, records every event and shows
-                    their status. To turn on summaries and Ask Vowe, set a key
-                    and restart:
+                    Vowe still finds sessions, groups them by repository,
+                    records every event and shows their status. To turn on
+                    summaries and Ask Vowe, set a key and restart:
                   </p>
                   <code>export ANTHROPIC_API_KEY=sk-ant-…</code>
                 </div>
@@ -114,10 +154,14 @@ export function App(): ReactElement {
           onLaunched={(session) => {
             setSheetOpen(false);
             void refresh();
-            setSelectedId(session.id);
+            setSelection({ kind: 'session', sessionId: session.id });
           }}
         />
       )}
     </div>
   );
+}
+
+function countLabel(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }

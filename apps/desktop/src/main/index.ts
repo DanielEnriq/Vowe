@@ -21,6 +21,7 @@ import {
   LlmSemanticInterpreter,
   NdjsonEventStore,
   ObservationService,
+  ProjectService,
   SessionRegistry,
   UnavailableLiveTransport,
   type DecisionRouter,
@@ -39,6 +40,7 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 interface Services {
   store: NdjsonEventStore;
   registry: SessionRegistry;
+  projects: ProjectService;
   companion: CompanionService;
   runner: InterpretationRunner;
   observation: ObservationService;
@@ -74,8 +76,18 @@ async function createServices(): Promise<Services> {
       )
     : new HeuristicInterpreter();
 
-  const registry = new SessionRegistry({
+  // Projects group sessions by the repository they are working in. Vowe
+  // product state, not a provider concept — the adapter reports `cwd` and
+  // knows nothing about this.
+  const projects = new ProjectService({
     store,
+    listSessions: () => registry.list(),
+    onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
+  });
+
+  const registry: SessionRegistry = new SessionRegistry({
+    store,
+    projects,
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
   });
   registry.registerAdapter(
@@ -172,6 +184,7 @@ async function createServices(): Promise<Services> {
   return {
     store,
     registry,
+    projects,
     companion,
     runner,
     observation,
@@ -221,6 +234,9 @@ function registerIpc(): void {
   ipcMain.handle(IPC.status, async () => (await requireServices()).status);
   ipcMain.handle(IPC.listSessions, async () =>
     (await requireServices()).registry.list(),
+  );
+  ipcMain.handle(IPC.listProjects, async () =>
+    (await requireServices()).projects.listProjectsForDisplay(),
   );
   ipcMain.handle(IPC.getSession, async (_event, sessionId: string) =>
     (await requireServices()).registry.get(sessionId),

@@ -5,6 +5,7 @@ import { IPC, type VoweApi } from '../shared/ipc.js';
 
 const api: VoweApi = {
   getStatus: () => ipcRenderer.invoke(IPC.status),
+  listProjects: () => ipcRenderer.invoke(IPC.listProjects),
   listSessions: () => ipcRenderer.invoke(IPC.listSessions),
   getSession: (sessionId) => ipcRenderer.invoke(IPC.getSession, sessionId),
   getEvents: (sessionId, limit) =>

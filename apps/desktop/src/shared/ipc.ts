@@ -5,6 +5,7 @@ import type {
   LiveStatus,
   NormalizedEvent,
   ObservationStatus,
+  Project,
   SurfaceUpdate,
   TraceWindow,
   WindowNote,
@@ -21,6 +22,13 @@ import type {
 export interface VoweApi {
   getStatus(): Promise<AppStatus>;
 
+  /**
+   * Every repository Vowe has seen work in.
+   *
+   * Sessions already carry `projectId` and are already pushed on change, so the
+   * renderer groups from data it holds rather than asking again per update.
+   */
+  listProjects(): Promise<Project[]>;
   listSessions(): Promise<AgentSession[]>;
   getSession(sessionId: string): Promise<AgentSession | null>;
   getEvents(sessionId: string, limit?: number): Promise<NormalizedEvent[]>;
@@ -102,6 +110,7 @@ export interface AskResult {
 
 export const IPC = {
   status: 'vowe:status',
+  listProjects: 'vowe:projects:list',
   listSessions: 'vowe:sessions:list',
   getSession: 'vowe:session:get',
   getEvents: 'vowe:session:events',
