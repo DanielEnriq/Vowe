@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 
+import { resolveFromInvocation } from './resolve-path.ts';
 import { Sanitizer } from './sanitize.ts';
 
 /**
@@ -16,14 +17,16 @@ import { Sanitizer } from './sanitize.ts';
  * only mostly works is worse than none, because it gets trusted.
  */
 async function main(): Promise<void> {
-  const [input, output, ...rest] = process.argv.slice(2);
-  if (!input || !output) {
+  const [inputArg, outputArg, ...rest] = process.argv.slice(2);
+  if (!inputArg || !outputArg) {
     console.error(
       'usage: sanitize <input.jsonl> <output.jsonl> [--max N] [--keep <name>] [--scrub <name>]',
     );
     process.exitCode = 1;
     return;
   }
+  const input = resolveFromInvocation(inputArg);
+  const output = resolveFromInvocation(outputArg);
 
   const maxIndex = rest.indexOf('--max');
   const maxRecords =

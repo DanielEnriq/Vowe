@@ -3,6 +3,12 @@ import { fileURLToPath } from 'node:url';
 
 import { BrowserWindow, app, ipcMain } from 'electron';
 
+import { loadLocalEnv } from './env.js';
+
+// Before anything reads a credential. Every key Vowe takes is optional, so a
+// missing or malformed file degrades exactly like an empty environment.
+const envFile = loadLocalEnv();
+
 import {
   CommunicationPolicy,
   CompanionService,
@@ -56,6 +62,7 @@ let window: BrowserWindow | null = null;
  * Vowe has no path to the coding agent even by accident.
  */
 async function createServices(): Promise<Services> {
+  if (envFile) console.log(`[vowe] loaded configuration from ${envFile}`);
   const storeRoot = path.join(app.getPath('userData'), 'vowe');
   const store = new NdjsonEventStore(storeRoot);
   await store.init();

@@ -6,9 +6,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "replay": "node --experimental-strip-types src/replay.ts",
-    "sanitize": "node --experimental-strip-types src/sanitize-cli.ts",
-    "make-synthetic": "node --experimental-strip-types src/make-synthetic-cli.ts"
+    "replay": "node --env-file-if-exists=../../.env --experimental-strip-types src/replay.ts",
+    "sanitize": "node --env-file-if-exists=../../.env --experimental-strip-types src/sanitize-cli.ts",
+    "make-synthetic": "node --env-file-if-exists=../../.env --experimental-strip-types src/make-synthetic-cli.ts"
   },
   "dependencies": {
     "@vowe/adapter-claude-code": "workspace:*",

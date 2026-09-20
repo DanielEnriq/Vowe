@@ -3,3 +3,7 @@ dist/
 out/
 *.log
 .DS_Store
+
+# Local credentials. Never commit these — see .env.example for the template.
+.env
+.env.local

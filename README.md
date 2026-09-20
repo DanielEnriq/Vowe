@@ -19,29 +19,23 @@ pnpm install
 pnpm dev            # builds the packages, then launches the Electron app
 ```
 
-Optional credentials, each of which the app degrades around rather than
-requiring:
+Credentials go in a local `.env`:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...     # interpretation, observation, answers
-export OPENAI_API_KEY=sk-...            # Vo's voice
-export TYPESAFE_API_KEY=...             # structured decisions
+cp .env.example .env     # then fill in what you have
 ```
 
-Any of them can be absent. Without a model key the app still discovers sessions,
-ingests events and shows deterministic status. Without a voice key everything
-works except talking to Vo, and the UI says so. Without a decision key every
-decision falls back to something deterministic.
+Every value is optional and Vowe degrades around each missing one:
 
-To reach a model through a gateway rather than the first-party API:
+| Missing | What still works |
+|---|---|
+| Model key | Discovery, ingestion, windows, deterministic status — notes just say nothing interpreted them |
+| `OPENAI_API_KEY` | Everything except talking to Vo. The UI says so. Observation is unaffected |
+| Decision key | Everything; each decision falls back to something deterministic |
 
-```bash
-export OPENROUTER_API_KEY=sk-or-v1-...
-export VOWE_LLM_BASE_URL=https://openrouter.ai/api
-export VOWE_LLM_MODEL=anthropic/claude-sonnet-5
-export VOWE_JEV_BASE_URL=https://openrouter.ai/api/alpha/decisions
-export VOWE_JEV_MODEL=typesafe/jev-1.13
-```
+`.env` is gitignored, and anything already exported still wins over it, so
+`VOWE_LLM_MODEL=… pnpm dev` remains a one-off override. See
+[`.env.example`](.env.example) for every option.
 
 ### Speed
 
@@ -60,8 +54,8 @@ Both levers are env-configurable, and `pnpm replay ... --observer llm` is how to
 re-measure after changing either:
 
 ```bash
-export VOWE_LLM_MODEL=anthropic/claude-opus-5   # when capability beats latency
-export VOWE_LLM_EFFORT=medium                   # low | medium | high
+VOWE_LLM_MODEL=anthropic/claude-opus-5   # when capability beats latency
+VOWE_LLM_EFFORT=medium                   # low | medium | high
 ```
 
 Delegated questions always take one step more effort than routine observation:
@@ -126,4 +120,8 @@ docs/                          architecture, the harness, navigation, the bridge
 ```bash
 pnpm test        # 81 tests, no credentials required
 pnpm replay packages/replay/fixtures/repeated-failures.synthetic.jsonl
+
+# Against the real provider, once .env has a key:
+pnpm replay packages/replay/fixtures/repeated-failures.synthetic.jsonl --observer llm
+pnpm --filter @vowe/live-openai run probe    # does GPT-Live accept our session?
 ```

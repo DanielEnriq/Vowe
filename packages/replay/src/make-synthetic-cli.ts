@@ -1,8 +1,10 @@
 import { writeFile } from 'node:fs/promises';
 
 import { buildSyntheticTrace } from './make-synthetic.ts';
+import { resolveFromInvocation } from './resolve-path.ts';
 
-const output = process.argv[2];
+const outputArg = process.argv[2];
+const output = outputArg ? resolveFromInvocation(outputArg) : undefined;
 if (!output) {
   console.error('usage: make-synthetic <output.jsonl>');
   process.exitCode = 1;

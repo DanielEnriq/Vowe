@@ -3,6 +3,7 @@ import { JevDecisionRouter } from '@vowe/decision-jev';
 import { HeuristicDecisionRouter, type DecisionRouter } from '@vowe/core';
 
 import { replayFixture } from './harness.ts';
+import { resolveFromInvocation } from './resolve-path.ts';
 import { ScriptedObserver } from './scripted-observer.ts';
 
 /**
@@ -17,14 +18,15 @@ import { ScriptedObserver } from './scripted-observer.ts';
  * the output. With the scripted observer it needs no credentials at all.
  */
 async function main(): Promise<void> {
-  const [fixture, ...rest] = process.argv.slice(2);
-  if (!fixture) {
+  const [fixtureArg, ...rest] = process.argv.slice(2);
+  if (!fixtureArg) {
     console.error(
       'usage: replay <fixture.jsonl> [--observer scripted|llm] [--max-events N] [--max-tokens N] [--preference "..."]',
     );
     process.exitCode = 1;
     return;
   }
+  const fixture = resolveFromInvocation(fixtureArg);
 
   const flag = (name: string): string | undefined => {
     const index = rest.indexOf(`--${name}`);
@@ -72,7 +74,7 @@ async function main(): Promise<void> {
 
   const windows = result.store.getWindows(result.sessionId);
 
-  console.log(`\nFixture      ${fixture}`);
+  console.log(`\nFixture      ${fixtureArg}`);
   console.log(`Observer     ${mode}`);
   console.log(`Decisions    ${router.name}${router.available ? '' : ' (unavailable — deterministic fallbacks)'}`);
   console.log(`Preference   "${preference}"`);

@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "probe": "node --experimental-strip-types src/probe.ts"
+    "probe": "node --env-file-if-exists=../../.env --experimental-strip-types src/probe.ts"
   },
   "dependencies": {
     "@vowe/core": "workspace:*",
