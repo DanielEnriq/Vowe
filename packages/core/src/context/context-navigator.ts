@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { open } from 'node:fs/promises';
+import path from 'node:path';
 
+import type { ProjectKnowledgeService } from '../knowledge/project-knowledge-service.js';
 import type { EventStore } from '../store/event-store.js';
 import type { NormalizedEvent } from '../types/events.js';
 import type { TraceWindow, WindowNote } from '../observation/trace-window.js';
@@ -65,6 +67,16 @@ export interface ContextNavigatorOptions {
   /** Resolves a session's working directory. Kept as a function so the
    *  navigator does not need the registry. */
   resolveCwd?: (sessionId: string) => string | null;
+  /**
+   * Resolves a session's project. Same convention as `resolveCwd`: a function,
+   * so the navigator does not have to hold the project service.
+   */
+  resolveProject?: (sessionId: string) => string | null;
+  /**
+   * Persistent repository knowledge. Absent, `repo` search is `git grep` and
+   * nothing else — which is exactly what it was before this existed.
+   */
+  knowledge?: ProjectKnowledgeService;
   defaultLimit?: number;
   /** Per-hit snippet ceiling. */
   maxSnippetBytes?: number;
@@ -101,6 +113,8 @@ const TRANSCRIPT_KINDS = new Set<NormalizedEvent['kind']>([
 export class ContextNavigator {
   private readonly store: EventStore;
   private readonly resolveCwd: (sessionId: string) => string | null;
+  private readonly resolveProject: (sessionId: string) => string | null;
+  private readonly knowledge: ProjectKnowledgeService | null;
   private readonly defaultLimit: number;
   private readonly maxSnippetBytes: number;
   private readonly maxOpenBytes: number;
@@ -109,6 +123,10 @@ export class ContextNavigator {
     this.store = options.store;
     this.resolveCwd =
       options.resolveCwd ?? ((sessionId) => this.store.getSession(sessionId)?.cwd ?? null);
+    this.resolveProject =
+      options.resolveProject ??
+      ((sessionId) => this.store.getSession(sessionId)?.projectId ?? null);
+    this.knowledge = options.knowledge ?? null;
     this.defaultLimit = options.defaultLimit ?? DEFAULT_LIMIT;
     this.maxSnippetBytes = options.maxSnippetBytes ?? MAX_SNIPPET_BYTES;
     this.maxOpenBytes = options.maxOpenBytes ?? MAX_OPEN_BYTES;
@@ -218,15 +236,59 @@ export class ContextNavigator {
     });
   }
 
+  /**
+   * The working tree, through whatever Vowe knows about it.
+   *
+   * Graph knowledge **augments** `git grep`; it never replaces it. That
+   * ordering is the safety property: an index that is stale, still building or
+   * absent can only ever add nothing, and can never hide a file that exists on
+   * disk right now.
+   */
   private async searchRepo(
     sessionId: string,
     query: string,
     limit: number,
   ): Promise<SearchHit[]> {
+    const hits: SearchHit[] = [];
+    const projectId = this.resolveProject(sessionId);
+
+    if (projectId && this.knowledge?.available) {
+      const known = await this.knowledge.search({
+        projectId,
+        query,
+        limit: Math.ceil(limit / 2),
+      });
+      for (const hit of known) {
+        const ref: ContextRef = { kind: 'symbol', projectId, nodeId: hit.nodeId };
+        hits.push({
+          ref,
+          refId: formatRef(ref),
+          source: 'repo' as const,
+          label: hit.kind ? `${hit.label} (${hit.kind})` : hit.label,
+          snippet: this.snippet(hit.summary),
+        });
+      }
+    }
+
+    hits.push(...(await this.grepHits(sessionId, query, limit - hits.length)));
+    return hits;
+  }
+
+  private async grepHits(
+    sessionId: string,
+    query: string,
+    limit: number,
+  ): Promise<SearchHit[]> {
+    if (limit <= 0) return [];
     const cwd = this.resolveCwd(sessionId);
     const found = await gitGrep(cwd, query, limit);
     return found.map((hit) => {
-      const ref: ContextRef = { kind: 'repo', path: hit.path, line: hit.line };
+      // `git grep` prints repository-relative paths, but a ref travels through
+      // model context and comes back to a process whose working directory is
+      // not the repository. Absolute here, at the one place that still knows
+      // which tree it came from.
+      const absolute = cwd ? path.resolve(cwd, hit.path) : hit.path;
+      const ref: ContextRef = { kind: 'repo', path: absolute, line: hit.line };
       return {
         ref,
         refId: formatRef(ref),
@@ -264,6 +326,8 @@ export class ContextNavigator {
         return this.openEvent(ref, depth);
       case 'repo':
         return this.openRepo(ref);
+      case 'symbol':
+        return this.openSymbol(ref);
       case 'diff': {
         const diff = await this.getDiff({ sessionId: ref.sessionId, path: ref.path });
         return this.result(ref, renderDiff(diff), []);
@@ -383,23 +447,88 @@ export class ContextNavigator {
   private async openRepo(
     ref: Extract<ContextRef, { kind: 'repo' }>,
   ): Promise<OpenResult> {
-    try {
-      const text = await readFile(ref.path, 'utf8');
-      const lines = text.split('\n');
-      if (ref.line === undefined) {
-        return this.result(ref, lines.slice(0, 200).join('\n'), []);
+    const slice = await this.readSlice(ref.path, ref.line);
+    if (slice === null) {
+      return this.missing(ref, `Could not read ${ref.path}.`);
+    }
+    return this.result(ref, slice, []);
+  }
+
+  /**
+   * A node in the code graph, and then the source it points at.
+   *
+   * The graph is orientation, never an answer. So this does not stop at what
+   * the graph says about a symbol — it goes on to read the file, because the
+   * graph was built at some point in the past and the file is true now. A
+   * caller that only ever saw the graph's own description could repeat a claim
+   * the source stopped supporting three commits ago.
+   */
+  private async openSymbol(
+    ref: Extract<ContextRef, { kind: 'symbol' }>,
+  ): Promise<OpenResult> {
+    if (!this.knowledge?.available) {
+      return this.missing(ref, 'Repository knowledge is not available.');
+    }
+    const node = await this.knowledge.open(ref.projectId, ref.nodeId);
+    if (!node) return this.missing(ref, 'No such symbol in the code graph.');
+
+    const lines: string[] = [
+      node.kind ? `${node.label} — ${node.kind}` : node.label,
+    ];
+    if (node.summary) lines.push(node.summary);
+
+    if (node.related.length) {
+      lines.push('', 'Connected to:');
+      for (const edge of node.related.slice(0, 12)) {
+        lines.push(`  ${edge.relation}`);
       }
-      const from = Math.max(0, ref.line - 30);
-      const to = Math.min(lines.length, ref.line + 30);
-      const numbered = lines
-        .slice(from, to)
-        .map((line, offset) => `${String(from + offset + 1).padStart(5)} ${line}`);
-      return this.result(ref, numbered.join('\n'), []);
-    } catch (error) {
-      return this.missing(
-        ref,
-        `Could not read ${ref.path}: ${error instanceof Error ? error.message : String(error)}`,
+    }
+
+    const related: ContextRef[] = [];
+    for (const location of node.locations) {
+      const repoRef: ContextRef = {
+        kind: 'repo',
+        path: location.path,
+        ...(location.line === undefined ? {} : { line: location.line }),
+      };
+      related.push(repoRef);
+      const slice = await this.readSlice(location.path, location.line);
+      lines.push(
+        '',
+        `Source — ${formatRef(repoRef)}:`,
+        slice ?? '  unavailable — the file could not be read',
       );
+    }
+    if (!node.locations.length) {
+      lines.push(
+        '',
+        'The graph records no source location for this. Search the repository by name to find it.',
+      );
+    }
+
+    for (const edge of node.related.slice(0, 6)) {
+      related.push({ kind: 'symbol', projectId: ref.projectId, nodeId: edge.nodeId });
+    }
+
+    return this.result(ref, lines.join('\n'), related);
+  }
+
+  /** A numbered window around a line, or the head of the file without one. */
+  private async readSlice(
+    file: string,
+    line: number | undefined,
+  ): Promise<string | null> {
+    try {
+      const lines = (await readFile(file, 'utf8')).split('\n');
+      if (line === undefined) return lines.slice(0, 200).join('\n');
+      const from = Math.max(0, line - 30);
+      const to = Math.min(lines.length, line + 30);
+      return lines
+        .slice(from, to)
+        .map((text, offset) => `${String(from + offset + 1).padStart(5)} ${text}`)
+        .join('\n');
+    } catch {
+      return null;
     }
   }
 

@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { CommunicationPolicy } from '../src/communication/communication-policy.js';
 import { ContextNavigator } from '../src/context/context-navigator.js';
 import { HeuristicDecisionRouter } from '../src/decision/decision-router.js';
+import { ProjectKnowledgeService } from '../src/knowledge/project-knowledge-service.js';
+import { UnavailableProjectKnowledge } from '../src/knowledge/project-knowledge.js';
 import { UnavailableLiveTransport } from '../src/live/live-transport.js';
 import { ObserverRunner, looksUncertain } from '../src/observation/observer-runner.js';
 import type { ObservationLlm } from '../src/llm/observation-llm.js';
@@ -144,5 +146,74 @@ describe('acceptance 8: no voice credential configured', () => {
     // And the text view everything degrades to remains available.
     expect(store.getWindows(TEST_SESSION)).toHaveLength(2);
     expect(store.getObservationState(TEST_SESSION)?.processedThroughSeq).toBe(20);
+  });
+});
+
+describe('acceptance 8: no repository knowledge provider', () => {
+  it('observes a whole session normally without one', async () => {
+    const fixture = await temporaryStore();
+    cleanup = fixture.cleanup;
+    const { store } = fixture;
+    await store.upsertSession(testSession());
+    await storeEvents(store, steadyEvents(20));
+
+    const observer: ObservationLlm = {
+      async observeWindow(input) {
+        return { summary: `window ${input.window.windowIndex}` };
+      },
+      async investigate() {
+        throw new Error('not used here');
+      },
+    };
+
+    // A navigator built the way it was before any of this existed.
+    await new ObserverRunner({
+      sessionId: TEST_SESSION,
+      store,
+      observer,
+      navigator: new ContextNavigator({ store }),
+      getSession: () => store.getSession(TEST_SESSION),
+      policy: { maxEvents: 10 },
+    }).catchUp();
+
+    expect(store.getWindowNotes(TEST_SESSION)).toHaveLength(2);
+  });
+
+  it('answers every knowledge question without anyone checking first', async () => {
+    const service = new ProjectKnowledgeService({
+      provider: new UnavailableProjectKnowledge('graphify is not installed'),
+    });
+
+    // The same contract `HeuristicDecisionRouter` and `UnavailableLiveTransport`
+    // keep: the floor is a usable object, not an absence to be guarded against.
+    expect(service.available).toBe(false);
+    expect(service.unavailableReason).toBe('graphify is not installed');
+    expect(await service.search({ projectId: 'git:x', query: 'anything' })).toEqual([]);
+    expect(await service.open('git:x', 'n1')).toBeNull();
+    expect((await service.describe('git:x')).status).toBe('unindexed');
+    service.stop();
+  });
+
+  it('falls back to the search it had before, over a real working tree', async () => {
+    const fixture = await temporaryStore();
+    cleanup = fixture.cleanup;
+    // Vowe's own repository is a working tree, so this exercises the real
+    // `git grep` path rather than a stand-in for it.
+    await fixture.store.upsertSession(testSession({ cwd: process.cwd() }));
+
+    const navigator = new ContextNavigator({
+      store: fixture.store,
+      knowledge: new ProjectKnowledgeService({
+        provider: new UnavailableProjectKnowledge(),
+      }),
+    });
+
+    const hits = await navigator.searchContext({
+      sessionId: TEST_SESSION,
+      query: 'ProjectKnowledgeService',
+      sources: ['repo'],
+    });
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((hit) => hit.ref.kind === 'repo')).toBe(true);
   });
 });

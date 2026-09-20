@@ -14,6 +14,7 @@
     "@vowe/adapter-claude-code": "workspace:*",
     "@vowe/core": "workspace:*",
     "@vowe/decision-jev": "workspace:*",
+    "@vowe/knowledge-graphify": "workspace:*",
     "@vowe/live-openai": "workspace:*",
     "@vowe/llm": "workspace:*"
   },

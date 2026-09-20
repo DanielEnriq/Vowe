@@ -108,6 +108,16 @@ export class NdjsonEventStore implements EventStore {
     return this.projects.get(projectId) ?? null;
   }
 
+  /**
+   * `<root>/projects/<safeId>/`, alongside `sessions/<safeId>/`.
+   *
+   * Returned, not created: whoever writes there knows what it is writing and
+   * can make the directory itself. Nothing in this store reads it back.
+   */
+  projectDataDir(projectId: string): string {
+    return path.join(this.root, 'projects', safeName(projectId));
+  }
+
   // ---------------------------------------------------------------- sessions
 
   async upsertSession(session: AgentSession): Promise<void> {

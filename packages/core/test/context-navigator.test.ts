@@ -29,6 +29,9 @@ describe('ContextRef', () => {
       { kind: 'repo', path: 'src/b.ts' },
       { kind: 'diff', sessionId: TEST_SESSION, path: 'src/c.ts' },
       { kind: 'diff', sessionId: TEST_SESSION },
+      // A project id contains a colon too, and a graph node id is the
+      // provider's own opaque string — so this one splits on `#` twice over.
+      { kind: 'symbol', projectId: 'git:abc123', nodeId: 'src/a.ts::Thing#init' },
     ];
     for (const ref of refs) {
       // Session ids contain a colon themselves, which is the case a naive

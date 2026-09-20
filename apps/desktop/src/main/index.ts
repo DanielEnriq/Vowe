@@ -21,6 +21,7 @@ import {
   LlmSemanticInterpreter,
   NdjsonEventStore,
   ObservationService,
+  ProjectKnowledgeService,
   ProjectService,
   SessionRegistry,
   UnavailableLiveTransport,
@@ -29,6 +30,7 @@ import {
   type SemanticInterpreter,
 } from '@vowe/core';
 import { ClaudeCodeAdapter, PROVIDER } from '@vowe/adapter-claude-code';
+import { GraphifyProjectKnowledgeProvider } from '@vowe/knowledge-graphify';
 import { AnthropicLlmClient } from '@vowe/llm';
 import { JevDecisionRouter } from '@vowe/decision-jev';
 import { OpenAiLiveTransport } from '@vowe/live-openai';
@@ -41,6 +43,7 @@ interface Services {
   store: NdjsonEventStore;
   registry: SessionRegistry;
   projects: ProjectService;
+  knowledge: ProjectKnowledgeService;
   companion: CompanionService;
   runner: InterpretationRunner;
   observation: ObservationService;
@@ -106,6 +109,27 @@ async function createServices(): Promise<Services> {
 
   const companion = new CompanionService({ store, llm });
 
+  // ------------------------------------------------------- project knowledge
+
+  // What each repository contains, kept in Vowe's own directory and never in
+  // the user's checkout. Optional in the same way every credential is: absent,
+  // repository search is `git grep` and nothing else changes.
+  const knowledgeProvider = await GraphifyProjectKnowledgeProvider.fromEnvironment({
+    resolveProject: (projectId) => store.getProject(projectId),
+    dataDirFor: (projectId) => store.projectDataDir(projectId),
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+    onStateChange: (state) => {
+      window?.webContents.send(IPC.projectKnowledgeChanged, state.projectId);
+    },
+  });
+  if (!knowledgeProvider.available) {
+    console.log(`[vowe] code knowledge unavailable — ${knowledgeProvider.unavailableReason}`);
+  }
+  const knowledge = new ProjectKnowledgeService({
+    provider: knowledgeProvider,
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+  });
+
   // ------------------------------------------------------ observation harness
 
   // One read-only view of everything Vowe can see, shared unchanged by the
@@ -113,6 +137,8 @@ async function createServices(): Promise<Services> {
   const navigator = new ContextNavigator({
     store,
     resolveCwd: (sessionId) => registry.get(sessionId)?.cwd ?? null,
+    resolveProject: (sessionId) => registry.get(sessionId)?.projectId ?? null,
+    knowledge,
   });
 
   const router: DecisionRouter =
@@ -177,6 +203,12 @@ async function createServices(): Promise<Services> {
   registry.on('session:removed', broadcastSessions);
   registry.on('event', (event) => {
     window?.webContents.send(IPC.sessionEvent, event);
+    // Vowe needs no filesystem watcher: the workers it observes are the ones
+    // doing the editing, and the adapters already normalize that into an event.
+    if (event.kind === 'file_changed') {
+      const projectId = registry.get(event.sessionId)?.projectId;
+      if (projectId) knowledge.noteSourceChange(projectId);
+    }
   });
 
   await registry.start();
@@ -185,6 +217,7 @@ async function createServices(): Promise<Services> {
     store,
     registry,
     projects,
+    knowledge,
     companion,
     runner,
     observation,
@@ -194,6 +227,8 @@ async function createServices(): Promise<Services> {
       voiceConfigured: liveTransport.available,
       voiceUnavailableReason: liveTransport.unavailableReason,
       decisionsConfigured: router.available,
+      codeKnowledgeConfigured: knowledgeProvider.available,
+      codeKnowledgeUnavailableReason: knowledgeProvider.unavailableReason ?? null,
       storeRoot,
       providers: [PROVIDER],
     },
@@ -258,6 +293,12 @@ function registerIpc(): void {
   );
   ipcMain.handle(IPC.refreshInterpretation, async (_event, sessionId: string) =>
     (await requireServices()).runner.refresh(sessionId),
+  );
+
+  // Reads persisted index state. Deliberately not `ensureIndexed`: opening a
+  // room should not commit the machine to indexing the repository.
+  ipcMain.handle(IPC.getProjectKnowledge, async (_event, projectId: string) =>
+    (await requireServices()).knowledge.describe(projectId),
   );
 
   // Answered from what we observed. Deliberately has no adapter in reach.

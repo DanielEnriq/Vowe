@@ -1,6 +1,11 @@
 import type { ReactElement } from 'react';
 
-import type { AgentSession, Project, SessionStatus } from '@vowe/core';
+import type {
+  AgentSession,
+  Project,
+  RepoIndexState,
+  SessionStatus,
+} from '@vowe/core';
 
 /* Small stroke icons, drawn in currentColor. */
 
@@ -242,4 +247,41 @@ export function describeActivity(group: ProjectGroup): string {
 /** `/Users/me/projects/Vowe` → `~/projects/Vowe`. Metadata, so keep it short. */
 export function tildePath(absolute: string): string {
   return absolute.replace(/^(?:\/Users|\/home)\/[^/]+/, '~');
+}
+
+/**
+ * How a Project's code knowledge reads in the room.
+ *
+ * Reuses the session status dots rather than inventing a second vocabulary of
+ * colour: whatever `working` already means to the eye, it means here too.
+ */
+export function codeKnowledgeChip(
+  state: RepoIndexState | null,
+  unavailableReason: string | null,
+): { dot: string; label: string; title?: string } {
+  if (unavailableReason) {
+    return {
+      dot: 'idle',
+      label: 'Unavailable',
+      title: unavailableReason,
+    };
+  }
+  switch (state?.status) {
+    case 'indexing':
+      return { dot: 'starting', label: 'Indexing…' };
+    case 'ready':
+      return { dot: 'working', label: 'Ready' };
+    case 'stale':
+      // Still usable while it catches up — it only ever orients, and the
+      // source and the diff are what any claim gets checked against.
+      return { dot: 'waiting', label: 'Updating…' };
+    case 'error':
+      return {
+        dot: 'unknown',
+        label: 'Error',
+        ...(state.lastError ? { title: state.lastError } : {}),
+      };
+    default:
+      return { dot: 'idle', label: 'Not indexed' };
+  }
 }

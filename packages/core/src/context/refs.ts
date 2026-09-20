@@ -24,7 +24,9 @@ export type ContextRef =
   /** A location in the working tree. */
   | { kind: 'repo'; path: string; line?: number }
   /** The current diff, optionally narrowed to one path. */
-  | { kind: 'diff'; sessionId: string; path?: string };
+  | { kind: 'diff'; sessionId: string; path?: string }
+  /** A node in a project's code graph: orientation, not truth. */
+  | { kind: 'symbol'; projectId: string; nodeId: string };
 
 /**
  * The string form. Kept terse because these travel through model context, and
@@ -46,6 +48,11 @@ export function formatRef(ref: ContextRef): string {
       // `#` separates the path, not `:`. A session id contains a colon of its
       // own, so `diff:a:b` cannot be told apart from a session id with a path.
       return ref.path ? `diff:${ref.sessionId}#${ref.path}` : `diff:${ref.sessionId}`;
+    case 'symbol':
+      // `#` again, and for a second reason on top of the colon in a project
+      // id: a graph node id is the provider's own string, and Vowe does not
+      // get to assume what is in it.
+      return `symbol:${ref.projectId}#${ref.nodeId}`;
   }
 }
 
@@ -99,6 +106,14 @@ export function parseRef(value: string | ContextRef): ContextRef | null {
       return path
         ? { kind: 'diff', sessionId, path }
         : { kind: 'diff', sessionId };
+    }
+    case 'symbol': {
+      const hash = rest.indexOf('#');
+      if (hash === -1) return null;
+      const projectId = rest.slice(0, hash);
+      const nodeId = rest.slice(hash + 1);
+      if (!projectId || !nodeId) return null;
+      return { kind: 'symbol', projectId, nodeId };
     }
     default:
       return null;

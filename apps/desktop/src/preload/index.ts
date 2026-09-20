@@ -22,6 +22,8 @@ const api: VoweApi = {
     ipcRenderer.invoke(IPC.sendInstruction, sessionId, text),
   launchSession: (cwd, prompt) => ipcRenderer.invoke(IPC.launch, cwd, prompt),
   chooseFolder: () => ipcRenderer.invoke(IPC.chooseFolder),
+  getProjectKnowledge: (projectId) =>
+    ipcRenderer.invoke(IPC.getProjectKnowledge, projectId),
 
   startObserving: (sessionId) =>
     ipcRenderer.invoke(IPC.startObserving, sessionId),
@@ -52,6 +54,11 @@ const api: VoweApi = {
     const handler = (_: unknown, sessionId: string) => listener(sessionId);
     ipcRenderer.on(IPC.observationChanged, handler);
     return () => ipcRenderer.off(IPC.observationChanged, handler);
+  },
+  onProjectKnowledgeChanged: (listener) => {
+    const handler = (_: unknown, projectId: string) => listener(projectId);
+    ipcRenderer.on(IPC.projectKnowledgeChanged, handler);
+    return () => ipcRenderer.off(IPC.projectKnowledgeChanged, handler);
   },
   onLiveStatus: (listener) => {
     const handler = (_: unknown, status: LiveStatus) => listener(status);

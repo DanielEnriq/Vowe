@@ -13,6 +13,10 @@ export * from './companion/companion-service.js';
 // Projects: the durable parent of sessions.
 export * from './projects/index.js';
 
+// Project knowledge: what a repository contains, and what Vowe has learned.
+export * from './knowledge/project-knowledge.js';
+export * from './knowledge/project-knowledge-service.js';
+
 // Observation harness: L0 trace -> windows -> L1 notes -> communication.
 export * from './observation/trace-window.js';
 export * from './observation/window-builder.js';

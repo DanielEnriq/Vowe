@@ -22,6 +22,10 @@ export default defineConfig({
       { find: '@vowe/decision-jev', replacement: new URL('./packages/decision-jev/src/index.ts', import.meta.url).pathname },
       { find: '@vowe/live-openai', replacement: new URL('./packages/live-openai/src/index.ts', import.meta.url).pathname },
       {
+        find: '@vowe/knowledge-graphify',
+        replacement: new URL('./packages/knowledge-graphify/src/index.ts', import.meta.url).pathname,
+      },
+      {
         find: '@vowe/adapter-claude-code',
         replacement: new URL('./packages/adapter-claude-code/src/index.ts', import.meta.url).pathname,
       },

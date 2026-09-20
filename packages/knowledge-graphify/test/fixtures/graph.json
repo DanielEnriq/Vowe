@@ -1,0 +1,223 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "id": "src_registry_sessionregistry",
+      "label": "SessionRegistry",
+      "_callable": true,
+      "_callable_class": true,
+      "_origin": "ast",
+      "community": 0,
+      "file_type": "code",
+      "norm_label": "sessionregistry",
+      "source_file": "src/registry.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_project_projectservice",
+      "label": "ProjectService",
+      "_callable": true,
+      "_callable_class": true,
+      "_origin": "ast",
+      "community": 1,
+      "file_type": "code",
+      "norm_label": "projectservice",
+      "source_file": "src/project.ts",
+      "source_location": "L2"
+    },
+    {
+      "id": "src_registry_assignproject",
+      "label": "assignProject()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "file_type": "code",
+      "norm_label": "assignproject()",
+      "source_file": "src/registry.ts",
+      "source_location": "L4"
+    },
+    {
+      "id": "src_registry_sessionregistry_absorb",
+      "label": ".absorb()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "file_type": "code",
+      "norm_label": ".absorb()",
+      "source_file": "src/registry.ts",
+      "source_location": "L2"
+    },
+    {
+      "id": "src_project_projectservice_resolve",
+      "label": ".resolve()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 1,
+      "file_type": "code",
+      "norm_label": ".resolve()",
+      "source_file": "src/project.ts",
+      "source_location": "L2"
+    },
+    {
+      "id": "src_format_formatbytes",
+      "label": "formatBytes()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 2,
+      "file_type": "code",
+      "norm_label": "formatbytes()",
+      "source_file": "src/format.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_registry",
+      "label": "registry.ts",
+      "_origin": "ast",
+      "community": 0,
+      "file_type": "code",
+      "norm_label": "registry.ts",
+      "source_file": "src/registry.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_project",
+      "label": "project.ts",
+      "_origin": "ast",
+      "community": 1,
+      "file_type": "code",
+      "norm_label": "project.ts",
+      "source_file": "src/project.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_format",
+      "label": "format.ts",
+      "_origin": "ast",
+      "community": 2,
+      "file_type": "code",
+      "norm_label": "format.ts",
+      "source_file": "src/format.ts",
+      "source_location": "L1"
+    }
+  ],
+  "links": [
+    {
+      "source": "src_project_projectservice_resolve",
+      "target": "src_registry_assignproject",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "src/project.ts",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "src_registry_sessionregistry_absorb",
+      "target": "src_registry_assignproject",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "src/registry.ts",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "src_project",
+      "target": "src_registry_assignproject",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "src/project.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "src_project",
+      "target": "src_registry",
+      "relation": "imports_from",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "src/project.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "src_format",
+      "target": "src_format_formatbytes",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/format.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "src_project",
+      "target": "src_project_projectservice",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/project.ts",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "src_registry",
+      "target": "src_registry_sessionregistry",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/registry.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "src_registry",
+      "target": "src_registry_assignproject",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/registry.ts",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "src_project_projectservice",
+      "target": "src_project_projectservice_resolve",
+      "relation": "method",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/project.ts",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "src_registry_sessionregistry",
+      "target": "src_registry_sessionregistry_absorb",
+      "relation": "method",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/registry.ts",
+      "source_location": "L2",
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [],
+  "built_at_commit": "28fab057bd13b9a7dc794a8dcb95891ea2fe3aa0"
+}

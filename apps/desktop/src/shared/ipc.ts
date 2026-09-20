@@ -6,6 +6,7 @@ import type {
   NormalizedEvent,
   ObservationStatus,
   Project,
+  RepoIndexState,
   SurfaceUpdate,
   TraceWindow,
   WindowNote,
@@ -70,9 +71,20 @@ export interface VoweApi {
   /** Native folder picker for choosing where a new session runs. */
   chooseFolder(): Promise<string | null>;
 
+  // ----------------------------------------------------- project knowledge
+
+  /**
+   * How far a Project's code knowledge has got.
+   *
+   * Reading this never starts an index: the room shows what is known, and only
+   * a repository question commits the machine to building anything.
+   */
+  getProjectKnowledge(projectId: string): Promise<RepoIndexState>;
+
   onSessionsChanged(listener: () => void): () => void;
   onSessionEvent(listener: (event: NormalizedEvent) => void): () => void;
   onObservationChanged(listener: (sessionId: string) => void): () => void;
+  onProjectKnowledgeChanged(listener: (projectId: string) => void): () => void;
   onLiveStatus(listener: (status: LiveStatus) => void): () => void;
 }
 
@@ -98,6 +110,10 @@ export interface AppStatus {
   voiceUnavailableReason: string | null;
   /** False when no decision model is configured; fallbacks are used. */
   decisionsConfigured: boolean;
+  /** False when no code graph can be built; repo search is `git grep` alone. */
+  codeKnowledgeConfigured: boolean;
+  /** Why code knowledge is unavailable, in words the UI can show directly. */
+  codeKnowledgeUnavailableReason: string | null;
   storeRoot: string;
   providers: string[];
 }
@@ -128,8 +144,10 @@ export const IPC = {
   stopLive: 'vowe:live:stop',
   liveStatus: 'vowe:live:status',
   chooseFolder: 'vowe:dialog:choose-folder',
+  getProjectKnowledge: 'vowe:knowledge:state',
   sessionsChanged: 'vowe:sessions:changed',
   sessionEvent: 'vowe:session:event',
   observationChanged: 'vowe:observe:changed',
+  projectKnowledgeChanged: 'vowe:knowledge:changed',
   liveStatusChanged: 'vowe:live:status-changed',
 } as const;

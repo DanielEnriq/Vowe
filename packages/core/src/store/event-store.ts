@@ -106,6 +106,18 @@ export interface EventStore {
   getProject(projectId: string): Project | null;
 
   /**
+   * Where a project's *derived* knowledge belongs — a code graph, what Vowe has
+   * learned, anything else that is expensive to rebuild and belongs to the
+   * project rather than to a session.
+   *
+   * The store hands out the path and stops there. It does not read or write
+   * inside, because it does not know what a code graph is and should not have
+   * to. What it does guarantee is that the directory is Vowe's, outside the
+   * user's repository, and stable across restarts.
+   */
+  projectDataDir(projectId: string): string;
+
+  /**
    * Opaque per-adapter scratch state (tail offsets, launch tables, ...).
    * Core never interprets the contents.
    */

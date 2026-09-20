@@ -80,6 +80,11 @@ export function App(): ReactElement {
           key={selectedGroup.project.id}
           group={selectedGroup}
           onOpenSession={openSession}
+          knowledgeUnavailableReason={
+            status && !status.codeKnowledgeConfigured
+              ? status.codeKnowledgeUnavailableReason
+              : null
+          }
         />
       ) : (
         <section className="detail">

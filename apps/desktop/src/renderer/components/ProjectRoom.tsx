@@ -1,9 +1,10 @@
-import type { ReactElement } from 'react';
+import { useCallback, useEffect, useState, type ReactElement } from 'react';
 
-import type { AgentSession } from '@vowe/core';
+import type { AgentSession, RepoIndexState } from '@vowe/core';
 
 import {
   CheckIcon,
+  codeKnowledgeChip,
   describeActivity,
   formatAgo,
   statusLabel,
@@ -14,6 +15,8 @@ import {
 interface Props {
   group: ProjectGroup;
   onOpenSession: (sessionId: string) => void;
+  /** Set when no code graph can be built at all. */
+  knowledgeUnavailableReason: string | null;
 }
 
 /**
@@ -25,8 +28,14 @@ interface Props {
  * observer and no cross-session reasoning — the value here is that the work is
  * gathered in one place, not that anything new was inferred about it.
  */
-export function ProjectRoom({ group, onOpenSession }: Props): ReactElement {
+export function ProjectRoom({
+  group,
+  onOpenSession,
+  knowledgeUnavailableReason,
+}: Props): ReactElement {
   const { project, working, recent } = group;
+  const knowledge = useProjectKnowledge(project.id);
+  const chip = codeKnowledgeChip(knowledge, knowledgeUnavailableReason);
 
   return (
     <section className="detail">
@@ -40,10 +49,15 @@ export function ProjectRoom({ group, onOpenSession }: Props): ReactElement {
           </span>
         </div>
         {/*
-         * Deliberately left clear: this is where "Ask Vo about this project…"
-         * goes when project-level intelligence arrives. Nothing else in the
-         * hierarchy has to change to add it.
+         * What Vowe knows about the code itself, as opposed to the work.
+         * Status only: there is no graph to browse here and no memory to read,
+         * because this is infrastructure for answering questions, not a
+         * second application bolted onto the side of the first.
          */}
+        <span className="status-pill" title={chip.title ?? undefined}>
+          <span className={`dot small ${chip.dot}`} />
+          Code knowledge · {chip.label}
+        </span>
       </header>
 
       <div className="detail-main">
@@ -133,4 +147,27 @@ function RecentRow({
       {session.branch && <span className="room-row-meta">{session.branch}</span>}
     </button>
   );
+}
+
+/**
+ * The Project's index state, kept current from the main process.
+ *
+ * Asking for it never starts a build. A room that indexed a repository just by
+ * being opened would be spending the user's machine on a question nobody asked.
+ */
+function useProjectKnowledge(projectId: string): RepoIndexState | null {
+  const [state, setState] = useState<RepoIndexState | null>(null);
+
+  const reload = useCallback(() => {
+    void window.vowe.getProjectKnowledge(projectId).then(setState);
+  }, [projectId]);
+
+  useEffect(() => {
+    reload();
+    return window.vowe.onProjectKnowledgeChanged((changed) => {
+      if (changed === projectId) reload();
+    });
+  }, [projectId, reload]);
+
+  return state;
 }

@@ -60,6 +60,36 @@ export class GitFixtures {
     await this.git(repoRoot, ['remote', 'add', 'origin', url]);
   }
 
+  /**
+   * Write a file and commit it.
+   *
+   * Committing is not incidental: `git grep` searches tracked files, so an
+   * uncommitted file is invisible to repository search. A fixture that only
+   * wrote the file would be testing something Vowe does not do.
+   */
+  async commitFile(
+    repoRoot: string,
+    relative: string,
+    content: string,
+  ): Promise<string> {
+    const file = path.join(repoRoot, relative);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, content, 'utf8');
+    await this.git(repoRoot, ['add', relative]);
+    await this.git(repoRoot, ['commit', '-q', '-m', `add ${relative}`]);
+    return file;
+  }
+
+  /** The commit HEAD currently points at. */
+  async head(repoRoot: string): Promise<string> {
+    const { stdout } = await run('git', ['rev-parse', 'HEAD'], {
+      cwd: repoRoot,
+      timeout: 20_000,
+      windowsHide: true,
+    });
+    return stdout.trim();
+  }
+
   async cleanup(): Promise<void> {
     await Promise.all(
       this.roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),

@@ -26,6 +26,9 @@ importers:
       '@vowe/decision-jev':
         specifier: workspace:*
         version: link:../../packages/decision-jev
+      '@vowe/knowledge-graphify':
+        specifier: workspace:*
+        version: link:../../packages/knowledge-graphify
       '@vowe/live-openai':
         specifier: workspace:*
         version: link:../../packages/live-openai
@@ -90,6 +93,19 @@ importers:
         version: 5.9.3
 
   packages/decision-jev:
+    dependencies:
+      '@vowe/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.3
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/knowledge-graphify:
     dependencies:
       '@vowe/core':
         specifier: workspace:*
