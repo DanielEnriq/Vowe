@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,7 +9,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type { Project } from '@vowe/core';
 
-import { GraphifyCli, GraphifyProjectKnowledgeProvider } from '../src/index.js';
+import {
+  GraphifyCli,
+  GraphifyMemoryMirror,
+  GraphifyProjectKnowledgeProvider,
+} from '../src/index.js';
 
 const run = promisify(execFile);
 
@@ -149,6 +153,70 @@ describe.skipIf(!BIN)('the real graphify binary', () => {
     });
     expect(hits.map((hit) => hit.label)).toContain('brandNewSymbol()');
   }, 180_000);
+});
+
+describe.skipIf(!BIN)('the real work-memory loop', () => {
+  it('mirrors a record and folds a correction into the lessons file', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'vowe-live-memory-'));
+    roots.push(root);
+    const project: Project = {
+      id: 'git:live',
+      name: 'repo',
+      repoRoot: path.join(root, 'repo'),
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    await mkdir(project.repoRoot, { recursive: true });
+
+    const mirror = new GraphifyMemoryMirror({
+      cli: new GraphifyCli({ bin: BIN! }),
+      available: true,
+      resolveProject: () => project,
+      dataDirFor: () => path.join(root, 'data'),
+    });
+
+    await mirror.mirror({
+      id: 'r1',
+      projectId: 'git:live',
+      at: new Date().toISOString(),
+      question: 'Where is a project assigned?',
+      answer: 'In ProjectService, directly.',
+      refs: [],
+      nodeIds: ['ProjectService'],
+      locations: [],
+      outcome: 'useful',
+    });
+    await mirror.mirror({
+      id: 'r2',
+      projectId: 'git:live',
+      at: new Date().toISOString(),
+      question: 'Where is a project assigned?',
+      answer: 'In SessionRegistry.absorb().',
+      refs: [],
+      nodeIds: ['SessionRegistry'],
+      locations: [],
+      outcome: 'corrected',
+      correction: 'It is assigned in SessionRegistry.absorb().',
+      supersedes: 'r1',
+    });
+    await mirror.reflect('git:live');
+
+    const lessons = path.join(
+      root,
+      'data',
+      'knowledge',
+      'graphify-out',
+      'reflections',
+      'LESSONS.md',
+    );
+    const text = await readFile(lessons, 'utf8');
+    // Graphify's own deterministic lessons document now carries what Vowe
+    // learned, corrections included — which is the whole point of mirroring.
+    expect(text).toContain('Corrections');
+    expect(text).toContain('It is assigned in SessionRegistry.absorb().');
+
+    // And nothing landed in the repository.
+    expect(await readdir(project.repoRoot)).toEqual([]);
+  }, 120_000);
 });
 
 async function waitFor(

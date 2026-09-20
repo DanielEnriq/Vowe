@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 
 import type {
   Project,
+  ProjectMemoryMirror,
   ProjectKnowledgeHit,
   ProjectKnowledgeProvider,
   ProjectKnowledgeResult,
@@ -22,9 +23,16 @@ import {
   type GraphifyPaths,
 } from './graphify-cli.js';
 import { GraphifyGraphReader, type GraphNode } from './graph-reader.js';
+import { GraphifyMemoryMirror } from './graphify-memory-mirror.js';
 import { LexicalRetrieval, type Retrieval } from './lexical-retrieval.js';
 
 const execFileAsync = promisify(execFile);
+
+export interface GraphifyDeps
+  extends Omit<GraphifyProviderOptions, 'cli'> {
+  env?: NodeJS.ProcessEnv;
+  cliOptions?: GraphifyCliOptions;
+}
 
 export interface GraphifyProviderOptions {
   cli: GraphifyCli;
@@ -93,47 +101,9 @@ export class GraphifyProjectKnowledgeProvider implements ProjectKnowledgeProvide
    * to handle an absent provider.
    */
   static async fromEnvironment(
-    deps: Omit<GraphifyProviderOptions, 'cli'> & {
-      env?: NodeJS.ProcessEnv;
-      cliOptions?: GraphifyCliOptions;
-    },
+    deps: GraphifyDeps,
   ): Promise<ProjectKnowledgeProvider> {
-    const env = deps.env ?? process.env;
-    if (env['VOWE_GRAPHIFY_DISABLE']) {
-      return new UnavailableProjectKnowledge(
-        'Repository knowledge is switched off by VOWE_GRAPHIFY_DISABLE.',
-      );
-    }
-
-    const cliOptions: GraphifyCliOptions = { ...deps.cliOptions };
-    if (deps.onError) cliOptions.onError ??= deps.onError;
-    cliOptions.bin ??= env['VOWE_GRAPHIFY_BIN'] || undefined;
-    cliOptions.minVersion ??= env['VOWE_GRAPHIFY_MIN_VERSION'] || undefined;
-    cliOptions.backend ??= env['VOWE_GRAPHIFY_BACKEND'] || undefined;
-
-    let cli = new GraphifyCli(cliOptions);
-    let probe = await cli.probe();
-
-    // A desktop app launched from Finder inherits a minimal PATH, which will
-    // not include the directory `uv tool install` puts binaries in. Looking
-    // there before giving up is the difference between this working and the
-    // user being told to configure something they already installed.
-    if (!probe.available && !cliOptions.bin) {
-      const fallback = path.join(homedir(), '.local', 'bin', 'graphify');
-      const retry = new GraphifyCli({ ...cliOptions, bin: fallback });
-      const retried = await retry.probe();
-      if (retried.available) {
-        cli = retry;
-        probe = retried;
-      }
-    }
-
-    if (!probe.available) {
-      return new UnavailableProjectKnowledge(
-        probe.reason ?? 'Graphify is not available.',
-      );
-    }
-    return new GraphifyProjectKnowledgeProvider({ ...deps, cli });
+    return (await createGraphifyKnowledge(deps)).provider;
   }
 
   // ------------------------------------------------------------- lifecycle
@@ -279,7 +249,7 @@ export class GraphifyProjectKnowledgeProvider implements ProjectKnowledgeProvide
       .retrieve(graph, input.query, limit)
       .map(({ node, via }) => {
         const hit: ProjectKnowledgeHit = {
-          nodeId: node.id,
+          id: node.id,
           label: node.label,
           summary: summaryOf(node, via),
           locations: this.locationsOf(project, node),
@@ -477,4 +447,77 @@ async function readHeadCommit(repoRoot: string): Promise<string | null> {
     // Not a repository, git missing, or an empty repository with no commits.
     return null;
   }
+}
+
+/**
+ * Everything Graphify contributes to a Project, from one probe.
+ *
+ * The provider and the mirror share a `GraphifyCli`, so the binary is looked for
+ * exactly once, and the mirror is honest about being unavailable whenever the
+ * provider is.
+ */
+export async function createGraphifyKnowledge(deps: GraphifyDeps): Promise<{
+  provider: ProjectKnowledgeProvider;
+  mirror: ProjectMemoryMirror;
+}> {
+  const env = deps.env ?? process.env;
+  const { env: _env, cliOptions, ...providerDeps } = deps;
+
+  const unavailable = (reason: string, cli: GraphifyCli) => ({
+    provider: new UnavailableProjectKnowledge(reason),
+    mirror: new GraphifyMemoryMirror({
+      cli,
+      available: false,
+      resolveProject: providerDeps.resolveProject,
+      dataDirFor: providerDeps.dataDirFor,
+      ...(providerDeps.onError ? { onError: providerDeps.onError } : {}),
+    }),
+  });
+
+  const options: GraphifyCliOptions = { ...cliOptions };
+  if (deps.onError) options.onError ??= deps.onError;
+  options.bin ??= env['VOWE_GRAPHIFY_BIN'] || undefined;
+  options.minVersion ??= env['VOWE_GRAPHIFY_MIN_VERSION'] || undefined;
+  options.backend ??= env['VOWE_GRAPHIFY_BACKEND'] || undefined;
+
+  if (env['VOWE_GRAPHIFY_DISABLE']) {
+    return unavailable(
+      'Repository knowledge is switched off by VOWE_GRAPHIFY_DISABLE.',
+      new GraphifyCli(options),
+    );
+  }
+
+  let cli = new GraphifyCli(options);
+  let probe = await cli.probe();
+
+  // A desktop app launched from Finder inherits a minimal PATH, which will not
+  // include the directory `uv tool install` puts binaries in. Looking there
+  // before giving up is the difference between this working and the user being
+  // told to configure something they have already installed.
+  if (!probe.available && !options.bin) {
+    const retry = new GraphifyCli({
+      ...options,
+      bin: path.join(homedir(), '.local', 'bin', 'graphify'),
+    });
+    const retried = await retry.probe();
+    if (retried.available) {
+      cli = retry;
+      probe = retried;
+    }
+  }
+
+  if (!probe.available) {
+    return unavailable(probe.reason ?? 'Graphify is not available.', cli);
+  }
+
+  return {
+    provider: new GraphifyProjectKnowledgeProvider({ ...providerDeps, cli }),
+    mirror: new GraphifyMemoryMirror({
+      cli,
+      available: true,
+      resolveProject: providerDeps.resolveProject,
+      dataDirFor: providerDeps.dataDirFor,
+      ...(providerDeps.onError ? { onError: providerDeps.onError } : {}),
+    }),
+  };
 }

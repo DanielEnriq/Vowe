@@ -9,3 +9,4 @@ export * from './graphify-cli.js';
 export * from './graph-reader.js';
 export * from './lexical-retrieval.js';
 export * from './graphify-provider.js';
+export * from './graphify-memory-mirror.js';

@@ -259,12 +259,23 @@ export class ContextNavigator {
         limit: Math.ceil(limit / 2),
       });
       for (const hit of known) {
-        const ref: ContextRef = { kind: 'symbol', projectId, nodeId: hit.nodeId };
+        // `origin` is the only thing that decides which kind of ref this is.
+        // The model asked the repository a question and is handed addresses; it
+        // never has to know that two different stores answered.
+        const ref: ContextRef =
+          hit.origin === 'memory'
+            ? { kind: 'lesson', projectId, recordId: hit.id }
+            : { kind: 'symbol', projectId, nodeId: hit.id };
         hits.push({
           ref,
           refId: formatRef(ref),
           source: 'repo' as const,
-          label: hit.kind ? `${hit.label} (${hit.kind})` : hit.label,
+          label:
+            hit.origin === 'memory'
+              ? `Known: ${hit.label}`
+              : hit.kind
+                ? `${hit.label} (${hit.kind})`
+                : hit.label,
           snippet: this.snippet(hit.summary),
         });
       }
@@ -328,6 +339,8 @@ export class ContextNavigator {
         return this.openRepo(ref);
       case 'symbol':
         return this.openSymbol(ref);
+      case 'lesson':
+        return this.openLesson(ref);
       case 'diff': {
         const diff = await this.getDiff({ sessionId: ref.sessionId, path: ref.path });
         return this.result(ref, renderDiff(diff), []);
@@ -508,6 +521,48 @@ export class ContextNavigator {
 
     for (const edge of node.related.slice(0, 6)) {
       related.push({ kind: 'symbol', projectId: ref.projectId, nodeId: edge.nodeId });
+    }
+
+    return this.result(ref, lines.join('\n'), related);
+  }
+
+  /**
+   * Something Vowe worked out earlier, and the material it worked it out from.
+   *
+   * A lesson is not evidence; it is a previous conclusion. So it comes back with
+   * the refs it was built from attached, and a reader who wants to rely on it
+   * can go and check the same places. A remembered claim that could not be
+   * re-derived would be exactly the kind of thing that makes a memory worse
+   * than no memory.
+   */
+  private async openLesson(
+    ref: Extract<ContextRef, { kind: 'lesson' }>,
+  ): Promise<OpenResult> {
+    const record = await this.knowledge?.openMemory(ref.projectId, ref.recordId);
+    if (!record) return this.missing(ref, 'No such remembered result.');
+
+    const lines: string[] = [
+      `Remembered ${record.at} — ${record.outcome}`,
+      '',
+      `Question: ${record.question}`,
+      `Answer: ${record.answer}`,
+    ];
+    if (record.correction) {
+      lines.push('', `Correction: ${record.correction}`);
+    }
+    if (record.supersedes) {
+      lines.push(`Supersedes: ${formatRef({
+        kind: 'lesson',
+        projectId: ref.projectId,
+        recordId: record.supersedes,
+      })}`);
+    }
+
+    const related = record.refs
+      .map((raw) => parseRef(raw))
+      .filter((candidate): candidate is ContextRef => candidate !== null);
+    if (related.length) {
+      lines.push('', 'Worked out from:', ...related.map((entry) => `  ${formatRef(entry)}`));
     }
 
     return this.result(ref, lines.join('\n'), related);

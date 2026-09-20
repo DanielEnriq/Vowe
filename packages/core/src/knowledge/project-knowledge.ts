@@ -53,8 +53,11 @@ export interface SourceLocation {
  * repository knowledge.
  */
 export interface ProjectKnowledgeHit {
-  /** Opaque to Vowe. Only the provider that issued it interprets it. */
-  nodeId: string;
+  /**
+   * Opaque. What `origin` says it is: a node in the code graph, or a record
+   * Vowe remembered. Whoever issued it is the only one that interprets it.
+   */
+  id: string;
   label: string;
   /** The provider's own vocabulary — 'function', 'class', … Display only. */
   kind?: string;

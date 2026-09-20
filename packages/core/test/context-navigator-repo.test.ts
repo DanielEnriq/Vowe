@@ -60,7 +60,7 @@ describe('search_context(repo) — acceptance 2: the graph is one source among t
     const provider = new FakeKnowledgeProvider();
     provider.hits = [
       {
-        nodeId: 'n1',
+        id: 'n1',
         label: 'SessionRegistry',
         kind: 'class',
         summary: 'Absorbs discovered sessions and stamps their project.',

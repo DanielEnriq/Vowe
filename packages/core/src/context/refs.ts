@@ -26,7 +26,9 @@ export type ContextRef =
   /** The current diff, optionally narrowed to one path. */
   | { kind: 'diff'; sessionId: string; path?: string }
   /** A node in a project's code graph: orientation, not truth. */
-  | { kind: 'symbol'; projectId: string; nodeId: string };
+  | { kind: 'symbol'; projectId: string; nodeId: string }
+  /** Something Vowe worked out about this project and kept. */
+  | { kind: 'lesson'; projectId: string; recordId: string };
 
 /**
  * The string form. Kept terse because these travel through model context, and
@@ -53,6 +55,8 @@ export function formatRef(ref: ContextRef): string {
       // id: a graph node id is the provider's own string, and Vowe does not
       // get to assume what is in it.
       return `symbol:${ref.projectId}#${ref.nodeId}`;
+    case 'lesson':
+      return `lesson:${ref.projectId}#${ref.recordId}`;
   }
 }
 
@@ -114,6 +118,14 @@ export function parseRef(value: string | ContextRef): ContextRef | null {
       const nodeId = rest.slice(hash + 1);
       if (!projectId || !nodeId) return null;
       return { kind: 'symbol', projectId, nodeId };
+    }
+    case 'lesson': {
+      const hash = rest.indexOf('#');
+      if (hash === -1) return null;
+      const projectId = rest.slice(0, hash);
+      const recordId = rest.slice(hash + 1);
+      if (!projectId || !recordId) return null;
+      return { kind: 'lesson', projectId, recordId };
     }
     default:
       return null;

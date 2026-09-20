@@ -18,6 +18,15 @@ export interface DelegatedQuestionRunnerOptions {
   /** How much recent L1 understanding to hand over. */
   recentNotes?: number;
   onError?: (scope: string, error: unknown) => void;
+  /**
+   * A grounded answer has been produced and persisted.
+   *
+   * Matches the `onNote` / `onSurfaceUpdate` convention on `ObserverRunner`.
+   * Called after the answer is already delivered, and deliberately not awaited:
+   * whatever a listener decides to do with the result must not be able to delay
+   * an answer somebody is waiting to hear.
+   */
+  onAnswer?: (result: DelegatedResult) => void;
 }
 
 export interface DelegatedQuestion {
@@ -28,6 +37,8 @@ export interface DelegatedQuestion {
 }
 
 export interface DelegatedResult extends DelegatedAnswer {
+  /** What was asked, so a listener need not go back to the conversation for it. */
+  question: string;
   /** The persisted full answer, as it appears in the session conversation. */
   entry: ConversationEntry;
 }
@@ -53,6 +64,7 @@ export class DelegatedQuestionRunner {
   private readonly investigator: ObservationLlm;
   private readonly recentNotes: number;
   private readonly onError: (scope: string, error: unknown) => void;
+  private readonly onAnswer: (result: DelegatedResult) => void;
 
   constructor(options: DelegatedQuestionRunnerOptions) {
     this.store = options.store;
@@ -60,6 +72,7 @@ export class DelegatedQuestionRunner {
     this.investigator = options.investigator;
     this.recentNotes = options.recentNotes ?? 6;
     this.onError = options.onError ?? (() => undefined);
+    this.onAnswer = options.onAnswer ?? (() => undefined);
   }
 
   async answer(question: DelegatedQuestion): Promise<DelegatedResult> {
@@ -116,7 +129,18 @@ export class DelegatedQuestionRunner {
     };
     await this.store.appendConversationEntry(entry);
 
-    return { ...answer, refs, entry };
+    const result: DelegatedResult = {
+      ...answer,
+      question: question.question,
+      refs,
+      entry,
+    };
+    try {
+      this.onAnswer(result);
+    } catch (error) {
+      this.onError('onAnswer', error);
+    }
+    return result;
   }
 
   /** The same three tools the observer gets. Nothing else. */

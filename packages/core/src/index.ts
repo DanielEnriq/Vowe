@@ -16,6 +16,8 @@ export * from './projects/index.js';
 // Project knowledge: what a repository contains, and what Vowe has learned.
 export * from './knowledge/project-knowledge.js';
 export * from './knowledge/project-knowledge-service.js';
+export * from './knowledge/project-memory-store.js';
+export * from './knowledge/memory-admission.js';
 
 // Observation harness: L0 trace -> windows -> L1 notes -> communication.
 export * from './observation/trace-window.js';

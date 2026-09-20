@@ -1,12 +1,20 @@
+import { formatRef, type ContextRef } from '../context/refs.js';
+import type { MemoryAdmissionPolicy } from './memory-admission.js';
 import type {
   ProjectKnowledgeHit,
   ProjectKnowledgeProvider,
   ProjectKnowledgeResult,
+  ProjectMemoryRecord,
   RepoIndexState,
 } from './project-knowledge.js';
+import type { ProjectMemoryStore } from './project-memory-store.js';
 
 export interface ProjectKnowledgeServiceOptions {
   provider: ProjectKnowledgeProvider;
+  /** Vowe's own memory. Absent, nothing is remembered and nothing breaks. */
+  memory?: ProjectMemoryStore;
+  /** Decides what is worth keeping. Absent, nothing is admitted. */
+  admission?: MemoryAdmissionPolicy;
   /** How long a project must go quiet before its index is refreshed. */
   quietMs?: number;
   /** Refresh immediately once this many changes have piled up. */
@@ -33,6 +41,8 @@ const DEFAULT_BURST_CHANGES = 40;
  */
 export class ProjectKnowledgeService {
   private readonly provider: ProjectKnowledgeProvider;
+  private readonly memory: ProjectMemoryStore | null;
+  private readonly admission: MemoryAdmissionPolicy | null;
   private readonly quietMs: number;
   private readonly burstChanges: number;
   private readonly onError: (scope: string, error: unknown) => void;
@@ -46,12 +56,26 @@ export class ProjectKnowledgeService {
 
   constructor(options: ProjectKnowledgeServiceOptions) {
     this.provider = options.provider;
+    this.memory = options.memory ?? null;
+    this.admission = options.admission ?? null;
     this.quietMs = options.quietMs ?? DEFAULT_QUIET_MS;
     this.burstChanges = options.burstChanges ?? DEFAULT_BURST_CHANGES;
     this.onError = options.onError ?? (() => undefined);
   }
 
+  /**
+   * Whether repository search has anything beyond `git grep` behind it.
+   *
+   * True when *either* half is present. Vowe's own memory outlives the
+   * structural provider, so a project with remembered lessons and no indexer
+   * still has knowledge worth searching.
+   */
   get available(): boolean {
+    return this.provider.available || this.memory !== null;
+  }
+
+  /** Whether a code graph specifically is available. Drives the UI's wording. */
+  get structureAvailable(): boolean {
     return this.provider.available;
   }
 
@@ -73,15 +97,59 @@ export class ProjectKnowledgeService {
     query: string;
     limit?: number;
   }): Promise<ProjectKnowledgeHit[]> {
-    if (!this.provider.available || this.stopped) return [];
+    if (this.stopped) return [];
+    const limit = Math.max(1, input.limit ?? 6);
+
+    // What Vowe worked out before comes first. A lesson is the product of an
+    // investigation that already happened; making the caller rediscover it
+    // behind three graph nodes would waste the thing that was worth keeping.
+    const remembered = await this.searchMemory({ ...input, limit });
+    const room = limit - remembered.length;
+    if (room <= 0 || !this.provider.available) return remembered.slice(0, limit);
+
     try {
       void this.provider.ensureIndexed(input.projectId).catch((error) => {
         this.onError('knowledge:ensureIndexed', error);
       });
-      return await this.provider.search(input);
+      const structural = await this.provider.search({ ...input, limit: room });
+      return [...remembered, ...structural];
     } catch (error) {
       this.onError('knowledge:search', error);
+      return remembered;
+    }
+  }
+
+  private async searchMemory(input: {
+    projectId: string;
+    query: string;
+    limit: number;
+  }): Promise<ProjectKnowledgeHit[]> {
+    if (!this.memory) return [];
+    try {
+      // At most half the budget: what Vowe remembers must not crowd out what
+      // the repository currently says.
+      return await this.memory.search({
+        projectId: input.projectId,
+        query: input.query,
+        limit: Math.max(1, Math.floor(input.limit / 2)),
+      });
+    } catch (error) {
+      this.onError('knowledge:memory-search', error);
       return [];
+    }
+  }
+
+  /** One remembered record, for a `lesson:` ref. */
+  async openMemory(
+    projectId: string,
+    recordId: string,
+  ): Promise<ProjectMemoryRecord | null> {
+    if (!this.memory) return null;
+    try {
+      return await this.memory.get(projectId, recordId);
+    } catch (error) {
+      this.onError('knowledge:memory-open', error);
+      return null;
     }
   }
 
@@ -111,6 +179,63 @@ export class ProjectKnowledgeService {
 
   status(projectId: string): RepoIndexState {
     return this.provider.status(projectId);
+  }
+
+  // ---------------------------------------------------------------- writing
+
+  /**
+   * Consider keeping a grounded answer.
+   *
+   * Called after an investigation has finished and been delivered, never
+   * during one. Returns the record when something was kept, `null` when it was
+   * not — which is the common case, and is meant to be.
+   */
+  async consider(input: {
+    projectId: string;
+    question: string;
+    answer: string;
+    refs: (ContextRef | string)[];
+  }): Promise<ProjectMemoryRecord | null> {
+    if (!this.memory || !this.admission || this.stopped) return null;
+    try {
+      const admit = await this.admission.shouldRemember({
+        question: input.question,
+        answer: input.answer,
+        refs: input.refs,
+      });
+      if (!admit) return null;
+      return await this.memory.remember({
+        projectId: input.projectId,
+        question: input.question,
+        answer: input.answer,
+        refs: input.refs.map((ref) => (typeof ref === 'string' ? ref : formatRef(ref))),
+      });
+    } catch (error) {
+      this.onError('knowledge:consider', error);
+      return null;
+    }
+  }
+
+  /**
+   * Record that something Vowe believed was wrong.
+   *
+   * Never inferred — somebody has to say so. Corrections skip admission
+   * entirely: there is no version of "is being told you were wrong worth
+   * remembering?" worth asking a model.
+   */
+  async recordCorrection(input: {
+    projectId: string;
+    correction: string;
+    supersedes?: string;
+    question?: string;
+  }): Promise<ProjectMemoryRecord | null> {
+    if (!this.memory) return null;
+    try {
+      return await this.memory.correct(input);
+    } catch (error) {
+      this.onError('knowledge:correction', error);
+      return null;
+    }
   }
 
   // ------------------------------------------------------------- staleness

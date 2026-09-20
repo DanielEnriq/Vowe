@@ -21,7 +21,9 @@ import {
   LlmSemanticInterpreter,
   NdjsonEventStore,
   ObservationService,
+  ConservativeMemoryAdmission,
   ProjectKnowledgeService,
+  ProjectMemoryStore,
   ProjectService,
   SessionRegistry,
   UnavailableLiveTransport,
@@ -30,7 +32,7 @@ import {
   type SemanticInterpreter,
 } from '@vowe/core';
 import { ClaudeCodeAdapter, PROVIDER } from '@vowe/adapter-claude-code';
-import { GraphifyProjectKnowledgeProvider } from '@vowe/knowledge-graphify';
+import { createGraphifyKnowledge } from '@vowe/knowledge-graphify';
 import { AnthropicLlmClient } from '@vowe/llm';
 import { JevDecisionRouter } from '@vowe/decision-jev';
 import { OpenAiLiveTransport } from '@vowe/live-openai';
@@ -109,12 +111,19 @@ async function createServices(): Promise<Services> {
 
   const companion = new CompanionService({ store, llm });
 
+  // Structured decisions. Constructed here because project knowledge needs it
+  // to decide what is worth remembering.
+  const router: DecisionRouter =
+    JevDecisionRouter.fromEnvironment({
+      onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+    }) ?? new HeuristicDecisionRouter();
+
   // ------------------------------------------------------- project knowledge
 
   // What each repository contains, kept in Vowe's own directory and never in
   // the user's checkout. Optional in the same way every credential is: absent,
   // repository search is `git grep` and nothing else changes.
-  const knowledgeProvider = await GraphifyProjectKnowledgeProvider.fromEnvironment({
+  const { provider: knowledgeProvider, mirror } = await createGraphifyKnowledge({
     resolveProject: (projectId) => store.getProject(projectId),
     dataDirFor: (projectId) => store.projectDataDir(projectId),
     onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
@@ -125,8 +134,23 @@ async function createServices(): Promise<Services> {
   if (!knowledgeProvider.available) {
     console.log(`[vowe] code knowledge unavailable — ${knowledgeProvider.unavailableReason}`);
   }
+
+  // What Vowe has learned, as opposed to what the repository contains. Vowe
+  // owns this: the mirror keeps Graphify's own lessons file in step, but the
+  // record here outlives Graphify being removed.
   const knowledge = new ProjectKnowledgeService({
     provider: knowledgeProvider,
+    memory: new ProjectMemoryStore({
+      dataDirFor: (projectId) => store.projectDataDir(projectId),
+      mirror,
+      onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+    }),
+    // Conservative, and it fails closed: with no decision model, corrections
+    // are recorded and nothing else is.
+    admission: new ConservativeMemoryAdmission({
+      router,
+      onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+    }),
     onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
   });
 
@@ -140,11 +164,6 @@ async function createServices(): Promise<Services> {
     resolveProject: (sessionId) => registry.get(sessionId)?.projectId ?? null,
     knowledge,
   });
-
-  const router: DecisionRouter =
-    JevDecisionRouter.fromEnvironment({
-      onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
-    }) ?? new HeuristicDecisionRouter();
 
   const liveTransport: LiveTransport = process.env.OPENAI_API_KEY
     ? new OpenAiLiveTransport({
@@ -179,6 +198,19 @@ async function createServices(): Promise<Services> {
       navigator,
       investigator: llm ?? nullObserver(),
       onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
+      // After the answer is delivered, never during. Most answers are not kept.
+      onAnswer: (result) => {
+        const projectId = registry.get(result.entry.sessionId)?.projectId;
+        if (!projectId) return;
+        void knowledge
+          .consider({
+            projectId,
+            question: result.question,
+            answer: result.fullAnswer,
+            refs: result.refs,
+          })
+          .catch((error) => console.warn('[vowe] knowledge:consider', error));
+      },
     }),
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
   });
