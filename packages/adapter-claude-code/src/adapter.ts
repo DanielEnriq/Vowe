@@ -422,6 +422,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       task,
       displayLabel: labelFor(task, meta?.providerTitle ?? null, liveRecord, cwd, providerSessionId),
       cwd,
+      // Adapters report where a session is, not what that means. The project
+      // layer derives the repository from `cwd` and fills this in.
+      projectId: null,
       status: statusFor(attachMode, liveRecord),
       createdAt:
         meta?.createdAt ??

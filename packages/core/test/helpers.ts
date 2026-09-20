@@ -40,6 +40,7 @@ export function testSession(overrides: Partial<AgentSession> = {}): AgentSession
     task: 'Fix the reconnect regression',
     displayLabel: 'test-session',
     cwd: null,
+    projectId: null,
     status: 'working',
     createdAt: '2026-02-11T09:00:00.000Z',
     lastActivityAt: '2026-02-11T09:00:00.000Z',

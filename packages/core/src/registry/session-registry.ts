@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentAdapter, InstructionResult, LaunchOptions, Unsubscribe } from '../types/adapter.js';
 import type { NormalizedEvent } from '../types/events.js';
 import type { AgentSession } from '../types/session.js';
+import type { ProjectService } from '../projects/project-service.js';
 import type { EventStore } from '../store/event-store.js';
 import {
   CapabilityUnsupportedError,
@@ -12,6 +13,12 @@ import {
 
 export interface SessionRegistryOptions {
   store: EventStore;
+  /**
+   * Optional. When present, each session is assigned to the repository it is
+   * working in as it is discovered. Without it sessions simply have no project,
+   * which the UI handles.
+   */
+  projects?: ProjectService;
   /** How often to reconcile the adapter view with ours. */
   reconcileIntervalMs?: number;
   onError?: (scope: string, error: unknown) => void;
@@ -34,6 +41,7 @@ export type SessionRegistryEvents = {
  */
 export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
   private readonly store: EventStore;
+  private readonly projects: ProjectService | undefined;
   private readonly adapters = new Map<string, AgentAdapter>();
   private readonly sessions = new Map<string, AgentSession>();
   private readonly subscriptions = new Map<string, Unsubscribe>();
@@ -45,6 +53,7 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
   constructor(options: SessionRegistryOptions) {
     super();
     this.store = options.store;
+    this.projects = options.projects;
     this.reconcileIntervalMs = options.reconcileIntervalMs ?? 5000;
     this.onError = options.onError ?? (() => undefined);
   }
@@ -227,7 +236,7 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
 
   /** Merge one discovered session into our view and keep watching it. */
   private async absorb(discovered: AgentSession): Promise<void> {
-    const previous = this.sessions.get(discovered.id);
+    const previous = this.sessions.get(discovered.id) ?? this.store.getSession(discovered.id);
     const merged: AgentSession = {
       ...discovered,
       // Semantic state is owned by the interpretation layer, not the adapter.
@@ -236,7 +245,14 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
         this.store.getSession(discovered.id)?.semanticState ??
         null,
       createdAt: previous?.createdAt ?? discovered.createdAt,
+      // Adapters do not know about projects, so carry the existing assignment
+      // forward and only re-derive it when it is actually missing or stale.
+      projectId: previous?.projectId ?? null,
+      ...(previous?.worktree ? { worktree: previous.worktree } : {}),
+      ...(previous?.branch ? { branch: previous.branch } : {}),
     };
+
+    await this.assignProject(merged, previous ?? null);
 
     this.sessions.set(merged.id, merged);
     await this.store.upsertSession(merged);
@@ -251,6 +267,35 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
     }
     if (hasVisibleChange(previous, merged)) {
       this.emit('session:updated', merged);
+    }
+  }
+
+  /**
+   * Attach a session to the repository it is working in.
+   *
+   * Reconciliation runs for every session every few seconds, so the common case
+   * — a known session that has not moved — must cost nothing. `needsResolution`
+   * answers that with a string comparison; only a new session, or one whose
+   * working directory actually changed, reaches the filesystem.
+   */
+  private async assignProject(
+    session: AgentSession,
+    previous: AgentSession | null,
+  ): Promise<void> {
+    if (!this.projects) return;
+    if (!this.projects.needsResolution(session, previous)) return;
+
+    try {
+      const assignment = await this.projects.resolveForSession(session);
+      if (!assignment) return;
+      session.projectId = assignment.project.id;
+      if (assignment.worktree) session.worktree = assignment.worktree;
+      else delete session.worktree;
+      if (assignment.branch) session.branch = assignment.branch;
+      else delete session.branch;
+    } catch (error) {
+      // A session Vowe cannot place is still a session worth showing.
+      this.onError(`project:${session.id}`, error);
     }
   }
 
@@ -320,6 +365,7 @@ function hasVisibleChange(a: AgentSession, b: AgentSession): boolean {
     a.capabilities.sendInstruction !== b.capabilities.sendInstruction ||
     a.capabilities.interrupt !== b.capabilities.interrupt ||
     a.capabilities.observe !== b.capabilities.observe ||
-    a.capabilities.resume !== b.capabilities.resume
+    a.capabilities.resume !== b.capabilities.resume ||
+    a.projectId !== b.projectId
   );
 }

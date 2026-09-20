@@ -1,6 +1,7 @@
 import type { AdapterEvent, NormalizedEvent } from '../types/events.js';
 import type { AgentSession, SemanticState } from '../types/session.js';
 import type { ConversationEntry } from '../types/conversation.js';
+import type { Project } from '../projects/project.js';
 import type {
   CommunicationDecision,
   ObservationState,
@@ -90,6 +91,19 @@ export interface EventStore {
    */
   getObservationState(sessionId: string): ObservationState | null;
   setObservationState(state: ObservationState): Promise<void>;
+
+  // --------------------------------------------------------------- projects
+
+  /**
+   * Durable project identity.
+   *
+   * Identity only: which sessions belong to a project is recorded on the
+   * sessions themselves, and everything else about a project is derived. There
+   * is deliberately nothing here to keep in sync.
+   */
+  upsertProject(project: Project): Promise<void>;
+  listProjects(): Project[];
+  getProject(projectId: string): Project | null;
 
   /**
    * Opaque per-adapter scratch state (tail offsets, launch tables, ...).

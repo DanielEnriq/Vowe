@@ -14,6 +14,7 @@ import type {
   TraceWindow,
   WindowNote,
 } from '../observation/trace-window.js';
+import type { Project } from '../projects/project.js';
 import type { EventQuery, EventStore, WindowQuery } from './event-store.js';
 
 interface SessionRecords {
@@ -45,6 +46,7 @@ function rawKey(event: AdapterEvent): string {
  *
  * Layout under <root>:
  *   sessions.json                       session index
+ *   projects.json                       project identity (identity only)
  *   adapters/<provider>.json            opaque adapter state
  *   sessions/<safeId>/events.ndjson     normalized events, raw payload included
  *   sessions/<safeId>/semantic.ndjson   semantic state history
@@ -61,6 +63,7 @@ export class NdjsonEventStore implements EventStore {
   private readonly root: string;
   private readonly sessions = new Map<string, AgentSession>();
   private readonly records = new Map<string, SessionRecords>();
+  private readonly projects = new Map<string, Project>();
   private readonly adapterState = new Map<string, unknown>();
   /** Serializes writes per file so concurrent appends cannot interleave. */
   private writeChain: Promise<unknown> = Promise.resolve();
@@ -73,11 +76,36 @@ export class NdjsonEventStore implements EventStore {
     await mkdir(path.join(this.root, 'sessions'), { recursive: true });
     await mkdir(path.join(this.root, 'adapters'), { recursive: true });
 
+    const projects = await this.readJson<Project[]>(this.projectsPath());
+    for (const project of projects ?? []) this.projects.set(project.id, project);
+
     const index = await this.readJson<AgentSession[]>(this.indexPath());
     for (const session of index ?? []) {
       this.sessions.set(session.id, session);
       await this.loadSessionRecords(session.id);
     }
+  }
+
+  // ---------------------------------------------------------------- projects
+
+  async upsertProject(project: Project): Promise<void> {
+    const existing = this.projects.get(project.id);
+    // `createdAt` is when Vowe first saw the repository, so the original wins.
+    this.projects.set(project.id, {
+      ...project,
+      createdAt: existing?.createdAt ?? project.createdAt,
+    });
+    await this.queue(() =>
+      this.writeJsonAtomic(this.projectsPath(), [...this.projects.values()]),
+    );
+  }
+
+  listProjects(): Project[] {
+    return [...this.projects.values()];
+  }
+
+  getProject(projectId: string): Project | null {
+    return this.projects.get(projectId) ?? null;
   }
 
   // ---------------------------------------------------------------- sessions
@@ -388,6 +416,10 @@ export class NdjsonEventStore implements EventStore {
 
   private indexPath(): string {
     return path.join(this.root, 'sessions.json');
+  }
+
+  private projectsPath(): string {
+    return path.join(this.root, 'projects.json');
   }
 
   private adapterPath(provider: string): string {

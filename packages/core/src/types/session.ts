@@ -61,6 +61,23 @@ export interface AgentSession {
   displayLabel: string;
   /** Working directory, when the provider exposes one. */
   cwd: string | null;
+  /**
+   * The repository this session is working in.
+   *
+   * Assigned by the project layer from `cwd`, not by the adapter — a provider
+   * reports where a session is, and Vowe decides what that means. `null` only
+   * when no working directory is known at all; such a session is still listed,
+   * never dropped.
+   */
+  projectId: string | null;
+  /**
+   * This session's own worktree, when it is not the repository's main one.
+   *
+   * Present only when it differs from the project's root, so an ordinary
+   * session does not look like it is somewhere unusual.
+   */
+  worktree?: string;
+  branch?: string;
   status: SessionStatus;
   createdAt: string;
   lastActivityAt: string;

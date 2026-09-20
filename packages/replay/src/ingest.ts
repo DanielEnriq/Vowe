@@ -97,6 +97,7 @@ export function fixtureSession(
     task: null,
     displayLabel: sessionId,
     cwd: null,
+    projectId: null,
     status: 'finished',
     createdAt: new Date(0).toISOString(),
     lastActivityAt: new Date(0).toISOString(),
