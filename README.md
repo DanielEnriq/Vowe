@@ -66,6 +66,9 @@ wrong if rushed.
 
 - Discovers Claude Code sessions dynamically — zero, one or many, running or
   finished, started by you in a terminal or started from Vowe.
+- **Groups them by repository.** Sessions in the same Git repo — including
+  across worktrees and subdirectories — appear under one Project, with no
+  configuration. Each Project has a room showing its current and recent work.
 - Ingests each session's events into a normalized stream that always keeps the
   provider's original record.
 - Maintains an evolving description of what each session appears to be doing,
@@ -101,6 +104,9 @@ docs/                          architecture, the harness, navigation, the bridge
 
 - [Architecture](docs/architecture.md) — the four boundaries and how the code
   enforces them.
+- [Projects](docs/projects.md) — how sessions group by repository, worktree
+  identity, the non-Git fallback, and what project-level intelligence is
+  deliberately not doing yet.
 - [Claude Code adapter](docs/adapters/claude-code.md) — every assumption it
   makes, the three attach modes, and what breaks if the CLI changes.
 - [Adding a provider](docs/adding-a-provider.md) — the cleanest path to a

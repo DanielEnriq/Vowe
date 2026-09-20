@@ -56,6 +56,22 @@ button ("Send to agent") in the UI.
 The separation is verifiable, not decorative: ask a question containing a unique
 marker, then grep the worker's transcript for that marker. It is not there.
 
+## Projects
+
+Sessions have a durable parent:
+
+```
+Project  →  AgentSession  →  Observation
+```
+
+A Project is a Git repository, resolved from a session's `cwd` and assigned in
+`SessionRegistry.absorb()` — the adapter reports where a session is and knows
+nothing about projects. Stored project state is identity only; membership lives
+on the sessions and every aggregate is derived.
+
+This changes nothing about the boundaries below: observation, companion and
+control all still operate per session. See [Projects](projects.md).
+
 ## Packages
 
 | Package | Responsibility | May import |
