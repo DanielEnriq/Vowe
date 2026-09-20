@@ -9,9 +9,12 @@ import {
 
 import type { AgentSession, ConversationEntry, NormalizedEvent } from '@vowe/core';
 
-import { EventInspector } from './EventInspector.js';
+import { EventInspector, type EvidenceView } from './EventInspector.js';
+import { ObservationPanel } from './ObservationPanel.js';
 import { SemanticPanel } from './SemanticPanel.js';
+import { VoBar, useVo } from './VoPanel.js';
 import {
+  MicIcon,
   PanelIcon,
   RefreshIcon,
   formatClock,
@@ -25,6 +28,8 @@ import {
 interface Props {
   session: AgentSession;
   llmConfigured: boolean;
+  voiceConfigured: boolean;
+  voiceUnavailableReason: string | null;
 }
 
 /** Event kinds worth showing in the narrative stream. The rest live in the inspector. */
@@ -49,7 +54,12 @@ type StreamItem =
 
 type Mode = 'ask' | 'instruct';
 
-export function SessionDetail({ session, llmConfigured }: Props): ReactElement {
+export function SessionDetail({
+  session,
+  llmConfigured,
+  voiceConfigured,
+  voiceUnavailableReason,
+}: Props): ReactElement {
   const [events, setEvents] = useState<NormalizedEvent[]>([]);
   const [conversation, setConversation] = useState<ConversationEntry[]>([]);
   const [draft, setDraft] = useState('');
@@ -57,7 +67,11 @@ export function SessionDetail({ session, llmConfigured }: Props): ReactElement {
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [evidence, setEvidence] = useState<'cited' | 'all' | null>(null);
+  const [evidence, setEvidence] = useState<EvidenceView | null>(null);
+  const [traceIds, setTraceIds] = useState<string[] | null>(null);
+  const [catchingUp, setCatchingUp] = useState(false);
+
+  const vo = useVo(session.id);
 
   const reload = useCallback(async () => {
     const [nextEvents, nextConversation] = await Promise.all([
@@ -167,6 +181,19 @@ export function SessionDetail({ session, llmConfigured }: Props): ReactElement {
           <RefreshIcon />
         </button>
         <button
+          className={`tool-btn${vo.phase === 'live' ? ' on' : ''}`}
+          disabled={!voiceConfigured || vo.phase !== 'idle'}
+          title={
+            voiceConfigured
+              ? 'Talk to Vo about this session'
+              : (voiceUnavailableReason ?? 'No voice credential is configured')
+          }
+          onClick={() => void vo.join()}
+        >
+          <MicIcon />
+          Vo
+        </button>
+        <button
           className={`tool-btn${evidence ? ' on' : ''}`}
           aria-pressed={evidence !== null}
           onClick={() =>
@@ -184,6 +211,8 @@ export function SessionDetail({ session, llmConfigured }: Props): ReactElement {
         </button>
       </header>
 
+      <VoBar vo={vo} catchingUp={catchingUp} />
+
       <div className="detail-main">
         <div className="detail-scroll">
           <SemanticPanel
@@ -192,6 +221,18 @@ export function SessionDetail({ session, llmConfigured }: Props): ReactElement {
             refreshing={refreshing}
             onShowEvidence={() => setEvidence('cited')}
             onRefresh={refresh}
+          />
+
+          <ObservationPanel
+            session={session}
+            events={events}
+            voiceConfigured={voiceConfigured}
+            voiceUnavailableReason={voiceUnavailableReason}
+            onCatchingUpChange={setCatchingUp}
+            onShowTrace={(ids) => {
+              setTraceIds(ids);
+              setEvidence('trace');
+            }}
           />
 
           <section className="activity" aria-label="Activity">
@@ -216,6 +257,7 @@ export function SessionDetail({ session, llmConfigured }: Props): ReactElement {
             sessionId={session.id}
             events={events}
             citedIds={session.semanticState?.provenance.eventIds ?? []}
+            traceIds={traceIds}
             view={evidence}
             onViewChange={setEvidence}
             onClose={() => setEvidence(null)}

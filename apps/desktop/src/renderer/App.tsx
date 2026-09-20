@@ -43,6 +43,8 @@ export function App(): ReactElement {
           key={selected.id}
           session={selected}
           llmConfigured={status?.llmConfigured ?? false}
+          voiceConfigured={status?.voiceConfigured ?? false}
+          voiceUnavailableReason={status?.voiceUnavailableReason ?? null}
         />
       ) : (
         <section className="detail">
@@ -79,13 +81,24 @@ export function App(): ReactElement {
                 </div>
               )}
 
+              {status && !status.voiceConfigured && (
+                <p className="fine">
+                  Vo’s voice is unavailable.{' '}
+                  {status.voiceUnavailableReason ??
+                    'No voice credential is configured.'}{' '}
+                  Observation is unaffected.
+                </p>
+              )}
+
               {status && !status.llmConfigured && (
                 <div className="notice">
                   <strong>Summaries and answers are off</strong>
                   <p>
-                    No Anthropic API key is set. Vowe still finds sessions,
-                    records every event and shows their status. To turn on
-                    summaries and Ask Vowe, set the key and restart:
+                    No <code className="inline">ANTHROPIC_API_KEY</code> or{' '}
+                    <code className="inline">OPENROUTER_API_KEY</code> is set.
+                    Vowe still finds sessions, records every event and shows
+                    their status. To turn on summaries and Ask Vowe, set a key
+                    and restart:
                   </p>
                   <code>export ANTHROPIC_API_KEY=sk-ant-…</code>
                 </div>

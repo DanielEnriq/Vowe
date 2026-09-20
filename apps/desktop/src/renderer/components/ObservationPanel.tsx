@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactElement } from 'react';
 
 import type {
   AgentSession,
+  CommunicationAction,
   ContextRef,
   NormalizedEvent,
   SurfaceUpdate,
@@ -9,11 +10,15 @@ import type {
 } from '@vowe/core';
 import type { ObservationView } from '../../shared/ipc.js';
 
+import { MicOffIcon, formatClock } from './ui.js';
+
 interface Props {
   session: AgentSession;
   /** The session's stored events, already loaded by the detail view. */
   events: NormalizedEvent[];
-  onShowEvidence: (eventIds: string[]) => void;
+  voiceConfigured: boolean;
+  voiceUnavailableReason: string | null;
+  onShowTrace: (eventIds: string[]) => void;
   /** Vo shows "getting up to speed…" too, from the same single source. */
   onCatchingUpChange: (catchingUp: boolean) => void;
 }
@@ -22,15 +27,16 @@ interface Props {
  * What the observer has understood so far, and what it thought was worth
  * saying.
  *
- * This is also the text view everything degrades to: with no voice credential
- * and no decision model, the notes and the candidates are still all here, which
- * is what makes the harness inspectable rather than a black box behind a
- * microphone.
+ * This is also the view everything degrades to: with no voice credential and no
+ * decision model, the notes and the candidates are still all here, which is what
+ * makes the harness inspectable rather than a black box behind a microphone.
  */
 export function ObservationPanel({
   session,
   events,
-  onShowEvidence,
+  voiceConfigured,
+  voiceUnavailableReason,
+  onShowTrace,
   onCatchingUpChange,
 }: Props): ReactElement {
   const [view, setView] = useState<ObservationView | null>(null);
@@ -52,6 +58,7 @@ export function ObservationPanel({
   }, [reload, session.id]);
 
   const observing = view?.status.observing ?? false;
+  const catchingUp = view?.status.catchingUp ?? false;
 
   const toggle = useCallback(async () => {
     setBusy(true);
@@ -72,130 +79,161 @@ export function ObservationPanel({
     await reload();
   }, [preference, reload, session.id]);
 
+  const surfaced = view ? [...view.surfaceUpdates].reverse() : [];
+  const notes = view ? [...view.notes].reverse() : [];
+
   return (
-    <div className="card">
-      <h2>
-        Observation{' '}
-        {view && (
-          <span className={`badge ${observing ? 'llm' : ''}`}>
-            {observing
-              ? view.status.catchingUp
-                ? 'getting up to speed…'
-                : 'live'
-              : 'not observing'}
+    <section className="observation" aria-label="Observation">
+      <div className="obs-head">
+        <h2>Observation</h2>
+        <span className="state-chip">
+          <span
+            className={`dot small ${observing ? (catchingUp ? 'waiting' : 'working') : 'idle'}`}
+          />
+          {observing ? (catchingUp ? 'Getting up to speed…' : 'Live') : 'Not observing'}
+        </span>
+        {observing && (
+          <span className="count">
+            {view?.status.windowsProcessed ?? 0} windows processed
           </span>
         )}
-        <span className="badge" style={{ marginLeft: 6 }}>
-          {view?.status.windowsProcessed ?? 0} windows
-        </span>
-      </h2>
-
-      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-        <button onClick={() => void toggle()} disabled={busy}>
+        <span className="spacer" />
+        <button className="btn tiny" disabled={busy} onClick={() => void toggle()}>
           {observing ? 'Stop observing' : 'Observe this session'}
         </button>
       </div>
 
-      <label style={{ display: 'block', marginBottom: 10 }}>
-        <div style={{ color: 'var(--muted)', marginBottom: 4 }}>
+      <div className="field">
+        <label htmlFor="preference">
           When should Vo interrupt you about this session?
-        </div>
+        </label>
         <input
+          id="preference"
           value={preference}
           placeholder="Only tell me if something looks weird."
           onChange={(event) => setPreference(event.target.value)}
           onBlur={() => void savePreference()}
-          style={{ width: '100%' }}
         />
-      </label>
+      </div>
 
-      {view && view.surfaceUpdates.length > 0 && (
+      {!voiceConfigured && (
+        <div className="degraded">
+          <MicOffIcon />
+          <span>
+            Vo’s voice is unavailable.{' '}
+            {voiceUnavailableReason ?? 'No voice credential is configured.'}{' '}
+            Observation is unaffected: windows, notes and surfaced updates are
+            all still here.
+          </span>
+        </div>
+      )}
+
+      {surfaced.length > 0 && (
         <>
           <h3>Surfaced</h3>
-          {view.surfaceUpdates
-            .slice()
-            .reverse()
-            .map((update) => (
+          <div className="surfaced">
+            {surfaced.map((update) => (
               <SurfaceRow key={update.id} update={update} />
             ))}
+          </div>
         </>
       )}
 
       <h3>Window notes</h3>
-      {!view?.notes.length && (
-        <p style={{ color: 'var(--muted)' }}>
+      {notes.length === 0 ? (
+        <p className="none">
           {observing
             ? 'Nothing interpreted yet.'
-            : 'This session is not being observed yet.'}
+            : 'Not observing this session yet. Start observation to build window notes and let Vo tell you when something is worth knowing.'}
         </p>
+      ) : (
+        <div className="notes">
+          {notes.map((note) => (
+            <NoteRow
+              key={note.id}
+              note={note}
+              onShowTrace={onShowTrace}
+              findEvents={(ref) => eventIdsFor(events, ref)}
+            />
+          ))}
+        </div>
       )}
-      {view?.notes
-        .slice()
-        .reverse()
-        .map((note) => (
-          <NoteRow
-            key={note.id}
-            note={note}
-            onShowEvidence={onShowEvidence}
-            findEvents={(ref) => eventIdsFor(events, ref)}
-          />
-        ))}
+    </section>
+  );
+}
+
+/** Past tense: by the time this is on screen, the decision has been made. */
+const ACTION_LABELS: Record<CommunicationAction, string> = {
+  speak_now: 'spoke now',
+  queue: 'queued',
+  quiet_context: 'kept quiet',
+  ignore: 'ignored',
+};
+
+function SurfaceRow({ update }: { update: SurfaceUpdate }): ReactElement {
+  const action = update.decision?.action;
+  const spoken = action === 'speak_now';
+  return (
+    <div className={`surface${spoken ? ' spoken' : ''}`}>
+      <div className="line">
+        <span className={`action-chip${spoken ? ' spoken' : ''}`}>
+          {action ? ACTION_LABELS[action] : 'pending'}
+        </span>
+        <span className="message">{update.message}</span>
+      </div>
+      <span className="why">{update.whyNow}</span>
+      {update.decision && (
+        <span className="decision">
+          {update.decision.reason} · decided by {sourceLabel(update.decision.source)}
+          {update.deliveredAt && ` · delivered ${formatClock(update.deliveredAt)}`}
+        </span>
+      )}
     </div>
   );
 }
 
-function SurfaceRow({ update }: { update: SurfaceUpdate }): ReactElement {
-  const action = update.decision?.action ?? 'pending';
-  return (
-    <div className="entry">
-      <div>
-        <span className={`badge ${action === 'speak_now' ? 'warn' : ''}`}>{action}</span>{' '}
-        {update.message}
-      </div>
-      <div style={{ color: 'var(--muted)' }}>{update.whyNow}</div>
-      {update.decision && (
-        <div style={{ color: 'var(--muted)', fontSize: '0.85em' }}>
-          {update.decision.reason} ({update.decision.source}
-          {update.deliveredAt ? ', delivered' : ''})
-        </div>
-      )}
-    </div>
-  );
+function sourceLabel(source: string): string {
+  if (source === 'llm') return 'the model';
+  if (source === 'default') return 'the fallback';
+  return source;
 }
 
 function NoteRow({
   note,
-  onShowEvidence,
+  onShowTrace,
   findEvents,
 }: {
   note: WindowNote;
-  onShowEvidence: (eventIds: string[]) => void;
+  onShowTrace: (eventIds: string[]) => void;
   findEvents: (ref: ContextRef) => string[];
 }): ReactElement {
   const traceRef = note.refs.find((ref) => ref.kind === 'trace');
   return (
-    <div className="entry">
-      <div>
-        <span className="badge">window {note.windowIndex}</span>{' '}
-        {note.investigated && <span className="badge">investigated</span>} {note.summary}
+    <>
+      <span className="w">w{note.windowIndex}</span>
+      <div className="note">
+        <span className="summary">
+          {note.summary}
+          {note.investigated && <span className="chip">investigated</span>}
+        </span>
+        {note.currentActivity && (
+          <span className="aside">Now · {note.currentActivity}</span>
+        )}
+        {note.notableChange && (
+          <span className="aside">Notable · {note.notableChange}</span>
+        )}
+        {traceRef && (
+          // Every note is traceable to the exact L0 range that produced it; this
+          // is the button that makes that claim checkable rather than decorative.
+          <button
+            className="link-btn"
+            onClick={() => onShowTrace(findEvents(traceRef))}
+          >
+            Show the trace this came from
+          </button>
+        )}
       </div>
-      {note.currentActivity && (
-        <div style={{ color: 'var(--muted)' }}>Now: {note.currentActivity}</div>
-      )}
-      {note.notableChange && (
-        <div style={{ color: 'var(--muted)' }}>Notable: {note.notableChange}</div>
-      )}
-      {traceRef && (
-        // Every note is traceable to the exact L0 range that produced it; this
-        // is the button that makes that claim checkable rather than decorative.
-        <button
-          className="link"
-          onClick={() => onShowEvidence(findEvents(traceRef))}
-        >
-          Show the trace this came from
-        </button>
-      )}
-    </div>
+    </>
   );
 }
 

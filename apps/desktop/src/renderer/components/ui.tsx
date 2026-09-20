@@ -47,6 +47,25 @@ export function CloseIcon(): ReactElement {
   );
 }
 
+export function MicIcon(): ReactElement {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+      <rect x="6" y="2" width="4" height="7" rx="2" />
+      <path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2" />
+    </svg>
+  );
+}
+
+export function MicOffIcon(): ReactElement {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+      <path d="M2 2l12 12" />
+      <path d="M6 3.2A2 2 0 0 1 10 4v3M10 9.5A2 2 0 0 1 6 9V6" />
+      <path d="M3.5 7.5a4.5 4.5 0 0 0 6.8 3.9M12.5 7.5v.4M8 12v2" />
+    </svg>
+  );
+}
+
 export function CheckIcon(): ReactElement {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

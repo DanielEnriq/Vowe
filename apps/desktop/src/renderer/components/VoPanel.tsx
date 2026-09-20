@@ -1,15 +1,26 @@
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactElement,
+  type RefObject,
+} from 'react';
 
-import type { AgentSession, LiveStatus } from '@vowe/core';
+import type { LiveStatus } from '@vowe/core';
 
-interface Props {
-  session: AgentSession;
-  voiceConfigured: boolean;
-  voiceUnavailableReason: string | null;
-  catchingUp: boolean;
+export type VoPhase = 'idle' | 'joining' | 'live' | 'error';
+
+export interface Vo {
+  phase: VoPhase;
+  status: LiveStatus | null;
+  muted: boolean;
+  error: string | null;
+  join: () => Promise<void>;
+  end: () => Promise<void>;
+  toggleMute: () => void;
+  audio: RefObject<HTMLAudioElement | null>;
 }
-
-type Phase = 'idle' | 'joining' | 'live' | 'error';
 
 /**
  * The voice surface.
@@ -18,16 +29,9 @@ type Phase = 'idle' | 'joining' | 'live' | 'error';
  * plays what comes back, and it negotiates a peer connection directly with the
  * provider. The SDP offer goes through the main process only because the
  * exchange needs a credential, and the credential must not reach here.
- *
- * Development-quality by design — join, mute, end.
  */
-export function VoPanel({
-  session,
-  voiceConfigured,
-  voiceUnavailableReason,
-  catchingUp,
-}: Props): ReactElement {
-  const [phase, setPhase] = useState<Phase>('idle');
+export function useVo(sessionId: string): Vo {
+  const [phase, setPhase] = useState<VoPhase>('idle');
   const [status, setStatus] = useState<LiveStatus | null>(null);
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +78,7 @@ export function VoPanel({
       await peer.setLocalDescription(offer);
 
       const { sdpAnswer, status: next } = await window.vowe.startLive(
-        session.id,
+        sessionId,
         offer.sdp ?? '',
       );
       await peer.setRemoteDescription({ type: 'answer', sdp: sdpAnswer });
@@ -86,7 +90,7 @@ export function VoPanel({
       setPhase('error');
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [session.id, teardown]);
+  }, [sessionId, teardown]);
 
   const end = useCallback(async () => {
     teardown();
@@ -105,60 +109,51 @@ export function VoPanel({
     setMuted(next);
   }, [muted]);
 
-  if (!voiceConfigured) {
-    return (
-      <div className="card">
-        <h2>Vo</h2>
-        <p style={{ color: 'var(--muted)' }}>
-          Vo voice is unavailable.{' '}
-          {voiceUnavailableReason ?? 'No voice credential is configured.'}
-        </p>
-        <p style={{ color: 'var(--muted)' }}>
-          Observation is unaffected — windows, notes and surfaced updates are all
-          below.
-        </p>
-      </div>
-    );
+  return { phase, status, muted, error, join, end, toggleMute, audio };
+}
+
+interface BarProps {
+  vo: Vo;
+  /** Vo says "getting up to speed" from the same source the panel reads. */
+  catchingUp: boolean;
+}
+
+/**
+ * The strip under the window's title bar while Vo is on the call. It carries
+ * the controls that must always be one click away: mute, and end.
+ */
+export function VoBar({ vo, catchingUp }: BarProps): ReactElement | null {
+  const live = vo.phase === 'live';
+  const sidebandMissing =
+    vo.status?.connected === true && vo.status.sidebandAttached === false;
+
+  if (vo.phase === 'idle') {
+    return <audio ref={vo.audio} autoPlay />;
   }
 
   return (
-    <div className="card">
-      <h2>
-        Vo{' '}
-        <span className={`badge ${phase === 'live' ? 'llm' : ''}`}>
-          {phase === 'live'
-            ? catchingUp
-              ? 'getting up to speed…'
-              : 'live'
-            : phase}
-        </span>
-        {status && status.connected && !status.sidebandAttached && (
-          <span className="badge warn" style={{ marginLeft: 6 }}>
-            observer updates cannot reach this call
-          </span>
-        )}
-      </h2>
-
-      <div style={{ display: 'flex', gap: 8 }}>
-        {phase === 'live' ? (
-          <>
-            <button onClick={toggleMute}>{muted ? 'Unmute' : 'Mute'}</button>
-            <button onClick={() => void end()}>End</button>
-          </>
-        ) : (
-          <button onClick={() => void join()} disabled={phase === 'joining'}>
-            {phase === 'joining' ? 'Joining…' : 'Join Vo'}
-          </button>
-        )}
-      </div>
-
-      {error && (
-        <p className="error" style={{ marginTop: 8 }}>
-          {error}
-        </p>
+    <div className={`vo-bar${vo.phase === 'error' ? ' error-bar' : ''}`}>
+      <span className={`dot small ${live ? 'working' : 'starting'}`} />
+      <span className="label">
+        {vo.phase === 'joining' && 'Vo is joining…'}
+        {live && (catchingUp ? 'Vo is live · getting up to speed…' : 'Vo is live')}
+        {vo.phase === 'error' && (vo.error ?? 'Vo could not join')}
+      </span>
+      {live && sidebandMissing && (
+        <span className="warn-chip">Observer updates can’t reach this call</span>
       )}
-
-      <audio ref={audio} autoPlay />
+      <span className="spacer" />
+      {live && (
+        <button className="btn tiny" onClick={vo.toggleMute}>
+          {vo.muted ? 'Unmute' : 'Mute'}
+        </button>
+      )}
+      {vo.phase !== 'joining' && (
+        <button className="btn tiny" onClick={() => void vo.end()}>
+          {vo.phase === 'error' ? 'Dismiss' : 'End'}
+        </button>
+      )}
+      <audio ref={vo.audio} autoPlay />
     </div>
   );
 }

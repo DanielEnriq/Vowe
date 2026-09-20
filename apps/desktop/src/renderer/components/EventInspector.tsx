@@ -10,9 +10,11 @@ interface Props {
   events: NormalizedEvent[];
   /** Event ids cited by the current interpretation. */
   citedIds: string[];
-  /** Which list to show; the owner switches to "cited" when evidence is requested. */
-  view: 'cited' | 'all';
-  onViewChange: (view: 'cited' | 'all') => void;
+  /** Events inside one window's trace range, when a note asked for them. */
+  traceIds: string[] | null;
+  /** Which list to show; the owner switches when evidence or a trace is requested. */
+  view: EvidenceView;
+  onViewChange: (view: EvidenceView) => void;
   onClose: () => void;
 }
 
@@ -21,10 +23,13 @@ interface Props {
  * record one click away. This is how we check what evidence produced Vowe's
  * description of a session.
  */
+export type EvidenceView = 'cited' | 'all' | 'trace';
+
 export function EventInspector({
   sessionId,
   events,
   citedIds,
+  traceIds,
   view,
   onViewChange,
   onClose,
@@ -52,7 +57,13 @@ export function EventInspector({
   }, [sessionId, citedKey]);
 
   const citedSet = useMemo(() => new Set(citedIds), [citedIds]);
-  const shown = view === 'cited' ? cited : events;
+  const traceSet = useMemo(() => new Set(traceIds ?? []), [traceIds]);
+  const shown =
+    view === 'cited'
+      ? cited
+      : view === 'trace'
+        ? events.filter((event) => traceSet.has(event.id))
+        : events;
 
   return (
     <aside className="evidence" aria-label="Evidence">
@@ -62,7 +73,9 @@ export function EventInspector({
           <span className="sub">
             {view === 'cited'
               ? 'The events behind the current summary'
-              : 'Everything observed in this session'}
+              : view === 'trace'
+                ? 'The trace one window note was made from'
+                : 'Everything observed in this session'}
           </span>
         </div>
         <button className="icon-btn" aria-label="Close evidence" onClick={onClose}>
@@ -71,6 +84,14 @@ export function EventInspector({
       </div>
 
       <div className="segmented stretch" role="group" aria-label="Which events">
+        {traceIds && (
+          <button
+            aria-pressed={view === 'trace'}
+            onClick={() => onViewChange('trace')}
+          >
+            Window · {traceIds.length}
+          </button>
+        )}
         <button
           aria-pressed={view === 'cited'}
           onClick={() => onViewChange('cited')}
@@ -87,7 +108,9 @@ export function EventInspector({
           <p className="none">
             {view === 'cited'
               ? 'The current summary doesn’t cite any events.'
-              : 'Nothing observed yet.'}
+              : view === 'trace'
+                ? 'That window’s events are no longer loaded.'
+                : 'Nothing observed yet.'}
           </p>
         )}
         {shown.map((event) => {
