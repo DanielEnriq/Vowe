@@ -58,15 +58,29 @@ explicitly, which is the entire point of having two tools instead of one.
 
 ### `repo` needs no index
 
-It shells out to `git grep`. That is all. It respects `.gitignore`, which a
-naive recursive walk would not, and at this scale that is most of what an index
-would have bought.
+It shells out to `git grep`, and it still does — but it is no longer all.
 
 **This is the contract future work improves behind.** A repository index, a
 semantic code graph or an embedding store would change what `repo` searches and
 how well it ranks — and would change nothing about the signature, the result
 shape, or any caller. Same for `windows`: today it is substring matching over
 note text; tomorrow it could be a vector search. The seam is the point.
+
+### What went through that seam
+
+A code graph and a durable project memory, and the claim held: `searchContext`
+kept its signature, `SearchHit` kept its shape, no caller changed, and the
+model-facing toolset was not touched. `repo` results now carry two new ref
+kinds, `symbol:` and `lesson:`, which `open_context` descends from in the
+ordinary way.
+
+The one thing worth knowing is the ordering. **Graph and memory hits augment
+`git grep`; they never replace it.** Grep keeps half the budget unconditionally,
+so an index that is stale, still building or absent can only ever add nothing —
+it can never hide a file that is on disk right now. `repo` still needs no index
+to work at all, which is what makes the whole feature optional.
+
+See [project knowledge](project-knowledge.md).
 
 ## `open_context`
 

@@ -90,14 +90,17 @@ wrong if rushed.
 packages/core/                 provider-independent model, registry, store,
                                interpretation, companion, observation harness,
                                context navigation, communication policy,
-                               live bridge — and every vendor-facing interface
+                               live bridge, project knowledge — and every
+                               vendor-facing interface
 packages/adapter-claude-code/  the one provider adapter
 packages/llm/                  AnthropicLlmClient (the only Anthropic SDK import)
 packages/decision-jev/         structured decisions behind DecisionRouter
 packages/live-openai/          GPT-Live behind LiveTransport
+packages/knowledge-graphify/   code graphs behind ProjectKnowledgeProvider
 packages/replay/               dev only: sanitizer, fixtures, tuning harness
 apps/desktop/                  Electron main + preload + React renderer
-docs/                          architecture, the harness, navigation, the bridge
+docs/                          architecture, the harness, navigation, the
+                               bridge, project knowledge
 ```
 
 ## Docs
@@ -117,6 +120,9 @@ docs/                          architecture, the harness, navigation, the bridge
 - [Context navigation](docs/context-navigation.md) — what `search_context`,
   `open_context`, `get_diff` and `surface_update` mean, and how future indexing
   improves them without changing their contracts.
+- [Project knowledge](docs/project-knowledge.md) — the code graph versus what
+  Vowe has learned, which of the two Vowe owns, how memory admission stays
+  conservative, and why source and diff remain authoritative.
 - [The live bridge](docs/live-bridge.md) — WebRTC, the sideband, quiet context
   versus proactive speech, delegated questions, and what is deliberately never
   sent to the voice provider.
@@ -124,7 +130,8 @@ docs/                          architecture, the harness, navigation, the bridge
 ## Tests
 
 ```bash
-pnpm test        # 81 tests, no credentials required
+pnpm test        # 177 tests, no credentials required
+                 # (+3 more when Graphify is installed)
 pnpm replay packages/replay/fixtures/repeated-failures.synthetic.jsonl
 
 # Against the real provider, once .env has a key:

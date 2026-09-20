@@ -154,11 +154,22 @@ Deliberately **not** implemented in this slice:
 - **No project summary.** The Project Room is composed from session state that
   already exists — task names, status, the latest interpreted activity, relative
   times. **No model is called to render it.**
-- **No repository indexing, semantic graph, embeddings or project memory.**
 
 The hierarchy is the point. Adding project-level intelligence later should be
 additive: a `ProjectObserver` reading the L1 notes its sessions already produce,
 reached from a place that already exists in the navigation.
+
+## What a Project now knows about its code
+
+This list used to include "no repository indexing, semantic graph, embeddings or
+project memory". Two of those four arrived, and they arrived additively — exactly
+as the hierarchy predicted. A Project now carries a structural graph of its
+repository and a durable record of what Vowe has worked out about it, both
+reached through the read tools that already existed, and both stored under the
+Project rather than under any session.
+
+Still no embeddings, and still no vector store. See
+[project knowledge](project-knowledge.md).
 
 See [the observation harness](observer-harness.md) for what happens inside a
 single session.
