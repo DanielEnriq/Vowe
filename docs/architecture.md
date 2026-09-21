@@ -190,28 +190,67 @@ See [the observation harness](observer-harness.md),
 
 ## Persistence
 
-`NdjsonEventStore` writes append-only NDJSON under
-`<userData>/vowe/`:
+`SqliteEventStore` is the canonical local database. One file under
+`<userData>/vowe/`, opened with `node:sqlite` — no dependency, no ORM:
 
 ```
-sessions.json                        session index
-adapters/<provider>.json             opaque adapter state
-sessions/<id>/events.ndjson          normalized events, raw payload included
-sessions/<id>/semantic.ndjson        semantic state history
-sessions/<id>/conversation.ndjson    companion conversation
-sessions/<id>/windows.ndjson         L1 window ranges
-sessions/<id>/window-notes.ndjson    L1 interpretations
-sessions/<id>/surface-updates.ndjson communication candidates + decisions
-sessions/<id>/observation.json       observation cursor + preference
+vowe.sqlite            the whole of Vowe's durable history
+vowe.sqlite-wal/-shm   write-ahead log, removed on a clean shutdown
+profile.json           who the developer is        (configuration, not history)
+presence.json          who Vowe is                 (configuration, not history)
+projects/<id>/         project knowledge — a directory, and staying one
 ```
+
+Tables: `projects`, `sessions`, `events`, `semantic_states`,
+`conversation_entries`, `conversation_deliveries`, `windows`, `window_notes`,
+`surface_updates`, `observation_state`. Columns carry anything ordered, filtered
+or looked up; JSON carries payloads only ever read whole — `raw`, `detail`,
+`capabilities`, `refs`, `provenance`, `investigation`, `decision`.
 
 Windows store ranges, never material: the raw trace stays where the provider
-wrote it, and `observation.json` is what lets a restart resume rather than
+wrote it, and `observation_state` is what lets a restart resume rather than
 reinterpret.
 
-Rebuilt into memory at startup; a truncated final line from an interrupted
-write is tolerated. `appendEvent` is idempotent on `rawRef`, so re-reading a
-transcript after a restart cannot duplicate history.
+Reads are real queries, not a cache. `node:sqlite` is synchronous, which is what
+lets `EventStore` keep its original shape — synchronous reads, async writes —
+without holding whole sessions in memory the way NDJSON had to.
 
-The `EventStore` interface exists so this becomes SQLite when whole streams in
-memory stops being reasonable. Nothing outside the store knows the format.
+`appendEvent` is idempotent on `rawRef`, enforced by a unique index rather than
+a set held in memory, so re-reading a transcript after a restart cannot
+duplicate history. Its `seq` is assigned inside the insert, under SQLite's write
+lock, which is what keeps it gap-free without a counter that could drift.
+
+`PRAGMA journal_mode = WAL`, `synchronous = FULL`, `foreign_keys = ON`. Full
+durability is deliberate: `onConversationChanged` promises in writing that an
+entry is durable and readable before a listener hears about it, and the
+notification fires after `COMMIT` returns.
+
+### Migrations
+
+An ordered list in `store/sqlite/migrations.ts`, recorded in a
+`schema_migrations` table — `001_initial_store`, then
+`002_conversation_delivery`. Each runs inside its own transaction together with
+the row recording it, so a failure leaves the schema and the version untouched
+rather than half-applied, and says which migration failed. A shipped migration's
+SQL is frozen: it describes the database an older Vowe actually wrote, and
+regenerating it from the current types would make migrating forward untestable.
+
+### Conversation and delivery
+
+A `ConversationEntry` is the complete semantic turn. A `ConversationDelivery` is
+what happened while communicating it. An answer interrupted halfway through
+being spoken is **one** entry holding the full text plus one delivery recording
+how far the audio got — never a truncated entry, and never a second copy of the
+answer. That is also what lets a turn stay persisted exactly once as voice grows
+up: a surface that did not write the entry attaches a delivery to it.
+
+### Starting over
+
+There is no importer and no legacy reader. A directory still holding the old
+NDJSON files opens as an empty database, and those files are left exactly where
+they are — startup never deletes anything. To start clean, call `resetDatabase`
+or delete `vowe.sqlite*` by hand.
+
+Still deliberately file-backed: `profile.json` and `presence.json` are
+configuration with no history worth keeping, and `projects/<id>/` holds a code
+graph and project memory that an external tool reads and writes.

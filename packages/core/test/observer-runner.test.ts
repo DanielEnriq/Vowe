@@ -8,7 +8,7 @@ import type {
   ObserveWindowInput,
   WindowObservation,
 } from '../src/llm/observation-llm.js';
-import type { NdjsonEventStore } from '../src/store/ndjson-event-store.js';
+import type { SqliteEventStore } from '../src/store/sqlite-event-store.js';
 import {
   steadyEvents,
   storeEvents,
@@ -45,7 +45,7 @@ async function harness(policy = { maxEvents: 10 }) {
   cleanup = fixture.cleanup;
   await fixture.store.upsertSession(testSession());
 
-  const build = (store: NdjsonEventStore, observer: ObservationLlm) =>
+  const build = (store: SqliteEventStore, observer: ObservationLlm) =>
     new ObserverRunner({
       sessionId: TEST_SESSION,
       store,

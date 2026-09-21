@@ -7,7 +7,7 @@ import {
   ContextNavigator,
   DelegatedQuestionRunner,
   HeuristicDecisionRouter,
-  NdjsonEventStore,
+  SqliteEventStore,
   ObserverRunner,
   type AgentSession,
   type DecisionRouter,
@@ -39,7 +39,7 @@ export interface ReplayHarnessOptions {
 export interface ReplayResult {
   sessionId: string;
   storeRoot: string;
-  store: NdjsonEventStore;
+  store: SqliteEventStore;
   navigator: ContextNavigator;
   runner: ObserverRunner;
   delegated: DelegatedQuestionRunner;
@@ -67,7 +67,7 @@ export async function replayFixture(
     options.storeRoot ?? (await mkdtemp(path.join(os.tmpdir(), 'vowe-replay-')));
   const sessionId = options.sessionId ?? 'claude-code:replay-fixture';
 
-  const store = new NdjsonEventStore(storeRoot);
+  const store = new SqliteEventStore(storeRoot);
   await store.init();
 
   const session: AgentSession = fixtureSession(sessionId, {

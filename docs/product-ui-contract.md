@@ -550,22 +550,20 @@ If live voice UI later needs non-delegated transcript state: add a dedicated Liv
 
 ```text
 vowe/
-  sessions.json
-  projects.json
+  vowe.sqlite          sessions, projects, events, conversation, observation
 
-  profile.json
+  profile.json         small user configuration, not history
   presence.json
-
-  sessions/
-    <session>/
-      conversation.ndjson
-      ...
 
   projects/
     <project>/
-      knowledge/
+      knowledge/       vendor-owned code graph + Vowe's project memory
         ...
 ```
+
+Superseded by Slice 3: Vowe-owned durable state is one SQLite database. Small
+user configuration stays as files, and project knowledge stays a directory
+because an external tool reads and writes it.
 
 One persistent Vowe identity — Presence settings never live inside individual sessions or Projects.
 

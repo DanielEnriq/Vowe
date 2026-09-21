@@ -106,15 +106,20 @@ export function SessionDetail({
       if (event.sessionId !== session.id) return;
       setEvents((current) => [...current, event]);
     });
-    // An answer delegated from Vo is persisted to this same conversation, and
-    // arrives on this channel. Without it, a spoken question's written answer
-    // would sit on disk unseen until the view remounted.
+    // Observation output — a window note landing, something surfaced.
     const offObservation = window.vowe.onObservationChanged((sessionId) => {
       if (sessionId === session.id) void reload();
+    });
+    // The conversation itself, whoever wrote to it: a typed answer, an answer
+    // delegated from Vo, an instruction and its result. Without it a spoken
+    // question's written answer would sit on disk unseen until a remount.
+    const offConversation = window.vowe.onConversationChanged((change) => {
+      if (change.sessionId === session.id) void reload();
     });
     return () => {
       offEvent();
       offObservation();
+      offConversation();
     };
   }, [reload, session.id]);
 
