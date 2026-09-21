@@ -115,6 +115,15 @@ export class TranscriptNormalizer {
 
     let kind: NormalizedEventKind = 'tool_started';
     let summary = `${name} started`;
+    /**
+     * Whether this stop is the worker asking a *person* something.
+     *
+     * Core must not learn Claude Code's tool names, and a `session_waiting`
+     * event on its own does not say whether the worker paused for a human or
+     * for itself. Only the adapter knows, so the adapter says so here, in a
+     * word that names no provider. `Needs You` admits nothing without it.
+     */
+    let awaitingHuman = false;
 
     if (name === 'Bash') {
       const command = asString(input.command);
@@ -128,6 +137,7 @@ export class TranscriptNormalizer {
       summary = `${name === 'Write' ? 'Wrote' : 'Edited'} ${baseName(asString(input.file_path) || asString(input.notebook_path))}`;
     } else if (WAITING_TOOLS.has(name)) {
       kind = 'session_waiting';
+      awaitingHuman = true;
       summary =
         name === 'AskUserQuestion'
           ? 'Asked the developer a question'
@@ -154,6 +164,7 @@ export class TranscriptNormalizer {
       tool: name,
       toolUseId: id,
       input: compactInput(name, input),
+      ...(awaitingHuman ? { awaitingHuman: true } : {}),
     });
   }
 

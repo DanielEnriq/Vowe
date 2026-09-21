@@ -6,10 +6,28 @@
  * and capabilities are all discovered at runtime.
  */
 
-/** Coarse, provider-independent lifecycle state. */
+/**
+ * Coarse, provider-independent lifecycle state.
+ *
+ * **`waiting` does not mean the session is waiting on you.** It is the
+ * ordinary between-turn state — a worker that is not currently busy — and a
+ * provider reports it for any lull at all. Nothing about it says a person
+ * could help.
+ *
+ * Human attention is carried by *evidence events*, never by this field: a
+ * `permission_requested` event, or a `session_waiting` event the adapter
+ * marked with `detail.awaitingHuman === true` because it knows that
+ * particular stop was a question for a person. Status answers "is this
+ * session alive?"; those events answer "can you do something about it?".
+ *
+ * Conflating the two is what makes an attention list unreadable, so the
+ * `Needs You` projection admits only the events and ignores this field except
+ * as a liveness gate. See `product/attention.ts`.
+ */
 export type SessionStatus =
   | 'starting'
   | 'working'
+  /** Between turns. Ordinary idleness — see the note above, not attention. */
   | 'waiting'
   | 'idle'
   | 'finished'

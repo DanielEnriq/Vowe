@@ -14,6 +14,10 @@ export * from './companion/observed-state.js';
 // Projects: the durable parent of sessions.
 export * from './projects/index.js';
 
+// Product state: what a Project Room reads, and who Vowe and the developer are.
+// Projections over everything below, plus two small local settings files.
+export * from './product/index.js';
+
 // Project knowledge: what a repository contains, and what Vowe has learned.
 export * from './knowledge/project-knowledge.js';
 export * from './knowledge/project-knowledge-service.js';

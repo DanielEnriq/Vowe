@@ -6,10 +6,13 @@ import type {
   LiveStatus,
   NormalizedEvent,
   ObservationStatus,
+  PresenceProfile,
   Project,
+  ProjectBrief,
   RepoIndexState,
   SurfaceUpdate,
   TraceWindow,
+  UserProfile,
   WindowNote,
 } from '@vowe/core';
 
@@ -86,6 +89,32 @@ export interface VoweApi {
    * a repository question commits the machine to building anything.
    */
   getProjectKnowledge(projectId: string): Promise<RepoIndexState>;
+
+  /**
+   * Everything the Project Room shows, already reconciled.
+   *
+   * One call rather than several, because the room's synthesis has to agree
+   * with itself: a headline computed in the renderer from three separately
+   * fetched stores can say "everything is moving" beside a session that has
+   * finished. Deterministic aggregation, no project agent, no model call.
+   */
+  getProjectBrief(projectId: string): Promise<ProjectBrief>;
+
+  // ------------------------------------------------------------- identity
+
+  /**
+   * Local, and local only. No account, no sign-in, no OS-user inference —
+   * these are display settings, and Vowe has nothing to authenticate to.
+   *
+   * The setters return what was actually stored: validation may adjust a
+   * value, and the caller should not have to read back to find out.
+   */
+  getUserProfile(): Promise<UserProfile>;
+  setUserProfile(profile: UserProfile): Promise<UserProfile>;
+
+  /** One appearance for one Vowe, shared by every place it is drawn. */
+  getPresenceProfile(): Promise<PresenceProfile>;
+  setPresenceProfile(profile: PresenceProfile): Promise<PresenceProfile>;
 
   onSessionsChanged(listener: () => void): () => void;
   onSessionEvent(listener: (event: NormalizedEvent) => void): () => void;
@@ -164,6 +193,11 @@ export const IPC = {
   liveStatus: 'vowe:live:status',
   chooseFolder: 'vowe:dialog:choose-folder',
   getProjectKnowledge: 'vowe:knowledge:state',
+  getProjectBrief: 'vowe:project:brief',
+  getUserProfile: 'vowe:profile:get',
+  setUserProfile: 'vowe:profile:set',
+  getPresenceProfile: 'vowe:presence:get',
+  setPresenceProfile: 'vowe:presence:set',
   sessionsChanged: 'vowe:sessions:changed',
   sessionEvent: 'vowe:session:event',
   observationChanged: 'vowe:observe:changed',

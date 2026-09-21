@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-import type { LiveStatus, NormalizedEvent } from '@vowe/core';
+import type {
+  LiveStatus,
+  NormalizedEvent,
+  PresenceProfile,
+  UserProfile,
+} from '@vowe/core';
 import { IPC, type VoweApi } from '../shared/ipc.js';
 
 const api: VoweApi = {
@@ -24,6 +29,15 @@ const api: VoweApi = {
   chooseFolder: () => ipcRenderer.invoke(IPC.chooseFolder),
   getProjectKnowledge: (projectId) =>
     ipcRenderer.invoke(IPC.getProjectKnowledge, projectId),
+  getProjectBrief: (projectId) =>
+    ipcRenderer.invoke(IPC.getProjectBrief, projectId),
+
+  getUserProfile: () => ipcRenderer.invoke(IPC.getUserProfile),
+  setUserProfile: (profile: UserProfile) =>
+    ipcRenderer.invoke(IPC.setUserProfile, profile),
+  getPresenceProfile: () => ipcRenderer.invoke(IPC.getPresenceProfile),
+  setPresenceProfile: (profile: PresenceProfile) =>
+    ipcRenderer.invoke(IPC.setPresenceProfile, profile),
 
   startObserving: (sessionId) =>
     ipcRenderer.invoke(IPC.startObserving, sessionId),

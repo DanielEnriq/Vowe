@@ -20,7 +20,18 @@ export type NormalizedEventKind =
   | 'file_changed'
   | 'test_started'
   | 'test_finished'
+  /** The worker cannot proceed without an approval. Always human attention. */
   | 'permission_requested'
+  /**
+   * The worker stopped and is waiting.
+   *
+   * This is *evidence*, unlike the `waiting` session status, which is only
+   * ordinary between-turn idleness. But the kind alone still does not say
+   * whether the stop was a question for a person or a pause of the worker's
+   * own: only the adapter that produced it knows. An adapter that knows it
+   * was a question sets `detail.awaitingHuman === true`, and the `Needs You`
+   * projection admits nothing without that flag.
+   */
   | 'session_waiting'
   | 'session_finished'
   | 'unknown';

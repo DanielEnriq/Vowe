@@ -23,10 +23,13 @@ import {
   ObservationService,
   ConservativeMemoryAdmission,
   describeObservedState,
+  PresenceProfileStore,
+  ProjectBriefService,
   ProjectKnowledgeService,
   ProjectMemoryStore,
   ProjectService,
   SessionRegistry,
+  UserProfileStore,
   UnavailableLiveTransport,
   type DecisionRouter,
   type LiveTransport,
@@ -39,6 +42,7 @@ import { JevDecisionRouter } from '@vowe/decision-jev';
 import { OpenAiLiveTransport } from '@vowe/live-openai';
 
 import { IPC, type AppStatus, type AskResult, type ObservationView } from '../shared/ipc.js';
+import type { PresenceProfile, UserProfile } from '@vowe/core';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -47,6 +51,11 @@ interface Services {
   registry: SessionRegistry;
   projects: ProjectService;
   knowledge: ProjectKnowledgeService;
+  /** The Project Room's read model. Derived on every read, never stored. */
+  brief: ProjectBriefService;
+  /** Vowe's one identity, and the developer's. Global, not per session. */
+  profile: UserProfileStore;
+  presence: PresenceProfileStore;
   companion: CompanionService;
   /** The one grounded investigator. Typed questions and Vo both arrive here. */
   delegated: DelegatedQuestionRunner;
@@ -160,6 +169,29 @@ async function createServices(): Promise<Services> {
     onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
   });
 
+  // What one repository's work adds up to. A projection over the sessions,
+  // their trace, observation output and index state — assembled here so the
+  // renderer stops recomputing project synthesis from several stores at once.
+  // Deliberately not a project agent: nothing below calls a model.
+  const brief = new ProjectBriefService({
+    store,
+    sessionsFor: (projectId) => projects.getSessions(projectId),
+    knowledge,
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+  });
+
+  // Two small settings files beside sessions.json and projects.json. One Vowe
+  // identity for the whole application: presence never lives inside a session
+  // or a project, because it is not a property of either.
+  const profile = new UserProfileStore({
+    root: storeRoot,
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+  });
+  const presence = new PresenceProfileStore({
+    root: storeRoot,
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+  });
+
   // ------------------------------------------------------ observation harness
 
   // One read-only view of everything Vowe can see, shared unchanged by the
@@ -265,6 +297,9 @@ async function createServices(): Promise<Services> {
     registry,
     projects,
     knowledge,
+    brief,
+    profile,
+    presence,
     companion,
     delegated,
     runner,
@@ -360,6 +395,29 @@ function registerIpc(): void {
   // room should not commit the machine to indexing the repository.
   ipcMain.handle(IPC.getProjectKnowledge, async (_event, projectId: string) =>
     (await requireServices()).knowledge.describe(projectId),
+  );
+
+  // Rebuilt from current state on every call. There is no cache to invalidate
+  // because there is nothing stored: the room asks again when the sessions,
+  // observation or index state change, and gets a brief that cannot disagree
+  // with them.
+  ipcMain.handle(IPC.getProjectBrief, async (_event, projectId: string) =>
+    (await requireServices()).brief.get(projectId),
+  );
+
+  // ---------------------------------------------------------------- identity
+
+  ipcMain.handle(IPC.getUserProfile, async () =>
+    (await requireServices()).profile.get(),
+  );
+  ipcMain.handle(IPC.setUserProfile, async (_event, next: UserProfile) =>
+    (await requireServices()).profile.set(next),
+  );
+  ipcMain.handle(IPC.getPresenceProfile, async () =>
+    (await requireServices()).presence.get(),
+  );
+  ipcMain.handle(IPC.setPresenceProfile, async (_event, next: PresenceProfile) =>
+    (await requireServices()).presence.set(next),
   );
 
   // Grounded by going and looking — the same investigator Vo delegates to, with
