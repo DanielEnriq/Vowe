@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { CompanionService } from '../src/companion/companion-service.js';
 import { ContextNavigator } from '../src/context/context-navigator.js';
 import { DelegatedQuestionRunner } from '../src/delegation/delegated-question-runner.js';
 import { ObserverRunner } from '../src/observation/observer-runner.js';
@@ -108,6 +109,83 @@ describe('concurrency — observation and conversation are independent loops', (
     expect(store.getWindowNotes(TEST_SESSION)).toHaveLength(3);
   });
 
+  // The same guarantee, for the other way of asking. Typing a question must not
+  // pause observation any more than speaking one does — which is the whole
+  // reason the typed path was routed through this runner rather than given a
+  // loop of its own.
+  it('answers a typed question while an observation is held open', async () => {
+    const fixture = await temporaryStore();
+    cleanup = fixture.cleanup;
+    const { store } = fixture;
+    await store.upsertSession(testSession());
+    await storeEvents(store, steadyEvents(30));
+
+    const held = deferred<void>();
+    const order: string[] = [];
+
+    const observer: ObservationLlm = {
+      async observeWindow(input: ObserveWindowInput): Promise<WindowObservation> {
+        if (input.window.windowIndex === 0) {
+          order.push('observation:blocked');
+          await held.promise;
+          order.push('observation:released');
+        }
+        return { summary: `window ${input.window.windowIndex}` };
+      },
+      async investigate(
+        _input: InvestigationInput,
+        tools: ReadOnlyToolset,
+      ): Promise<DelegatedAnswer> {
+        const hits = await tools.searchContext({ query: 'step', limit: 3 });
+        order.push('question:answered');
+        return {
+          spokenAnswer: `Found ${hits.length}.`,
+          fullAnswer: 'Grounded answer.',
+          refs: hits.map((hit) => hit.ref),
+        };
+      },
+    };
+
+    const navigator = new ContextNavigator({ store });
+    const runner = new ObserverRunner({
+      sessionId: TEST_SESSION,
+      store,
+      observer,
+      navigator,
+      getSession: () => store.getSession(TEST_SESSION),
+      policy: { maxEvents: 10 },
+    });
+    const companion = new CompanionService({
+      store,
+      delegated: new DelegatedQuestionRunner({
+        store,
+        navigator,
+        investigator: observer,
+      }),
+    });
+
+    const observing = runner.catchUp();
+    await Promise.resolve();
+
+    const result = await companion.ask(TEST_SESSION, 'What is it doing?');
+    expect(result.entry.text).toBe('Grounded answer.');
+    expect(order).toEqual(['observation:blocked', 'question:answered']);
+
+    held.resolve();
+    await observing;
+
+    expect(order).toEqual([
+      'observation:blocked',
+      'question:answered',
+      'observation:released',
+    ]);
+    // Nothing lost and nothing repeated: the windows that closed during the
+    // investigation are there, once each, in order.
+    expect(store.getWindowNotes(TEST_SESSION).map((note) => note.windowIndex)).toEqual([
+      0, 1, 2,
+    ]);
+  });
+
   it('keeps ingesting trace while a window is being interpreted', async () => {
     const fixture = await temporaryStore();
     cleanup = fixture.cleanup;
@@ -174,6 +252,25 @@ describe('concurrency — observation and conversation are independent loops', (
     for (const value of reachable) {
       expect(value).not.toHaveProperty('sendInstruction');
       expect(value).not.toHaveProperty('registerAdapter');
+    }
+  });
+
+  it('never lets a typed question reach the worker either', () => {
+    // The typed path inherits that property rather than re-earning it: the
+    // facade holds a store and the same runner, and nothing else.
+    const companion = new CompanionService({
+      store: {} as never,
+      delegated: new DelegatedQuestionRunner({
+        store: {} as never,
+        navigator: {} as never,
+        investigator: {} as never,
+      }),
+    });
+    const reachable = Object.values(companion as unknown as Record<string, unknown>);
+    for (const value of reachable) {
+      expect(value).not.toHaveProperty('sendInstruction');
+      expect(value).not.toHaveProperty('registerAdapter');
+      expect(value).not.toHaveProperty('surfaceUpdate');
     }
   });
 });

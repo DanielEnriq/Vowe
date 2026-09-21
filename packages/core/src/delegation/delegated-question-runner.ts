@@ -41,6 +41,14 @@ export interface DelegatedResult extends DelegatedAnswer {
   question: string;
   /** The persisted full answer, as it appears in the session conversation. */
   entry: ConversationEntry;
+  /**
+   * The investigation could not be carried out, and the answer says so.
+   *
+   * Still a perfectly ordinary answer: it was persisted like any other and a
+   * caller may render it as one. This is here so a caller that wants to show a
+   * failure state does not have to match on the text of the message.
+   */
+  failed: boolean;
 }
 
 /**
@@ -97,6 +105,7 @@ export class DelegatedQuestionRunner {
     });
 
     let answer: DelegatedAnswer;
+    let failed = false;
     try {
       answer = await this.investigator.investigate(
         input,
@@ -104,6 +113,7 @@ export class DelegatedQuestionRunner {
       );
     } catch (error) {
       this.onError('investigate', error);
+      failed = true;
       // Saying "I could not find out" is a usable answer. Saying nothing, in a
       // voice conversation, is not.
       const message =
@@ -123,6 +133,7 @@ export class DelegatedQuestionRunner {
       at: new Date().toISOString(),
       role: 'companion_answer',
       text: answer.fullAnswer,
+      refs,
       provenance: {
         eventIds: eventIdsFrom(refs),
       },
@@ -134,6 +145,7 @@ export class DelegatedQuestionRunner {
       question: question.question,
       refs,
       entry,
+      failed,
     };
     try {
       this.onAnswer(result);
@@ -181,7 +193,10 @@ export class DelegatedQuestionRunner {
   }
 }
 
-/** Provenance on a conversation entry is event ids, so refs are narrowed. */
+/**
+ * The evidence inspector resolves event ids, so the entry carries a narrowing
+ * of its refs alongside the refs themselves. Nothing is lost by it any more.
+ */
 function eventIdsFrom(refs: ContextRef[]): string[] {
   return refs
     .filter(

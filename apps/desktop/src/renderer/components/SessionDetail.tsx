@@ -7,6 +7,7 @@ import {
   type ReactElement,
 } from 'react';
 
+import { formatRef } from '@vowe/core/refs';
 import type { AgentSession, ConversationEntry, NormalizedEvent } from '@vowe/core';
 
 import { EventInspector, type EvidenceView } from './EventInspector.js';
@@ -50,7 +51,12 @@ const ATTENTION_KINDS = new Set(['permission_requested', 'session_waiting']);
 
 type StreamItem =
   | { type: 'conversation'; at: string; entry: ConversationEntry }
-  | { type: 'event'; at: string; event: NormalizedEvent };
+  | { type: 'event'; at: string; event: NormalizedEvent }
+  /**
+   * An investigation that has been sent but has not come back. `question` is
+   * null once the persisted entry is carrying it.
+   */
+  | { type: 'pending'; at: string; question: string | null };
 
 type Mode = 'ask' | 'instruct';
 
@@ -65,6 +71,9 @@ export function SessionDetail({
   const [draft, setDraft] = useState('');
   const [mode, setMode] = useState<Mode>('ask');
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<{ question: string; at: string } | null>(
+    null,
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<EvidenceView | null>(null);
@@ -73,21 +82,40 @@ export function SessionDetail({
 
   const vo = useVo(session.id);
 
-  const reload = useCallback(async () => {
-    const [nextEvents, nextConversation] = await Promise.all([
-      window.vowe.getEvents(session.id),
-      window.vowe.getConversation(session.id),
-    ]);
-    setEvents(nextEvents);
-    setConversation(nextConversation);
-  }, [session.id]);
+  const reload = useCallback(
+    async (settled?: 'settled') => {
+      const [nextEvents, nextConversation] = await Promise.all([
+        window.vowe.getEvents(session.id),
+        window.vowe.getConversation(session.id),
+      ]);
+      // In one synchronous block, so React batches them and the optimistic rows
+      // give way to the persisted ones in a single commit.
+      setEvents(nextEvents);
+      setConversation(nextConversation);
+      // Only the call that was waiting on the answer retires the indicator. A
+      // reload triggered by something else — a window note landing, an answer
+      // delegated from Vo — must leave an investigation in flight alone.
+      if (settled) setPending(null);
+    },
+    [session.id],
+  );
 
   useEffect(() => {
     void reload();
-    return window.vowe.onSessionEvent((event) => {
+    const offEvent = window.vowe.onSessionEvent((event) => {
       if (event.sessionId !== session.id) return;
       setEvents((current) => [...current, event]);
     });
+    // An answer delegated from Vo is persisted to this same conversation, and
+    // arrives on this channel. Without it, a spoken question's written answer
+    // would sit on disk unseen until the view remounted.
+    const offObservation = window.vowe.onObservationChanged((sessionId) => {
+      if (sessionId === session.id) void reload();
+    });
+    return () => {
+      offEvent();
+      offObservation();
+    };
   }, [reload, session.id]);
 
   const stream = useMemo<StreamItem[]>(() => {
@@ -100,9 +128,28 @@ export function SessionDetail({
       ...events
         .filter((event) => NARRATIVE_KINDS.has(event.kind))
         .map((event) => ({ type: 'event' as const, at: event.at, event })),
+      // The runner persists the question before it starts looking, so a reload
+      // mid-investigation already has it. Show the optimistic copy only while
+      // it would otherwise be missing, or the question renders twice.
+      ...(pending
+        ? [
+            {
+              type: 'pending' as const,
+              at: pending.at,
+              question: conversation.some(
+                (entry) =>
+                  entry.role === 'user_question' &&
+                  entry.text === pending.question &&
+                  entry.at >= pending.at,
+              )
+                ? null
+                : pending.question,
+            },
+          ]
+        : []),
     ];
     return items.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-  }, [conversation, events]);
+  }, [conversation, events, pending]);
 
   const canInstruct = session.capabilities.sendInstruction;
   // A session can lose its control channel at any moment; never stay armed.
@@ -114,6 +161,10 @@ export function SessionDetail({
     if (!text || busy) return;
     setBusy(true);
     setError(null);
+    // Investigating can take a while — it reads the trace, the repository and
+    // the diff. Show the question and that Vowe is working, and nothing about
+    // how: which tools ran is provenance, not conversation.
+    if (!instructing) setPending({ question: text, at: new Date().toISOString() });
     try {
       // Two different paths through the application, on purpose.
       if (instructing) {
@@ -122,8 +173,9 @@ export function SessionDetail({
         await window.vowe.askCompanion(session.id, text);
       }
       setDraft('');
-      await reload();
+      await reload('settled');
     } catch (cause) {
+      setPending(null);
       setError(messageOf(cause));
     } finally {
       setBusy(false);
@@ -150,7 +202,7 @@ export function SessionDetail({
     ? whyNoControl(session)
     : instructing
       ? 'Delivered to the running agent as a new message'
-      : 'Answered from what Vowe has observed · never reaches the agent';
+      : 'Investigated across the session, the repository and Vowe’s memory · never reaches the agent';
 
   const subtitle = [
     session.cwd ?? 'Unknown folder',
@@ -243,7 +295,7 @@ export function SessionDetail({
               <div className="timeline">
                 {stream.map((item) => (
                   <StreamRow
-                    key={item.type === 'event' ? item.event.id : item.entry.id}
+                    key={keyOf(item)}
                     item={item}
                   />
                 ))}
@@ -312,7 +364,7 @@ export function SessionDetail({
               {busy
                 ? instructing
                   ? 'Sending…'
-                  : 'Thinking…'
+                  : 'Investigating…'
                 : instructing
                   ? 'Send to agent'
                   : 'Ask'}
@@ -324,8 +376,31 @@ export function SessionDetail({
   );
 }
 
+function keyOf(item: StreamItem): string {
+  if (item.type === 'event') return item.event.id;
+  if (item.type === 'pending') return 'pending';
+  return item.entry.id;
+}
+
 function StreamRow({ item }: { item: StreamItem }): ReactElement {
   const time = <span className="time">{formatClock(item.at)}</span>;
+
+  if (item.type === 'pending') {
+    return (
+      <>
+        {item.question === null ? <span /> : time}
+        <div className="said">
+          {item.question !== null && (
+            <>
+              <span className="who ask">You asked Vowe</span>
+              <span className="text">{item.question}</span>
+            </>
+          )}
+          <span className="pending">Investigating…</span>
+        </div>
+      </>
+    );
+  }
 
   if (item.type === 'event') {
     const { event } = item;
@@ -373,6 +448,7 @@ function StreamRow({ item }: { item: StreamItem }): ReactElement {
               Vowe · from observed events, not sent to the agent
             </span>
             <span className="text">{entry.text}</span>
+            <RefList refs={entry.refs} />
           </div>
         </>
       );
@@ -404,4 +480,31 @@ function StreamRow({ item }: { item: StreamItem }): ReactElement {
         </>
       );
   }
+}
+
+/**
+ * What the answer was grounded in, as the investigator's own reference strings.
+ *
+ * Deliberately flat and non-interactive. Descending into a `repo:` or `symbol:`
+ * ref is a real feature and the evidence inspector is where it belongs; listing
+ * them is what makes "is this grounded, and in what?" answerable today without
+ * redesigning the conversation around it.
+ */
+function RefList({ refs }: { refs?: ConversationEntry['refs'] }): ReactElement | null {
+  if (!refs?.length) return null;
+  return (
+    <div className="refs">
+      <span className="refs-count">
+        {refs.length} {refs.length === 1 ? 'reference' : 'references'}
+      </span>
+      {refs.map((ref) => {
+        const text = formatRef(ref);
+        return (
+          <code key={text} title={text}>
+            {text}
+          </code>
+        );
+      })}
+    </div>
+  );
 }

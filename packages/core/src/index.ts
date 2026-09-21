@@ -9,6 +9,7 @@ export * from './interpretation/heuristic-interpreter.js';
 export * from './interpretation/llm-interpreter.js';
 export * from './interpretation/interpretation-runner.js';
 export * from './companion/companion-service.js';
+export * from './companion/observed-state.js';
 
 // Projects: the durable parent of sessions.
 export * from './projects/index.js';

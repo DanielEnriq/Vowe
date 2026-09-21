@@ -1,5 +1,6 @@
 import type {
   AgentSession,
+  ContextRef,
   ConversationEntry,
   InstructionResult,
   LiveStatus,
@@ -37,7 +38,12 @@ export interface VoweApi {
   getConversation(sessionId: string): Promise<ConversationEntry[]>;
   refreshInterpretation(sessionId: string): Promise<void>;
 
-  /** Answered from observed state. Never reaches the coding agent. */
+  /**
+   * Investigated against the session, the repository and Vowe's own memory.
+   *
+   * The same investigator Vo delegates to — asking by typing and asking out
+   * loud reach one engine. Never reaches the coding agent.
+   */
   askCompanion(sessionId: string, question: string): Promise<AskResult>;
 
   /** Delivered to the coding agent through the provider adapter. */
@@ -118,10 +124,23 @@ export interface AppStatus {
   providers: string[];
 }
 
+/**
+ * A completed investigation, as the typed UI sees it.
+ *
+ * Note what is absent: `spokenAnswer`. That form exists for a voice channel,
+ * where a 1,200-token technical account is the wrong thing to hear. The typed UI
+ * wants the full answer, so the short one is dropped in the main process rather
+ * than left here to be ignored.
+ *
+ * The question entry is not returned either. The renderer re-reads the whole
+ * conversation once the answer lands, and both sides are already persisted.
+ */
 export interface AskResult {
-  question: ConversationEntry;
-  answer: ConversationEntry;
-  llmBacked: boolean;
+  /** The persisted full answer, with the refs it was grounded in. */
+  entry: ConversationEntry;
+  refs: ContextRef[];
+  /** The investigation could not be carried out; the answer says so. */
+  failed: boolean;
 }
 
 export const IPC = {
