@@ -44,6 +44,14 @@ export interface CreateLiveSessionOptions {
 export interface CreatedLiveSession {
   liveSessionId: string;
   sdpAnswer: string;
+  /**
+   * Which model is on the call, when the provider names one.
+   *
+   * Here because a record of what Vowe's models did is worth much less if it
+   * cannot say which model. Optional: a transport that does not know is not
+   * obliged to invent an answer.
+   */
+  model?: string;
 }
 
 /**

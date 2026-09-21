@@ -57,6 +57,7 @@ const api: VoweApi = {
     ipcRenderer.invoke(IPC.startLive, sessionId, sdpOffer),
   stopLive: () => ipcRenderer.invoke(IPC.stopLive),
   getLiveStatus: () => ipcRenderer.invoke(IPC.liveStatus),
+  reportLivePlayback: (report) => ipcRenderer.send(IPC.livePlayback, report),
 
   onSessionsChanged: (listener) => {
     const handler = () => listener();

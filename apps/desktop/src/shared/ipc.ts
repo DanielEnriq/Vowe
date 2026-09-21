@@ -7,6 +7,7 @@ import type {
   LiveStatus,
   NormalizedEvent,
   ObservationStatus,
+  PlaybackReport,
   PresenceProfile,
   Project,
   ProjectBrief,
@@ -79,6 +80,19 @@ export interface VoweApi {
   startLive(sessionId: string, sdpOffer: string): Promise<LiveStartResult>;
   stopLive(): Promise<void>;
   getLiveStatus(): Promise<LiveStatus>;
+  /**
+   * What the renderer measured about the audio it played.
+   *
+   * The renderer owns the audio, so it is the only part of Vowe that can say
+   * what a person actually heard — the voice provider declares no playback
+   * lifecycle at all. This carries that measurement across and stops there:
+   * what it means for the conversation, and whether anything is written down,
+   * is decided in the main process.
+   *
+   * Fire-and-forget on purpose. A measurement nobody is waiting on must not be
+   * able to stall the audio loop that produced it.
+   */
+  reportLivePlayback(report: PlaybackReport): void;
   /** Native folder picker for choosing where a new session runs. */
   chooseFolder(): Promise<string | null>;
 
@@ -211,6 +225,7 @@ export const IPC = {
   startLive: 'vowe:live:start',
   stopLive: 'vowe:live:stop',
   liveStatus: 'vowe:live:status',
+  livePlayback: 'vowe:live:playback',
   chooseFolder: 'vowe:dialog:choose-folder',
   getProjectKnowledge: 'vowe:knowledge:state',
   getProjectBrief: 'vowe:project:brief',

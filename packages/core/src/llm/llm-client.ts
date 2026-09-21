@@ -1,6 +1,7 @@
 import type { ConversationEntry } from '../types/conversation.js';
 import type { NormalizedEvent } from '../types/events.js';
 import type { SemanticState } from '../types/session.js';
+import type { ModelTrace } from './model-trace.js';
 
 /**
  * The companion's own intelligence layer.
@@ -14,8 +15,14 @@ import type { SemanticState } from '../types/session.js';
  * Only the implementation package may import a vendor SDK.
  */
 export interface LlmClient {
-  summarizeSession(input: SessionInterpretationInput): Promise<SemanticUpdate>;
-  answerQuestion(input: SessionQuestionInput): Promise<string>;
+  summarizeSession(
+    input: SessionInterpretationInput,
+    trace?: ModelTrace,
+  ): Promise<SemanticUpdate>;
+  answerQuestion(
+    input: SessionQuestionInput,
+    trace?: ModelTrace,
+  ): Promise<string>;
 }
 
 /** The interpretable shape of an observed event. */

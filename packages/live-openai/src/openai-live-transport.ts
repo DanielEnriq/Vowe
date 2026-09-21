@@ -93,6 +93,7 @@ export class OpenAiLiveTransport implements LiveTransport {
     return {
       liveSessionId: created.session.id,
       sdpAnswer: created.transport.sdp,
+      model: this.model,
     };
   }
 

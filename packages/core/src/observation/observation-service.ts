@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import type { CommunicationPolicy } from '../communication/communication-policy.js';
 import type { ContextNavigator } from '../context/context-navigator.js';
 import type { DecisionRouter } from '../decision/decision-router.js';
+import type { VoweRunRecorder } from '../execution/run-recorder.js';
 import type { ObservationLlm } from '../llm/observation-llm.js';
 import type { SessionRegistry } from '../registry/session-registry.js';
 import type { EventStore } from '../store/event-store.js';
@@ -23,6 +24,8 @@ export interface ObservationServiceOptions {
   policy: CommunicationPolicy;
   router?: DecisionRouter;
   windowPolicy?: Partial<WindowPolicy>;
+  /** Passed straight through to every runner this service owns. */
+  runs?: VoweRunRecorder;
   onError?: (scope: string, error: unknown) => void;
 }
 
@@ -102,6 +105,7 @@ export class ObservationService extends EventEmitter<ObservationEvents> {
         },
         ...(this.options.router ? { router: this.options.router } : {}),
         ...(this.options.windowPolicy ? { policy: this.options.windowPolicy } : {}),
+        ...(this.options.runs ? { runs: this.options.runs } : {}),
       });
       this.runners.set(sessionId, runner);
     }

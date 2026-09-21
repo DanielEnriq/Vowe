@@ -205,6 +205,66 @@ CREATE UNIQUE INDEX conversation_deliveries_session_ord
   ON conversation_deliveries (session_id, ord);
 `;
 
+/**
+ * What Vowe itself did, and where a turn came from.
+ *
+ * Two changes that belong together because they are the same slice of truth:
+ * conversation gains a provider identity so a redelivered turn cannot be stored
+ * twice, and Vowe's own executions gain a lane of their own rather than being
+ * squeezed into worker events or into the conversation they produced.
+ *
+ * The origin index is partial. Most entries are Vowe's own and have no origin
+ * at all; a unique index over three NULLs would be either useless or wrong,
+ * depending on the dialect, so it only covers rows that actually carry one.
+ */
+const VOWE_EXECUTION_HISTORY = `
+ALTER TABLE conversation_entries ADD COLUMN origin_provider TEXT;  -- NULL => Vowe wrote it
+ALTER TABLE conversation_entries ADD COLUMN origin_kind     TEXT;  -- NULL => Vowe wrote it
+ALTER TABLE conversation_entries ADD COLUMN origin_id       TEXT;  -- NULL => Vowe wrote it
+
+-- Exactly-once for anything a provider delivers. A retry, a reconnect or a
+-- replayed stream carries the same origin id and conflicts here, which is what
+-- makes duplicate delivery a no-op rather than a second copy of the turn.
+CREATE UNIQUE INDEX conversation_entries_origin
+  ON conversation_entries (session_id, origin_provider, origin_kind, origin_id)
+  WHERE origin_provider IS NOT NULL;
+
+CREATE TABLE vowe_runs (
+  id               TEXT PRIMARY KEY,
+  session_id       TEXT,                -- NULL => key ABSENT; not every run has one
+  project_id       TEXT,                -- NULL => key ABSENT
+  kind             TEXT NOT NULL,
+  provider         TEXT,                -- NULL => key ABSENT
+  model            TEXT,                -- NULL => key ABSENT
+  status           TEXT NOT NULL,       -- 'started' | 'completed' | 'cancelled' | 'error'
+  trigger_entry_id TEXT,                -- NULL => key ABSENT
+  output_entry_id  TEXT,                -- NULL => key ABSENT
+  started_at       TEXT NOT NULL,
+  completed_at     TEXT,                -- NULL => key ABSENT; still in flight
+  usage_json       TEXT,                -- NULL => key ABSENT; the provider reported none
+  metadata_json    TEXT                 -- NULL => key ABSENT
+) STRICT;
+
+-- run_id + ord is the execution order. The id is a UUID, not a position, and
+-- timestamps tie routinely inside one fast loop.
+CREATE TABLE vowe_trace_items (
+  run_id           TEXT NOT NULL REFERENCES vowe_runs(id) ON DELETE CASCADE,
+  ord              INTEGER NOT NULL,
+  id               TEXT NOT NULL,
+  kind             TEXT NOT NULL,
+  text             TEXT,                -- NULL => key ABSENT
+  payload_json     TEXT,                -- NULL => key ABSENT
+  provider_item_id TEXT,                -- NULL => key ABSENT
+  at               TEXT NOT NULL,
+  PRIMARY KEY (run_id, ord)
+) STRICT;
+
+-- getRuns(sessionId), newest last.
+CREATE INDEX vowe_runs_session ON vowe_runs (session_id, started_at);
+-- "which execution produced this answer?"
+CREATE INDEX vowe_runs_output_entry ON vowe_runs (output_entry_id);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -215,6 +275,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 2,
     name: '002_conversation_delivery',
     up: (db) => db.exec(CONVERSATION_DELIVERY),
+  },
+  {
+    version: 3,
+    name: '003_vowe_execution_history',
+    up: (db) => db.exec(VOWE_EXECUTION_HISTORY),
   },
 ];
 

@@ -127,7 +127,9 @@ describe('schema migrations', () => {
     const store = await openStore(root);
 
     const after = new DatabaseSync(databasePath(root));
-    expect(appliedVersions(after)).toEqual([1, 2]);
+    expect(appliedVersions(after)).toEqual(
+      MIGRATIONS.map((migration) => migration.version),
+    );
     after.close();
 
     // The existing state came through untouched.
@@ -147,6 +149,29 @@ describe('schema migrations', () => {
       startedAt: '2026-02-11T10:00:00.000Z',
     });
     expect(store.getDeliveries('entry-from-v1')).toHaveLength(1);
+
+    // So does the one after it: a run recorded against a session that predates
+    // the execution lane entirely.
+    await store.appendRun({
+      id: 'run-after-upgrade',
+      sessionId: TEST_SESSION,
+      kind: 'investigation',
+      status: 'started',
+      startedAt: '2026-02-11T10:05:00.000Z',
+    });
+    await store.appendTraceItems('run-after-upgrade', [
+      {
+        id: randomUUID(),
+        kind: 'model_output',
+        text: 'an answer',
+        at: '2026-02-11T10:05:01.000Z',
+      },
+    ]);
+    expect(store.getTraceItems('run-after-upgrade')).toHaveLength(1);
+
+    // The row written before origins existed has none, rather than an empty
+    // one — the same promise every other optional column makes.
+    expect('origin' in entry!).toBe(false);
   });
 
   it('is a no-op the second time it runs', async () => {

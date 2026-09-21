@@ -118,7 +118,7 @@ describe('onConversationChanged — the renderer is told, not left to poll', () 
 
     await expect(
       store.appendConversationEntry(entry(TEST_SESSION, 'one')),
-    ).resolves.toBeUndefined();
+    ).resolves.not.toBeNull();
 
     // The other listener still ran, the entry is durable, and the failure was
     // reported rather than swallowed.

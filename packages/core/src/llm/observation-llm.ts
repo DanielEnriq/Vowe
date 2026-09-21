@@ -1,4 +1,5 @@
 import type { ContextRef, ContextSource } from '../context/refs.js';
+import type { ModelTrace } from './model-trace.js';
 import type { DiffResult } from '../context/git-diff.js';
 import type { OpenResult, SearchHit } from '../context/context-navigator.js';
 import type { SurfaceUpdate, SurfaceUrgency, WindowNote } from '../observation/trace-window.js';
@@ -24,12 +25,14 @@ export interface ObservationLlm {
   observeWindow(
     input: ObserveWindowInput,
     tools: ObserverToolset,
+    trace?: ModelTrace,
   ): Promise<WindowObservation>;
 
   /** Investigate a user's question and return a grounded answer. */
   investigate(
     input: InvestigationInput,
     tools: ReadOnlyToolset,
+    trace?: ModelTrace,
   ): Promise<DelegatedAnswer>;
 }
 

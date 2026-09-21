@@ -2,6 +2,7 @@ import type {
   ChoiceInput,
   ChoiceResult,
   DecisionRouter,
+  ModelTrace,
   NoulInput,
   NoulResult,
   ScoreInput,
@@ -117,12 +118,18 @@ export class JevDecisionRouter implements DecisionRouter {
 
   async choose<K extends string>(
     input: ChoiceInput<K>,
+    trace?: ModelTrace,
   ): Promise<ChoiceResult<K> | null> {
-    const answer = await this.ask('choice', input.state, {
-      type: 'choice',
-      instructions: input.instructions,
-      criteria: input.criteria,
-    });
+    const answer = await this.ask(
+      'choice',
+      input.state,
+      {
+        type: 'choice',
+        instructions: input.instructions,
+        criteria: input.criteria,
+      },
+      trace,
+    );
     if (!answer || typeof answer !== 'object') return null;
 
     const record = answer as {
@@ -140,12 +147,17 @@ export class JevDecisionRouter implements DecisionRouter {
     return result;
   }
 
-  async score(input: ScoreInput): Promise<ScoreResult | null> {
-    const answer = await this.ask('score', input.state, {
-      type: 'score',
-      instructions: input.instructions,
-      criteria: input.levels,
-    });
+  async score(input: ScoreInput, trace?: ModelTrace): Promise<ScoreResult | null> {
+    const answer = await this.ask(
+      'score',
+      input.state,
+      {
+        type: 'score',
+        instructions: input.instructions,
+        criteria: input.levels,
+      },
+      trace,
+    );
     if (!answer || typeof answer !== 'object') return null;
 
     const record = answer as {
@@ -161,12 +173,17 @@ export class JevDecisionRouter implements DecisionRouter {
     return result;
   }
 
-  async noul(input: NoulInput): Promise<NoulResult | null> {
-    const answer = await this.ask('noul', input.state, {
-      type: 'noul',
-      instructions: input.instructions,
-      criteria: input.criteria,
-    });
+  async noul(input: NoulInput, trace?: ModelTrace): Promise<NoulResult | null> {
+    const answer = await this.ask(
+      'noul',
+      input.state,
+      {
+        type: 'noul',
+        instructions: input.instructions,
+        criteria: input.criteria,
+      },
+      trace,
+    );
     if (!answer || typeof answer !== 'object') return null;
 
     const record = answer as { noul?: unknown };
@@ -175,35 +192,44 @@ export class JevDecisionRouter implements DecisionRouter {
 
   // ----------------------------------------------------------------- private
 
+  /**
+   * One request, and the record of it.
+   *
+   * The decisions API answers with a choice, a confidence and per-option
+   * probabilities — and no rationale of any kind. So this reports a request and
+   * a result and no reasoning, because there is none to report. Inventing a
+   * sentence about why the model chose what it chose would be fiction.
+   */
   private async ask(
     kind: 'choice' | 'score' | 'noul',
     state: unknown,
     question: Record<string, unknown>,
+    trace?: ModelTrace,
   ): Promise<unknown> {
     if (!this.apiKey) return null;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
+      // The request as sent, minus the credential — which is a header, and is
+      // the one part of a request that must never be written down.
+      const request = { model: this.model, state, questions: { q: question } };
+      trace?.input(request, { provider: this.name, model: this.model });
+
       const response = await this.fetchImpl(this.baseUrl, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${this.apiKey}`,
           'content-type': 'application/json',
         },
-        body: JSON.stringify({
-          model: this.model,
-          state,
-          questions: { q: question },
-        }),
+        body: JSON.stringify(request),
         signal: controller.signal,
       });
 
       if (!response.ok) {
-        this.onError(
-          `jev:${kind}`,
-          new Error(`Decision request failed: ${response.status}`),
-        );
+        const failure = new Error(`Decision request failed: ${response.status}`);
+        this.onError(`jev:${kind}`, failure);
+        trace?.error(failure);
         return null;
       }
 
@@ -217,11 +243,14 @@ export class JevDecisionRouter implements DecisionRouter {
           answer,
         });
         // Observed, not obeyed.
+        trace?.output({ payload: answer });
         return null;
       }
+      trace?.output({ payload: answer });
       return answer;
     } catch (error) {
       this.onError(`jev:${kind}`, error);
+      trace?.error(error);
       return null;
     } finally {
       clearTimeout(timer);

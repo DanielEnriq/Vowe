@@ -7,6 +7,11 @@ import type {
 } from '../../types/conversation.js';
 import type { NormalizedEvent } from '../../types/events.js';
 import type {
+  ModelUsage,
+  VoweRun,
+  VoweTraceItem,
+} from '../../types/execution.js';
+import type {
   AgentSession,
   SemanticProvenance,
   SemanticState,
@@ -217,6 +222,15 @@ export function toConversationEntry(row: Row): ConversationEntry {
       id,
     );
   }
+  // All three or none: a provider identity is one fact in three columns, and
+  // the schema only ever writes them together.
+  if (row['origin_provider'] !== null) {
+    entry.origin = {
+      provider: str(row['origin_provider']),
+      kind: str(row['origin_kind']),
+      id: str(row['origin_id']),
+    };
+  }
   return entry;
 }
 
@@ -316,4 +330,63 @@ export function toObservationState(row: Row): ObservationState {
     communicationPreference: strOrNull(row['communication_preference']),
     updatedAt: str(row['updated_at']),
   };
+}
+
+// ------------------------------------------------------- execution history
+
+export function toRun(row: Row): VoweRun {
+  const id = str(row['id']);
+  const run: VoweRun = {
+    id,
+    kind: str(row['kind']),
+    status: str(row['status']) as VoweRun['status'],
+    startedAt: str(row['started_at']),
+  };
+  if (row['session_id'] !== null) run.sessionId = str(row['session_id']);
+  if (row['project_id'] !== null) run.projectId = str(row['project_id']);
+  if (row['provider'] !== null) run.provider = str(row['provider']);
+  if (row['model'] !== null) run.model = str(row['model']);
+  if (row['trigger_entry_id'] !== null) {
+    run.triggerEntryId = str(row['trigger_entry_id']);
+  }
+  if (row['output_entry_id'] !== null) {
+    run.outputEntryId = str(row['output_entry_id']);
+  }
+  if (row['completed_at'] !== null) run.completedAt = str(row['completed_at']);
+  if (row['usage_json'] !== null) {
+    run.usage = parse<ModelUsage>(row['usage_json'], 'vowe_runs', id);
+  }
+  if (row['metadata_json'] !== null) {
+    run.metadata = parse<Record<string, unknown>>(
+      row['metadata_json'],
+      'vowe_runs',
+      id,
+    );
+  }
+  return run;
+}
+
+export function toTraceItem(row: Row): VoweTraceItem {
+  const runId = str(row['run_id']);
+  const ord = int(row['ord']);
+  const item: VoweTraceItem = {
+    id: str(row['id']),
+    runId,
+    ord,
+    kind: str(row['kind']) as VoweTraceItem['kind'],
+    at: str(row['at']),
+  };
+  if (row['text'] !== null) item.text = str(row['text']);
+  if (row['payload_json'] !== null) {
+    // `payload` may legitimately be any JSON value, including null.
+    item.payload = parse<unknown>(
+      row['payload_json'],
+      'vowe_trace_items',
+      `${runId}#${ord}`,
+    );
+  }
+  if (row['provider_item_id'] !== null) {
+    item.providerItemId = str(row['provider_item_id']);
+  }
+  return item;
 }

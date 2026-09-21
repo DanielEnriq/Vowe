@@ -1,6 +1,11 @@
 export * from './types/index.js';
 export * from './llm/llm-client.js';
 export * from './llm/observation-llm.js';
+export * from './llm/model-trace.js';
+
+// What Vowe itself did: the execution lane beneath conversation and delivery.
+export * from './execution/run-recorder.js';
+export * from './execution/traced-tools.js';
 export * from './store/event-store.js';
 export * from './store/sqlite-event-store.js';
 export * from './store/sqlite/database.js';
@@ -43,5 +48,6 @@ export * from './communication/communication-policy.js';
 export * from './delegation/delegated-question-runner.js';
 export * from './delegation/investigation-recorder.js';
 export * from './live/live-transport.js';
+export * from './live/live-conversation-recorder.js';
 export * from './live/live-bridge.js';
 export * from './live/vo-prompt.js';

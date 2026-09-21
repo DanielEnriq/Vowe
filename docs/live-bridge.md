@@ -149,6 +149,75 @@ disclosure, not a monologue.
 The 500-token ceiling is an upper bound, not a target — spoken answers should
 normally be far shorter.
 
+## The conversation is kept
+
+Ordinary voice used to leave nothing behind. It does now: text and voice write
+to the same `ConversationEntry` history, and a spoken remark, a filler and a
+grounded answer are all turns in one session timeline.
+
+`LiveConversationRecorder` owns that, and it is one object rather than a write
+in every event handler — because the hard part is not the writes but the
+correlations between them.
+
+**Turns are assembled, not received.** The provider streams transcript
+fragments and says so explicitly: they "do not define complete turns or include
+a transcript-done event". So a turn closes here — when the other speaker
+starts, when the session ends, when playback of a spoken turn finishes, or
+after a silence. The fragments themselves are never rows.
+
+**Exactly once.** A live turn's identity is the provider's session id, the
+speaker, and the provider-assigned start offset of its first fragment; a
+replayed stream reproduces it exactly and the database refuses the duplicate.
+Nothing compares text.
+
+**An answer is written once, by whoever investigated it.** When Vo speaks a
+grounded answer the entry already exists; what the recorder adds is a
+`ConversationDelivery` against it, with the short spoken form as
+`deliveredText`. The bridge knows the next spoken turn is that answer because
+it just handed it over — correlation from the execution path, not from
+recognizing the words when they come back. The same call also tells the
+investigator which turn asked, so the question is not written twice either.
+
+## What the provider does not tell us
+
+Worth stating plainly, because two designs here follow from it. The complete
+Live server-event vocabulary is `session.started/closed/updated`,
+`session.input_audio.muted/unmuted`, the three `*.appended` acknowledgements,
+`session.input_transcript.delta`, `session.output_transcript.delta`,
+`session.output_audio.delta`, `session.delegation.created`,
+`session.usage.updated`, `response.event`, `error` and `info`.
+
+There is **no** turn-done event, **no** item or response id, **no** interruption
+event and **no** reasoning — on the sideband or on the renderer's data channel.
+`response.event` carries a Responses-backend stream, and Vowe runs client
+delegation, so it never fires.
+
+So two facts come from elsewhere:
+
+- **How much was heard** is measured by the renderer, from the audio it
+  actually played, and reported over `vowe:live:playback`. It becomes
+  `audioEndMs`. It is never inferred from where two transcripts overlap.
+- **Whether a turn was cut off** is the user beginning to speak before that
+  turn's audio had finished — two provider-assigned offsets on one session
+  timeline. That decides only *that* it was interrupted, never where. When the
+  exact audible cutoff is unknowable, `deliveredText` is absent, which is
+  better than fabricated precision.
+
+`session.usage.updated` reports cumulative session audio, not per-turn usage, so
+it is not written onto a turn's run. And because barge-in stops the model
+speaking, a turn the user talked over is recorded as a response that stopped
+early: the run says `cancelled`, and does not pretend to know more.
+
+## Coming back to a conversation
+
+A live session is a connection, not a memory. Leave voice and rejoin and the
+provider knows nothing about what was said before, so the durable record is
+handed over at the start as quiet context — including that an answer was
+interrupted, so Vo does not pick up as though the developer heard every word of
+something they cut off after a sentence.
+
+Read-only. Hydrating context never writes history back into the database.
+
 ## Vo's prompt
 
 Short, and about conversation only: personality, backchannels, interruptions,

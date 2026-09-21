@@ -250,6 +250,9 @@ describe('concurrency — observation and conversation are independent loops', (
     });
     const reachable = Object.values(runner as unknown as Record<string, unknown>);
     for (const value of reachable) {
+      // An absent collaborator reaches nothing at all, and is not a property
+      // bag to inspect. Only what is actually held has to be checked.
+      if (value === null || value === undefined) continue;
       expect(value).not.toHaveProperty('sendInstruction');
       expect(value).not.toHaveProperty('registerAdapter');
     }
