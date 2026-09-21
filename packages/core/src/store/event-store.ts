@@ -5,6 +5,11 @@ import type {
   ConversationEntry,
   DeliveryProgress,
 } from '../types/conversation.js';
+import type {
+  RunCompletion,
+  VoweRun,
+  VoweTraceItem,
+} from '../types/execution.js';
 import type { Project } from '../projects/project.js';
 import type {
   CommunicationDecision,
@@ -82,11 +87,18 @@ export interface EventStore {
    * The delivery is an argument rather than a second call because the two are
    * one fact: an answer that was spoken and an answer that was merely recorded
    * must not become distinguishable by a crash landing between two writes.
+   *
+   * Returns the stored entry, or `null` when this turn was **already** stored —
+   * the same promise `appendEvent` makes about a replayed trace record, for the
+   * same reason. An entry carrying a `ConversationOrigin` is matched on that
+   * identity, so a provider that redelivers a turn writes nothing the second
+   * time and no delivery is attached twice either. An entry without an origin
+   * is Vowe's own and is always inserted.
    */
   appendConversationEntry(
     entry: ConversationEntry,
     delivery?: Omit<ConversationDelivery, 'id' | 'entryId' | 'sessionId'>,
-  ): Promise<void>;
+  ): Promise<ConversationEntry | null>;
   getConversation(sessionId: string, limit?: number): ConversationEntry[];
 
   // ------------------------------------------------- conversation delivery
@@ -136,6 +148,39 @@ export interface EventStore {
    * it, so a listener may re-read straight away. Returns its own unsubscribe.
    */
   onConversationChanged(listener: (change: ConversationChange) => void): () => void;
+
+  // ------------------------------------------------- Vowe execution history
+
+  /**
+   * What Vowe itself did — which model, with what, and how it ended.
+   *
+   * A lane of its own rather than more worker events or more conversation,
+   * because it answers a different question from either. See `VoweRun`.
+   *
+   * A run is written when it starts, so a row still reading `started` after a
+   * restart is the honest record of an execution that was in flight when Vowe
+   * stopped — exactly as a `ConversationDelivery` in the same state is.
+   */
+  appendRun(run: VoweRun): Promise<void>;
+  finishRun(runId: string, completion: RunCompletion): Promise<VoweRun | null>;
+
+  /**
+   * The trace of one run, in execution order.
+   *
+   * Written in one transaction rather than item by item: the trace is only
+   * meaningful whole, and `ord` is assigned here so the order is the store's
+   * rather than a caller's counter.
+   */
+  appendTraceItems(
+    runId: string,
+    items: Omit<VoweTraceItem, 'runId' | 'ord'>[],
+  ): Promise<void>;
+
+  getRun(runId: string): VoweRun | null;
+  getRuns(sessionId: string, limit?: number): VoweRun[];
+  /** Which execution produced this answer. */
+  getRunForEntry(entryId: string): VoweRun | null;
+  getTraceItems(runId: string): VoweTraceItem[];
 
   // ------------------------------------------------------ observation (L1)
 

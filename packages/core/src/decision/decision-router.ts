@@ -1,3 +1,5 @@
+import type { ModelTrace } from '../llm/model-trace.js';
+
 /**
  * A seam for fast structured decisions.
  *
@@ -21,13 +23,16 @@ export interface DecisionRouter {
   readonly available: boolean;
 
   /** Pick one of a named set of options. */
-  choose<K extends string>(input: ChoiceInput<K>): Promise<ChoiceResult<K> | null>;
+  choose<K extends string>(
+    input: ChoiceInput<K>,
+    trace?: ModelTrace,
+  ): Promise<ChoiceResult<K> | null>;
 
   /** Place something on an ordered scale. */
-  score(input: ScoreInput): Promise<ScoreResult | null>;
+  score(input: ScoreInput, trace?: ModelTrace): Promise<ScoreResult | null>;
 
   /** A calibrated yes/no. */
-  noul(input: NoulInput): Promise<NoulResult | null>;
+  noul(input: NoulInput, trace?: ModelTrace): Promise<NoulResult | null>;
 }
 
 export interface DecisionInput {

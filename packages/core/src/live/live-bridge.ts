@@ -1,12 +1,22 @@
 import { EventEmitter } from 'node:events';
 
 import type { DelegatedQuestionRunner } from '../delegation/delegated-question-runner.js';
+import type { VoweRunRecorder } from '../execution/run-recorder.js';
+import {
+  asModelContext,
+  recentConversation,
+} from '../product/conversation-context.js';
+import type { EventStore } from '../store/event-store.js';
 import type {
   CommunicationDecision,
   SurfaceUpdate,
   WindowNote,
 } from '../observation/trace-window.js';
 import type { ObservationService } from '../observation/observation-service.js';
+import {
+  LiveConversationRecorder,
+  type PlaybackReport,
+} from './live-conversation-recorder.js';
 import { LIVE_APPEND_TOKEN_LIMIT, VO_SYSTEM_PROMPT } from './vo-prompt.js';
 import type {
   LiveServerEvent,
@@ -18,8 +28,22 @@ export interface LiveBridgeOptions {
   transport: LiveTransport;
   observation: ObservationService;
   delegated: DelegatedQuestionRunner;
+  /**
+   * Where the conversation is persisted.
+   *
+   * Optional, and its absence is a real mode rather than a broken one: without
+   * it a call still works and still delegates, it just leaves no durable
+   * history behind. Every existing test runs this way.
+   */
+  store?: EventStore;
+  /** Where each spoken response is recorded as an execution. */
+  runs?: VoweRunRecorder;
   /** How much spoken history to keep for reconstructing a delegated question. */
   transcriptTurns?: number;
+  /** How long a speaker may be silent before their turn is considered over. */
+  turnSilenceMs?: number;
+  /** How much durable conversation to give a newly opened session. */
+  hydrateTurns?: number;
   onError?: (scope: string, error: unknown) => void;
 }
 
@@ -46,6 +70,8 @@ interface Attachment {
   liveSessionId: string;
   sideband: LiveSideband | null;
   detach: (() => void) | null;
+  /** Absent when no store was supplied, which is a call with no memory. */
+  recorder: LiveConversationRecorder | null;
 }
 
 /**
@@ -72,7 +98,11 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
   private readonly transport: LiveTransport;
   private readonly observation: ObservationService;
   private readonly delegated: DelegatedQuestionRunner;
+  private readonly store: EventStore | null;
+  private readonly runs: VoweRunRecorder | null;
   private readonly transcriptTurns: number;
+  private readonly turnSilenceMs: number | undefined;
+  private readonly hydrateTurns: number;
   private readonly onError: (scope: string, error: unknown) => void;
 
   private attachment: Attachment | null = null;
@@ -93,7 +123,11 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     this.transport = options.transport;
     this.observation = options.observation;
     this.delegated = options.delegated;
+    this.store = options.store ?? null;
+    this.runs = options.runs ?? null;
     this.transcriptTurns = options.transcriptTurns ?? 20;
+    this.turnSilenceMs = options.turnSilenceMs;
+    this.hydrateTurns = options.hydrateTurns ?? 12;
     this.onError = options.onError ?? (() => undefined);
     this.listen();
   }
@@ -142,6 +176,21 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
       liveSessionId: created.liveSessionId,
       sideband: null,
       detach: null,
+      recorder: this.store
+        ? new LiveConversationRecorder({
+            store: this.store,
+            sessionId,
+            liveSessionId: created.liveSessionId,
+            provider: this.transport.name,
+            instructions: VO_SYSTEM_PROMPT,
+            ...(created.model ? { model: created.model } : {}),
+            ...(this.runs ? { runs: this.runs } : {}),
+            ...(this.turnSilenceMs === undefined
+              ? {}
+              : { turnSilenceMs: this.turnSilenceMs }),
+            onError: this.onError,
+          })
+        : null,
     };
     this.transcript = [];
     this.userFragment = '';
@@ -172,6 +221,13 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     this.queued = [];
     if (!attachment) return;
     attachment.detach?.();
+    // Whatever was half-said is still what was said. Closing the call is not a
+    // reason to drop the turn that was in progress when it closed.
+    try {
+      await attachment.recorder?.flush();
+    } catch (error) {
+      this.onError('live:flush-turn', error);
+    }
     try {
       await attachment.sideband?.close();
     } catch (error) {
@@ -258,6 +314,11 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     switch (event.type) {
       case 'transcript.user':
         this.userFragment += event.delta;
+        this.attachment?.recorder?.userSaid(
+          event.delta,
+          event.startMs,
+          event.endMs,
+        );
         return;
       case 'transcript.assistant':
         // The user starting to speak closes out their previous turn, which is
@@ -270,6 +331,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
           );
         }
         this.voFragment += event.delta;
+        this.attachment?.recorder?.voSaid(event.delta, event.startMs, event.endMs);
         return;
       case 'delegation.created':
         if (this.userFragment.trim()) {
@@ -280,6 +342,10 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
           this.pushTurn('vo', this.voFragment);
           this.voFragment = '';
         }
+        // The question has to be a persisted turn before the investigation
+        // writes its answer, or the conversation records the answer to a
+        // question nobody asked.
+        await this.attachment?.recorder?.flush();
         await this.investigate(event.delegationId);
         return;
       case 'session.closed':
@@ -314,11 +380,28 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
       return;
     }
 
+    const recorder = attachment.recorder;
+    // The user's utterance is already a turn when the conversation is being
+    // recorded, so the investigator is told which one rather than writing the
+    // question a second time. With no recorder there is no such turn, and it
+    // writes one as it always did.
+    const askedEntryId = recorder?.lastUserEntryId ?? null;
     const result = await this.delegated.answer({
       sessionId: attachment.sessionId,
       question,
-      liveConversation: this.transcript.slice(-this.transcriptTurns),
+      // With a recorder, this call's turns are already durable history — along
+      // with which of Vowe's own answers were cut off — so the investigator
+      // reads that rather than being handed a second, shorter account of it.
+      ...(recorder
+        ? {}
+        : { liveConversation: this.transcript.slice(-this.transcriptTurns) }),
+      ...(askedEntryId ? { questionEntryId: askedEntryId } : {}),
     });
+
+    // The grounded answer is now a conversation entry. What Vo is about to say
+    // is that entry being delivered, not a second answer — so the recorder is
+    // told, from the execution path, before the words come back.
+    recorder?.expectDeliveryOf(result.entry.id);
 
     // Only the short form is spoken. The grounded account is already persisted
     // and rendered in Vowe's own window; reading it aloud would make the
@@ -365,6 +448,52 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
       );
     }
     await sideband.appendThinking(toLiveText(parts.join(' ')));
+    await this.hydrate(sessionId, sideband);
+  }
+
+  /**
+   * What was already said, given to a session that was not there for it.
+   *
+   * A live session is a connection, not a memory: leave voice and come back and
+   * the provider knows nothing about the conversation Vowe has been having. So
+   * the durable record is handed over at the start, including the fact that an
+   * answer was cut off — otherwise Vo picks up as though the developer heard
+   * every word of something they interrupted after a sentence.
+   *
+   * Reading only. Nothing here writes, and the turns come back as context
+   * rather than as speech, so seeding a session cannot put history into the
+   * database twice.
+   */
+  private async hydrate(
+    sessionId: string,
+    sideband: LiveSideband,
+  ): Promise<void> {
+    if (!this.store) return;
+    const turns = asModelContext(
+      recentConversation(this.store, sessionId, this.hydrateTurns),
+    );
+    if (!turns.length) return;
+    const transcript = turns
+      .map((turn) => `${turn.speaker === 'user' ? 'The user' : 'You'}: ${turn.text}`)
+      .join('\n');
+    await sideband.appendThinking(
+      toLiveText(
+        `Earlier in this conversation, before this call:\n${transcript}`,
+      ),
+    );
+  }
+
+  /**
+   * What the renderer measured about the audio it played.
+   *
+   * The renderer owns the audio and is therefore the only part of Vowe that can
+   * say what a person actually heard — the provider declares no playback
+   * lifecycle of any kind. It reports evidence; what that means for the
+   * conversation is decided here and written by the recorder, because
+   * persistence is not the renderer's job.
+   */
+  reportPlayback(report: PlaybackReport): void {
+    this.attachment?.recorder?.playback(report);
   }
 
   private sidebandFor(sessionId: string): LiveSideband | null {

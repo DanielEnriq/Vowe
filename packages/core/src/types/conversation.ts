@@ -6,13 +6,46 @@ import type { ContextRef } from '../context/refs.js';
  * `user_question` / `companion_answer` never reach the worker.
  * `user_instruction` / `instruction_result` always do.
  * The role is what records which side of that boundary an entry crossed.
+ *
+ * `user_message` / `companion_message` are on the same side of that boundary as
+ * the question-and-answer pair, and are the ordinary conversation around it:
+ * someone said something, and someone said something back. They exist because
+ * the pair is a claim as well as a boundary — `companion_answer` says an
+ * investigation produced this, and storing `Checking.` under it would be a
+ * durable lie. Which of the two an entry is has nothing to do with how it
+ * arrived: modality lives on `ConversationDelivery`, and a typed remark and a
+ * spoken one are the same kind of turn.
  */
 export type ConversationRole =
   | 'user_question'
   | 'companion_answer'
+  | 'user_message'
+  | 'companion_message'
   | 'user_instruction'
   | 'instruction_result'
   | 'system_note';
+
+/**
+ * Where a turn came from, when something outside Vowe minted it.
+ *
+ * This exists for exactly one reason: a provider may deliver the same turn
+ * twice — a retry, a reconnect, a replayed stream — and history must not grow a
+ * second copy of it. The three parts together are a stable name for one turn at
+ * its source, so the database can refuse the duplicate rather than asking Vowe
+ * to notice that two texts look alike. Comparing text would be the wrong test
+ * anyway: a person may say the same sentence twice, and meaning it twice is not
+ * the same as it arriving twice.
+ *
+ * Absent on anything Vowe wrote itself, which needs no such protection.
+ */
+export interface ConversationOrigin {
+  /** The system that produced it, e.g. `openai-live`. */
+  provider: string;
+  /** What kind of thing it is over there, e.g. `live_turn`. */
+  kind: string;
+  /** Stable at the source, and reproduced exactly on a replay. */
+  id: string;
+}
 
 export interface ConversationEntry {
   id: string;
@@ -44,6 +77,12 @@ export interface ConversationEntry {
    * "nothing to show", never "this was not recorded".
    */
   investigation?: InvestigationReceipt;
+  /**
+   * Present only when a provider minted this turn. See `ConversationOrigin`:
+   * it is an identity, not a provenance record, and nothing reads it except
+   * the uniqueness check that keeps a redelivered turn from being stored twice.
+   */
+  origin?: ConversationOrigin;
 }
 
 /**
@@ -116,8 +155,7 @@ export type DeliveryStatus =
  * the difference between what Vowe knew and what the developer actually heard.
  *
  * An entry may have several deliveries — spoken, then re-read as text — and
- * none of them may rewrite the entry. `deliveredText` is a prefix of
- * `entry.text`, never a different answer.
+ * none of them may rewrite the entry.
  */
 export interface ConversationDelivery {
   id: string;
@@ -128,7 +166,15 @@ export interface ConversationDelivery {
   status: DeliveryStatus;
   /**
    * The best available record of what was actually audible or visible, when it
-   * differs from the entry. Absent means the whole entry was delivered.
+   * differs from the entry. Absent means the whole entry was delivered — or
+   * that nobody can honestly say what was, which is the commoner case out loud
+   * and is why this is optional rather than approximated.
+   *
+   * Usually a prefix of `entry.text`, and deliberately not required to be one:
+   * a grounded answer spoken by the voice model is the short spoken form of
+   * that answer, which is shorter than the entry and worded differently. What
+   * this promises is that it is a record of *this* entry being delivered, never
+   * a second answer.
    */
   deliveredText?: string;
   /** How far into the synthesized audio the person got, when speaking. */

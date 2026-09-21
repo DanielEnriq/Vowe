@@ -10,6 +10,9 @@ import type {
 } from '../llm/observation-llm.js';
 import type { EventStore } from '../store/event-store.js';
 import type { ConversationEntry } from '../types/conversation.js';
+import type { RunHandle, VoweRunRecorder } from '../execution/run-recorder.js';
+import { tracedTool } from '../execution/traced-tools.js';
+import { asModelContext, recentConversation } from '../product/conversation-context.js';
 import { InvestigationRecorder } from './investigation-recorder.js';
 
 export interface DelegatedQuestionRunnerOptions {
@@ -18,6 +21,17 @@ export interface DelegatedQuestionRunnerOptions {
   investigator: ObservationLlm;
   /** How much recent L1 understanding to hand over. */
   recentNotes?: number;
+  /**
+   * Where this investigation's execution is recorded, when anywhere.
+   *
+   * Optional in the way everything else here is optional: without it the
+   * investigation runs exactly as before and leaves a receipt but no audit
+   * trail. With it, the model call, what it looked up and any reasoning the
+   * provider exposed end up in the execution lane, linked to the answer.
+   */
+  runs?: VoweRunRecorder;
+  /** How much durable conversation to hand over when none is supplied. */
+  recentTurns?: number;
   onError?: (scope: string, error: unknown) => void;
   /**
    * A grounded answer has been produced and persisted.
@@ -35,6 +49,15 @@ export interface DelegatedQuestion {
   question: string;
   /** What has been said out loud so far, oldest first. */
   liveConversation?: { speaker: 'user' | 'vo'; text: string }[];
+  /**
+   * The turn that asked this, when it is already in the conversation.
+   *
+   * Voice persists the user's utterance as it happens, so by the time the
+   * assistant delegates it, the question is already a turn. Writing it again
+   * here would be the same question twice in one conversation — so the caller
+   * says which entry it is, and this writes none.
+   */
+  questionEntryId?: string;
 }
 
 export interface DelegatedResult extends DelegatedAnswer {
@@ -72,6 +95,8 @@ export class DelegatedQuestionRunner {
   private readonly navigator: ContextNavigator;
   private readonly investigator: ObservationLlm;
   private readonly recentNotes: number;
+  private readonly recentTurns: number;
+  private readonly runs: VoweRunRecorder | null;
   private readonly onError: (scope: string, error: unknown) => void;
   private readonly onAnswer: (result: DelegatedResult) => void;
 
@@ -80,6 +105,8 @@ export class DelegatedQuestionRunner {
     this.navigator = options.navigator;
     this.investigator = options.investigator;
     this.recentNotes = options.recentNotes ?? 6;
+    this.recentTurns = options.recentTurns ?? 12;
+    this.runs = options.runs ?? null;
     this.onError = options.onError ?? (() => undefined);
     this.onAnswer = options.onAnswer ?? (() => undefined);
   }
@@ -95,19 +122,40 @@ export class DelegatedQuestionRunner {
       task: session?.task ?? null,
       cwd: session?.cwd ?? null,
       recentNotes: this.store.getWindowNotes(question.sessionId, this.recentNotes),
-      liveConversation: question.liveConversation ?? [],
+      // What was actually said before, from the durable record — including
+      // which of Vowe's own answers the developer never finished hearing. A
+      // caller may override it, which is how a live session hands over the
+      // turns of the call it is in the middle of.
+      liveConversation:
+        question.liveConversation ??
+        asModelContext(
+          recentConversation(this.store, question.sessionId, this.recentTurns),
+        ),
     };
 
-    await this.store.appendConversationEntry({
-      id: randomUUID(),
+    let questionEntryId = question.questionEntryId ?? null;
+    if (!questionEntryId) {
+      const asked: ConversationEntry = {
+        id: randomUUID(),
+        sessionId: question.sessionId,
+        at: new Date().toISOString(),
+        role: 'user_question',
+        text: question.question,
+      };
+      await this.store.appendConversationEntry(asked);
+      questionEntryId = asked.id;
+    }
+
+    const run = this.runs?.begin({
+      kind: 'investigation',
       sessionId: question.sessionId,
-      at: new Date().toISOString(),
-      role: 'user_question',
-      text: question.question,
+      ...(session?.projectId ? { projectId: session.projectId } : {}),
+      ...(questionEntryId ? { triggerEntryId: questionEntryId } : {}),
     });
 
     let answer: DelegatedAnswer;
     let failed = false;
+    let investigationFailure: unknown = null;
     // Measured around the investigation itself, so an answer can truthfully say
     // how long it took to go and look. Not telemetry: one number, one answer.
     const startedAt = Date.now();
@@ -115,10 +163,12 @@ export class DelegatedQuestionRunner {
     try {
       answer = await this.investigator.investigate(
         input,
-        this.readTools(question.sessionId, recorder),
+        this.readTools(question.sessionId, recorder, run),
+        run,
       );
     } catch (error) {
       this.onError('investigate', error);
+      investigationFailure = error;
       failed = true;
       // Saying "I could not find out" is a usable answer. Saying nothing, in a
       // voice conversation, is not.
@@ -153,6 +203,17 @@ export class DelegatedQuestionRunner {
       ...(recorder.length ? { investigation: recorder.receipt(durationMs) } : {}),
     };
     await this.store.appendConversationEntry(entry);
+    // After the entry exists, so "which execution produced this answer?" is a
+    // join rather than a guess. An investigation that fell over still produced
+    // an answer the developer can read — it says so — and the run still ends
+    // in `error`, because those are two different facts.
+    if (run) {
+      if (failed) {
+        await run.failed(investigationFailure, { outputEntryId: entry.id });
+      } else {
+        await run.complete({ outputEntryId: entry.id });
+      }
+    }
 
     const result: DelegatedResult = {
       ...answer,
@@ -176,42 +237,57 @@ export class DelegatedQuestionRunner {
    * only place that sees a tool call actually happen. Everything above it has
    * the model's account of what it did, which is a different thing.
    */
-  private readTools(sessionId: string, recorder: InvestigationRecorder): ReadOnlyToolset {
+  private readTools(
+    sessionId: string,
+    recorder: InvestigationRecorder,
+    run?: RunHandle,
+  ): ReadOnlyToolset {
+    // The call and its result are recorded beside the receipt, and for the same
+    // reason: this is the only place that sees the call actually happen.
+    const traced = <T>(
+      name: string,
+      args: unknown,
+      work: () => Promise<T>,
+    ): Promise<T> => tracedTool(run, name, args, work);
+
     return {
-      searchContext: async (input) => {
-        const hits = await this.navigator.searchContext({
-          sessionId,
-          query: input.query,
-          ...(input.sources ? { sources: input.sources } : {}),
-          ...(input.limit !== undefined ? { limit: input.limit } : {}),
-        });
-        recorder.searched(input.sources, hits);
-        return hits;
-      },
-      openContext: async (input) => {
-        const result = await this.navigator.openContext({
-          ref: input.ref,
-          ...(input.depth ? { depth: input.depth } : {}),
-        });
-        // The address that was asked for, which is what the label describes.
-        // A model can hand back nonsense, in which case there is nothing to
-        // name and the check says only that a reference was followed.
-        recorder.opened(parseRef(input.ref), result);
-        return result;
-      },
-      getDiff: async (input) => {
-        const diff = await this.navigator.getDiff({
-          sessionId,
-          ...(input.path ? { path: input.path } : {}),
-          ...(input.around ? { around: input.around } : {}),
-        });
-        recorder.diffed({
-          kind: 'diff',
-          sessionId,
-          ...(input.path ? { path: input.path } : {}),
-        });
-        return diff;
-      },
+      searchContext: async (input) =>
+        traced('search_context', input, async () => {
+          const hits = await this.navigator.searchContext({
+            sessionId,
+            query: input.query,
+            ...(input.sources ? { sources: input.sources } : {}),
+            ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          });
+          recorder.searched(input.sources, hits);
+          return hits;
+        }),
+      openContext: async (input) =>
+        traced('open_context', input, async () => {
+          const result = await this.navigator.openContext({
+            ref: input.ref,
+            ...(input.depth ? { depth: input.depth } : {}),
+          });
+          // The address that was asked for, which is what the label describes.
+          // A model can hand back nonsense, in which case there is nothing to
+          // name and the check says only that a reference was followed.
+          recorder.opened(parseRef(input.ref), result);
+          return result;
+        }),
+      getDiff: async (input) =>
+        traced('get_diff', input, async () => {
+          const diff = await this.navigator.getDiff({
+            sessionId,
+            ...(input.path ? { path: input.path } : {}),
+            ...(input.around ? { around: input.around } : {}),
+          });
+          recorder.diffed({
+            kind: 'diff',
+            sessionId,
+            ...(input.path ? { path: input.path } : {}),
+          });
+          return diff;
+        }),
     };
   }
 }

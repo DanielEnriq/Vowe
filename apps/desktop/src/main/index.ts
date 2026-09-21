@@ -32,6 +32,7 @@ import {
   SessionRegistry,
   UserProfileStore,
   UnavailableLiveTransport,
+  VoweRunRecorder,
   type DecisionRouter,
   type LiveTransport,
   type SemanticInterpreter,
@@ -43,9 +44,31 @@ import { JevDecisionRouter } from '@vowe/decision-jev';
 import { OpenAiLiveTransport } from '@vowe/live-openai';
 
 import { IPC, type AppStatus, type AskResult, type ObservationView } from '../shared/ipc.js';
-import type { ContextRef, PresenceProfile, UserProfile } from '@vowe/core';
+import type {
+  ContextRef,
+  PlaybackReport,
+  PresenceProfile,
+  UserProfile,
+} from '@vowe/core';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Renderer input, so shaped rather than assumed. Anything else is dropped. */
+function readPlaybackReport(value: unknown): PlaybackReport | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const report = value as { kind?: unknown; at?: unknown; audioMs?: unknown };
+  if (typeof report.at !== 'string') return null;
+  if (report.kind === 'started') return { kind: 'started', at: report.at };
+  if (report.kind === 'lost') return { kind: 'lost', at: report.at };
+  if (report.kind !== 'stopped') return null;
+  return {
+    kind: 'stopped',
+    at: report.at,
+    ...(typeof report.audioMs === 'number' && Number.isFinite(report.audioMs)
+      ? { audioMs: Math.max(0, Math.round(report.audioMs)) }
+      : {}),
+  };
+}
 
 interface Services {
   store: SqliteEventStore;
@@ -96,10 +119,20 @@ async function createServices(): Promise<Services> {
   });
   await store.init();
 
+  // What Vowe's own models did, kept beside what Vowe said. One recorder,
+  // handed to every model caller, so "which execution produced this?" has one
+  // answer and not one per subsystem.
+  const runs = new VoweRunRecorder({
+    store,
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+  });
+
   const llm = AnthropicLlmClient.fromEnvironment();
   const interpreter: SemanticInterpreter = llm
-    ? new LlmSemanticInterpreter(llm, (error) =>
-        console.error('[vowe] interpretation failed', error),
+    ? new LlmSemanticInterpreter(
+        llm,
+        (error) => console.error('[vowe] interpretation failed', error),
+        runs,
       )
     : new HeuristicInterpreter();
 
@@ -237,9 +270,11 @@ async function createServices(): Promise<Services> {
     policy: new CommunicationPolicy({
       router,
       ...(llm ? { llm } : {}),
+      runs,
       onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
     }),
     router,
+    runs,
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
   });
 
@@ -251,6 +286,7 @@ async function createServices(): Promise<Services> {
     store,
     navigator,
     investigator: llm ?? nullObserver(store),
+    runs,
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
     // After the answer is delivered, never during. Most answers are not kept.
     // Text and voice share this hook; nothing about admission asks which it was.
@@ -274,6 +310,10 @@ async function createServices(): Promise<Services> {
     transport: liveTransport,
     observation,
     delegated,
+    // With these, a spoken conversation is history rather than a session that
+    // evaporates when the call ends.
+    store,
+    runs,
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
   });
 
@@ -517,6 +557,18 @@ function registerIpc(): void {
     await (await requireServices()).live.stop();
   });
   ipcMain.handle(IPC.liveStatus, async () => (await requireServices()).live.status);
+
+  // One-way, and unawaited: the renderer is reporting what it measured, not
+  // asking for anything. It is also the only IPC message that originates in the
+  // renderer as a fact rather than a request, so it is validated here rather
+  // than trusted — the main process decides what a measurement means.
+  ipcMain.on(IPC.livePlayback, (_event, report: unknown) => {
+    const playback = readPlaybackReport(report);
+    if (!playback) return;
+    void requireServices()
+      .then((services) => services.live.reportPlayback(playback))
+      .catch((error) => console.error('[vowe] live:playback', error));
+  });
   ipcMain.handle(IPC.chooseFolder, async () => {
     const options: Electron.OpenDialogOptions = {
       properties: ['openDirectory', 'createDirectory'],

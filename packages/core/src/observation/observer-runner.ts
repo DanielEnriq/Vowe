@@ -9,6 +9,8 @@ import type {
   ObserveWindowInput,
   ReadOnlyToolset,
 } from '../llm/observation-llm.js';
+import type { RunHandle, VoweRunRecorder } from '../execution/run-recorder.js';
+import { tracedTool } from '../execution/traced-tools.js';
 import type { EventStore } from '../store/event-store.js';
 import type { NormalizedEvent } from '../types/events.js';
 import type { AgentSession } from '../types/session.js';
@@ -39,6 +41,8 @@ export interface ObserverRunnerOptions {
   continuityNotes?: number;
   /** How many recent worker/developer messages to carry forward. */
   continuityMessages?: number;
+  /** Where each window's model call is recorded, when anywhere. */
+  runs?: VoweRunRecorder;
   onError?: (scope: string, error: unknown) => void;
   onNote?: (note: WindowNote) => void;
   onSurfaceUpdate?: (update: SurfaceUpdate) => void;
@@ -76,6 +80,7 @@ export class ObserverRunner {
   private readonly policy: Partial<WindowPolicy> | undefined;
   private readonly continuityNotes: number;
   private readonly continuityMessages: number;
+  private readonly runs: VoweRunRecorder | null;
   private readonly onError: (scope: string, error: unknown) => void;
   private readonly onNote: ((note: WindowNote) => void) | undefined;
   private readonly onSurfaceUpdate: ((update: SurfaceUpdate) => void) | undefined;
@@ -109,6 +114,7 @@ export class ObserverRunner {
     this.policy = options.policy;
     this.continuityNotes = options.continuityNotes ?? 4;
     this.continuityMessages = options.continuityMessages ?? 8;
+    this.runs = options.runs ?? null;
     this.onError = options.onError ?? (() => undefined);
     this.onNote = options.onNote;
     this.onSurfaceUpdate = options.onSurfaceUpdate;
@@ -267,9 +273,23 @@ export class ObserverRunner {
 
     const collectedRefs: ContextRef[] = [];
     const explore = await this.shouldExplore(window, events);
-    const toolset = this.buildToolset(window, collectedRefs, explore);
 
-    const observation = await this.observer.observeWindow(input, toolset);
+    const run = this.runs?.begin({
+      kind: 'observation',
+      sessionId: this.sessionId,
+      ...(session?.projectId ? { projectId: session.projectId } : {}),
+      metadata: { windowId: window.id, windowIndex: window.index, explored: explore },
+    });
+    const toolset = this.buildToolset(window, collectedRefs, explore, run);
+
+    let observation;
+    try {
+      observation = await this.observer.observeWindow(input, toolset, run);
+    } catch (error) {
+      await run?.failed(error);
+      throw error;
+    }
+    await run?.complete();
 
     const refs: ContextRef[] = [
       {
@@ -328,28 +348,34 @@ export class ObserverRunner {
     const heuristic = looksUncertain(events);
 
     if (!this.router?.available) return heuristic;
+    const run = this.beginDecisionRun('explore', window);
     try {
-      const result = await this.router.noul({
-        instructions:
-          'Does this portion of a coding agent trace contain enough novelty or unresolved uncertainty to justify looking at additional context — earlier windows, source files, command output or diffs — before describing it?',
-        criteria: {
-          true: 'Something is unexplained, failing, surprising, or refers to work not visible in this portion. Looking further would change the description.',
-          false: 'This portion is self-explanatory routine progress. Looking further would add nothing.',
+      const result = await this.router.noul(
+        {
+          instructions:
+            'Does this portion of a coding agent trace contain enough novelty or unresolved uncertainty to justify looking at additional context — earlier windows, source files, command output or diffs — before describing it?',
+          criteria: {
+            true: 'Something is unexplained, failing, surprising, or refers to work not visible in this portion. Looking further would change the description.',
+            false: 'This portion is self-explanatory routine progress. Looking further would add nothing.',
+          },
+          state: {
+            windowIndex: window.index,
+            closedBy: window.closedBy,
+            heuristicSuggestsUncertainty: heuristic,
+            events: events.map((event) => ({
+              kind: event.kind,
+              summary: event.summary,
+            })),
+          },
         },
-        state: {
-          windowIndex: window.index,
-          closedBy: window.closedBy,
-          heuristicSuggestsUncertainty: heuristic,
-          events: events.map((event) => ({
-            kind: event.kind,
-            summary: event.summary,
-          })),
-        },
-      });
+        run,
+      );
+      await run?.complete();
       if (!result) return heuristic;
       return result.noul >= 0.5;
     } catch (error) {
       this.onError('router:noul', error);
+      await run?.failed(error);
       return heuristic;
     }
   }
@@ -375,18 +401,23 @@ export class ObserverRunner {
       criteria[`w${note.windowIndex}`] = truncate(note.summary, 240);
     }
 
+    const run = this.beginDecisionRun('relevant_older_note', window);
     try {
-      const result = await this.router.choose({
-        instructions:
-          'An observer is about to interpret a new portion of a coding session. Which earlier window, if any, is most likely to be needed to understand it?',
-        criteria,
-        state: {
-          newWindow: { index: window.index, closedBy: window.closedBy },
-          recentNotes: this.store
-            .getWindowNotes(this.sessionId, this.continuityNotes)
-            .map((note) => truncate(note.summary, 240)),
+      const result = await this.router.choose(
+        {
+          instructions:
+            'An observer is about to interpret a new portion of a coding session. Which earlier window, if any, is most likely to be needed to understand it?',
+          criteria,
+          state: {
+            newWindow: { index: window.index, closedBy: window.closedBy },
+            recentNotes: this.store
+              .getWindowNotes(this.sessionId, this.continuityNotes)
+              .map((note) => truncate(note.summary, 240)),
+          },
         },
-      });
+        run,
+      );
+      await run?.complete();
       if (!result || result.choice === 'none') return [];
       const chosen = shortlist.find(
         (note) => `w${note.windowIndex}` === result.choice,
@@ -394,8 +425,29 @@ export class ObserverRunner {
       return chosen ? [chosen] : [];
     } catch (error) {
       this.onError('router:choose', error);
+      await run?.failed(error);
       return [];
     }
+  }
+
+  /**
+   * A decision is its own run, not part of the window's.
+   *
+   * These are calls to a different provider with a different question, made
+   * before the observation model is asked anything. Folding them into the
+   * observation run would put two providers' requests in one trace and lose
+   * which of them actually answered.
+   */
+  private beginDecisionRun(
+    purpose: string,
+    window: TraceWindow,
+  ): RunHandle | undefined {
+    return this.runs?.begin({
+      kind: 'decision',
+      sessionId: this.sessionId,
+      ...(this.router?.name ? { provider: this.router.name } : {}),
+      metadata: { purpose, windowIndex: window.index },
+    });
   }
 
   /**
@@ -410,6 +462,7 @@ export class ObserverRunner {
     window: TraceWindow,
     collected: ContextRef[],
     explore: boolean,
+    run?: RunHandle,
   ): ObserverToolset {
     const toolset: ObserverToolset = {
       surfaceUpdate: async (input) => {
@@ -437,50 +490,57 @@ export class ObserverRunner {
           createdAt: new Date().toISOString(),
         };
         await this.store.appendSurfaceUpdate(update);
+        run?.toolCall({
+          name: 'surface_update',
+          arguments: { message: input.message, whyNow: input.whyNow },
+        });
         // Notify, but do not speak. What happens next is the policy's call.
         this.onSurfaceUpdate?.(update);
         return update;
       },
     };
 
-    if (explore) toolset.read = this.readTools(collected);
+    if (explore) toolset.read = this.readTools(collected, run);
     return toolset;
   }
 
   /** The three read tools, with every ref that is touched recorded. */
-  private readTools(collected: ContextRef[]): ReadOnlyToolset {
+  private readTools(collected: ContextRef[], run?: RunHandle): ReadOnlyToolset {
     return {
-      searchContext: async (input) => {
-        const hits = await this.navigator.searchContext({
-          sessionId: this.sessionId,
-          query: input.query,
-          ...(input.sources ? { sources: input.sources } : {}),
-          ...(input.limit !== undefined ? { limit: input.limit } : {}),
-        });
-        for (const hit of hits) collected.push(hit.ref);
-        return hits;
-      },
-      openContext: async (input) => {
-        const result = await this.navigator.openContext({
-          ref: input.ref,
-          ...(input.depth ? { depth: input.depth } : {}),
-        });
-        if (!result.notFound) collected.push(result.ref);
-        return result;
-      },
-      getDiff: async (input) => {
-        const diff = await this.navigator.getDiff({
-          sessionId: this.sessionId,
-          ...(input.path ? { path: input.path } : {}),
-          ...(input.around ? { around: input.around } : {}),
-        });
-        collected.push({
-          kind: 'diff',
-          sessionId: this.sessionId,
-          ...(input.path ? { path: input.path } : {}),
-        });
-        return diff;
-      },
+      searchContext: async (input) =>
+        tracedTool(run, 'search_context', input, async () => {
+          const hits = await this.navigator.searchContext({
+            sessionId: this.sessionId,
+            query: input.query,
+            ...(input.sources ? { sources: input.sources } : {}),
+            ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          });
+          for (const hit of hits) collected.push(hit.ref);
+          return hits;
+        }),
+      openContext: async (input) =>
+        tracedTool(run, 'open_context', input, async () => {
+          const result = await this.navigator.openContext({
+            ref: input.ref,
+            ...(input.depth ? { depth: input.depth } : {}),
+          });
+          if (!result.notFound) collected.push(result.ref);
+          return result;
+        }),
+      getDiff: async (input) =>
+        tracedTool(run, 'get_diff', input, async () => {
+          const diff = await this.navigator.getDiff({
+            sessionId: this.sessionId,
+            ...(input.path ? { path: input.path } : {}),
+            ...(input.around ? { around: input.around } : {}),
+          });
+          collected.push({
+            kind: 'diff',
+            sessionId: this.sessionId,
+            ...(input.path ? { path: input.path } : {}),
+          });
+          return diff;
+        }),
     };
   }
 

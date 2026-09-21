@@ -457,6 +457,29 @@ function StreamRow({ item }: { item: StreamItem }): ReactElement {
           </div>
         </>
       );
+    // Ordinary conversation, typed or spoken. Same two sides as the pair
+    // above, without the claim that a question was investigated — a spoken
+    // "thanks" is not a grounded answer and is not shown as one.
+    case 'user_message':
+      return (
+        <>
+          {time}
+          <div className="said">
+            <span className="who ask">You</span>
+            <span className="text">{entry.text}</span>
+          </div>
+        </>
+      );
+    case 'companion_message':
+      return (
+        <>
+          <span />
+          <div className="block ask">
+            <span className="who ask">Vowe</span>
+            <span className="text">{entry.text}</span>
+          </div>
+        </>
+      );
     case 'user_instruction':
       return (
         <>

@@ -1,3 +1,4 @@
+import type { VoweRunRecorder } from '../execution/run-recorder.js';
 import type { LlmClient } from '../llm/llm-client.js';
 import { toObservedEvent } from '../llm/llm-client.js';
 import type { SemanticState } from '../types/session.js';
@@ -20,24 +21,40 @@ export class LlmSemanticInterpreter implements SemanticInterpreter {
   private readonly llm: LlmClient;
   private readonly fallback = new HeuristicInterpreter();
   private readonly onError: (error: unknown) => void;
+  private readonly runs: VoweRunRecorder | null;
 
-  constructor(llm: LlmClient, onError: (error: unknown) => void = () => undefined) {
+  constructor(
+    llm: LlmClient,
+    onError: (error: unknown) => void = () => undefined,
+    runs?: VoweRunRecorder,
+  ) {
     this.llm = llm;
     this.onError = onError;
+    this.runs = runs ?? null;
   }
 
   async interpret(input: InterpretationInput): Promise<SemanticState> {
     const heuristic = await this.fallback.interpret(input);
     if (input.events.length === 0) return heuristic;
 
+    const run = this.runs?.begin({
+      kind: 'interpretation',
+      sessionId: input.session.id,
+      ...(input.session.projectId ? { projectId: input.session.projectId } : {}),
+    });
+
     try {
-      const update = await this.llm.summarizeSession({
-        sessionId: input.session.id,
-        task: input.session.task,
-        cwd: input.session.cwd,
-        previousState: input.previous,
-        events: input.events.map(toObservedEvent),
-      });
+      const update = await this.llm.summarizeSession(
+        {
+          sessionId: input.session.id,
+          task: input.session.task,
+          cwd: input.session.cwd,
+          previousState: input.previous,
+          events: input.events.map(toObservedEvent),
+        },
+        run,
+      );
+      await run?.complete();
 
       return {
         task: update.task ?? input.session.task,
@@ -53,6 +70,10 @@ export class LlmSemanticInterpreter implements SemanticInterpreter {
         updatedAt: new Date().toISOString(),
       };
     } catch (error) {
+      // The run failed; the interpretation did not. Falling back to the
+      // heuristic is the product behaviour, and the run says plainly that the
+      // model call behind it did not work.
+      await run?.failed(error);
       this.onError(error);
       return heuristic;
     }

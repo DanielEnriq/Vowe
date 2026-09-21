@@ -16,6 +16,11 @@ import type {
   TraceWindow,
   WindowNote,
 } from '../observation/trace-window.js';
+import type {
+  RunCompletion,
+  VoweRun,
+  VoweTraceItem,
+} from '../types/execution.js';
 import type { Project } from '../projects/project.js';
 import type {
   ConversationChange,
@@ -338,16 +343,28 @@ export class SqliteEventStore implements EventStore {
   async appendConversationEntry(
     entry: ConversationEntry,
     delivery?: Omit<ConversationDelivery, 'id' | 'entryId' | 'sessionId'>,
-  ): Promise<void> {
-    this.transaction(() => {
-      this.run(
+  ): Promise<ConversationEntry | null> {
+    const stored = this.transaction(() => {
+      const inserted = this.get(
         `INSERT INTO conversation_entries (
            id, session_id, ord, at, role, text, refs_json, provenance_json,
-           investigation_json)
+           investigation_json, origin_provider, origin_kind, origin_id)
          SELECT :id, :sessionId,
                 COALESCE((SELECT MAX(ord) FROM conversation_entries
                            WHERE session_id = :sessionId), 0) + 1,
-                :at, :role, :text, :refs, :provenance, :investigation`,
+                :at, :role, :text, :refs, :provenance, :investigation,
+                :originProvider, :originKind, :originId
+         -- Required: SQLite cannot parse ON CONFLICT after a bare SELECT.
+         WHERE true
+         -- The turn has already been stored, so this delivery of it consumes
+         -- no ordinal and writes nothing. The unique index is partial, so an
+         -- entry with no origin never reaches this branch.
+         -- The index is partial, so its predicate belongs in the conflict
+         -- target too; SQLite will not match it otherwise.
+         ON CONFLICT (session_id, origin_provider, origin_kind, origin_id)
+           WHERE origin_provider IS NOT NULL
+           DO NOTHING
+         RETURNING *`,
         {
           id: entry.id,
           sessionId: entry.sessionId,
@@ -357,8 +374,12 @@ export class SqliteEventStore implements EventStore {
           refs: rows.json(entry.refs),
           provenance: rows.json(entry.provenance),
           investigation: rows.json(entry.investigation),
+          originProvider: rows.text(entry.origin?.provider),
+          originKind: rows.text(entry.origin?.kind),
+          originId: rows.text(entry.origin?.id),
         },
       );
+      if (!inserted) return null;
       if (delivery) {
         this.insertDelivery({
           ...delivery,
@@ -367,11 +388,18 @@ export class SqliteEventStore implements EventStore {
           sessionId: entry.sessionId,
         });
       }
+      return rows.toConversationEntry(inserted);
     });
+
+    // A turn that was already stored is not a change to the conversation, and
+    // a UI that re-read on every duplicate provider event would be reacting to
+    // the network rather than to the person.
+    if (!stored) return null;
 
     // After COMMIT, and after the entry is readable: a listener that turns
     // around and calls `getConversation` must see what it was told about.
     this.notifyConversation({ sessionId: entry.sessionId });
+    return stored;
   }
 
   /**
@@ -499,6 +527,128 @@ export class SqliteEventStore implements EventStore {
         completedAt: rows.text(delivery.completedAt),
       },
     );
+  }
+
+  // ------------------------------------------------- Vowe execution history
+
+  async appendRun(run: VoweRun): Promise<void> {
+    this.run(
+      `INSERT INTO vowe_runs (
+         id, session_id, project_id, kind, provider, model, status,
+         trigger_entry_id, output_entry_id, started_at, completed_at,
+         usage_json, metadata_json)
+       VALUES (:id, :sessionId, :projectId, :kind, :provider, :model, :status,
+               :triggerEntryId, :outputEntryId, :startedAt, :completedAt,
+               :usage, :metadata)`,
+      {
+        id: run.id,
+        sessionId: rows.text(run.sessionId),
+        projectId: rows.text(run.projectId),
+        kind: run.kind,
+        provider: rows.text(run.provider),
+        model: rows.text(run.model),
+        status: run.status,
+        triggerEntryId: rows.text(run.triggerEntryId),
+        outputEntryId: rows.text(run.outputEntryId),
+        startedAt: run.startedAt,
+        completedAt: rows.text(run.completedAt),
+        usage: rows.json(run.usage),
+        metadata: rows.json(run.metadata),
+      },
+    );
+  }
+
+  /**
+   * How a run ended.
+   *
+   * `status` is assigned rather than coalesced — a run that ends in error must
+   * be able to say so after saying `started`, which a COALESCE would refuse.
+   * The rest keep whatever is already there when nothing new is offered.
+   */
+  async finishRun(
+    runId: string,
+    completion: RunCompletion,
+  ): Promise<VoweRun | null> {
+    const row = this.get(
+      `UPDATE vowe_runs SET
+         status          = :status,
+         completed_at    = :completedAt,
+         provider        = COALESCE(:provider, provider),
+         model           = COALESCE(:model, model),
+         usage_json      = COALESCE(:usage, usage_json),
+         output_entry_id = COALESCE(:outputEntryId, output_entry_id),
+         metadata_json   = COALESCE(:metadata, metadata_json)
+       WHERE id = :id
+       RETURNING *`,
+      {
+        id: runId,
+        status: completion.status,
+        completedAt: completion.completedAt,
+        provider: rows.text(completion.provider),
+        model: rows.text(completion.model),
+        usage: rows.json(completion.usage),
+        outputEntryId: rows.text(completion.outputEntryId),
+        metadata: rows.json(completion.metadata),
+      },
+    );
+    return row ? rows.toRun(row) : null;
+  }
+
+  async appendTraceItems(
+    runId: string,
+    items: Omit<VoweTraceItem, 'runId' | 'ord'>[],
+  ): Promise<void> {
+    if (!items.length) return;
+    this.transaction(() => {
+      for (const item of items) {
+        this.run(
+          `INSERT INTO vowe_trace_items (
+             run_id, ord, id, kind, text, payload_json, provider_item_id, at)
+           SELECT :runId,
+                  COALESCE((SELECT MAX(ord) FROM vowe_trace_items
+                             WHERE run_id = :runId), 0) + 1,
+                  :id, :kind, :text, :payload, :providerItemId, :at`,
+          {
+            runId,
+            id: item.id,
+            kind: item.kind,
+            text: rows.text(item.text),
+            payload: rows.json(item.payload),
+            providerItemId: rows.text(item.providerItemId),
+            at: item.at,
+          },
+        );
+      }
+    });
+  }
+
+  getRun(runId: string): VoweRun | null {
+    const row = this.get('SELECT * FROM vowe_runs WHERE id = ?', runId);
+    return row ? rows.toRun(row) : null;
+  }
+
+  getRuns(sessionId: string, limit?: number): VoweRun[] {
+    return this.tail(
+      'SELECT * FROM vowe_runs WHERE session_id = :sessionId',
+      'started_at',
+      { sessionId },
+      limit,
+    ).map(rows.toRun);
+  }
+
+  getRunForEntry(entryId: string): VoweRun | null {
+    const row = this.get(
+      'SELECT * FROM vowe_runs WHERE output_entry_id = ? ORDER BY started_at LIMIT 1',
+      entryId,
+    );
+    return row ? rows.toRun(row) : null;
+  }
+
+  getTraceItems(runId: string): VoweTraceItem[] {
+    return this.all(
+      'SELECT * FROM vowe_trace_items WHERE run_id = ? ORDER BY ord',
+      runId,
+    ).map(rows.toTraceItem);
   }
 
   // ------------------------------------------------------------ observation

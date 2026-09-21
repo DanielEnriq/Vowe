@@ -202,10 +202,11 @@ projects/<id>/         project knowledge — a directory, and staying one
 ```
 
 Tables: `projects`, `sessions`, `events`, `semantic_states`,
-`conversation_entries`, `conversation_deliveries`, `windows`, `window_notes`,
-`surface_updates`, `observation_state`. Columns carry anything ordered, filtered
-or looked up; JSON carries payloads only ever read whole — `raw`, `detail`,
-`capabilities`, `refs`, `provenance`, `investigation`, `decision`.
+`conversation_entries`, `conversation_deliveries`, `vowe_runs`,
+`vowe_trace_items`, `windows`, `window_notes`, `surface_updates`,
+`observation_state`. Columns carry anything ordered, filtered or looked up; JSON
+carries payloads only ever read whole — `raw`, `detail`, `capabilities`, `refs`,
+`provenance`, `investigation`, `decision`, a model request, a tool result.
 
 Windows store ranges, never material: the raw trace stays where the provider
 wrote it, and `observation_state` is what lets a restart resume rather than
@@ -228,8 +229,8 @@ notification fires after `COMMIT` returns.
 ### Migrations
 
 An ordered list in `store/sqlite/migrations.ts`, recorded in a
-`schema_migrations` table — `001_initial_store`, then
-`002_conversation_delivery`. Each runs inside its own transaction together with
+`schema_migrations` table — `001_initial_store`, `002_conversation_delivery`,
+then `003_vowe_execution_history`. Each runs inside its own transaction together with
 the row recording it, so a failure leaves the schema and the version untouched
 rather than half-applied, and says which migration failed. A shipped migration's
 SQL is frozen: it describes the database an older Vowe actually wrote, and
@@ -243,6 +244,44 @@ being spoken is **one** entry holding the full text plus one delivery recording
 how far the audio got — never a truncated entry, and never a second copy of the
 answer. That is also what lets a turn stay persisted exactly once as voice grows
 up: a surface that did not write the entry attaches a delivery to it.
+
+### Four lanes, kept apart
+
+Four kinds of history meet in one database, and they answer four different
+questions:
+
+```
+CONVERSATION   what the developer and Vowe communicated
+DELIVERY       what the developer actually received
+VOWE EXECUTION what Vowe's own models did, including any reasoning they exposed
+WORKER         what the coding agent did
+```
+
+They stay distinct and stay linkable. A `VoweRun` names the model call, its
+resolved request, its usage and how it ended; its `VoweTraceItem`s hold what
+happened inside it, ordered by `run_id + ord`. `triggerEntryId` and
+`outputEntryId` make "which question caused this execution?" and "which
+execution produced this answer?" joins rather than guesses.
+
+`InvestigationReceipt` is unchanged and still the short, human-facing account
+behind `Checked 3 things · 4s`. This is the detailed layer underneath it, not a
+replacement for it — and worker events remain the coding agent's own history.
+
+Reasoning is persisted where a provider exposes it, and nowhere else.
+`reasoning` is reasoning text; `reasoning_summary` is a summary of it, which is
+what Anthropic's adaptive thinking returns. A provider that exposes none —
+gpt-live-1 exposes none at all — produces no reasoning row, and nothing
+reconstructs one afterwards.
+
+### Exactly once, without comparing text
+
+A turn a provider delivers carries a `ConversationOrigin`: provider, kind, and
+an id stable at the source. A partial unique index over
+`(session_id, origin_provider, origin_kind, origin_id)` means a retry, a
+reconnect or a replayed stream writes nothing the second time —
+`appendConversationEntry` returns `null`, exactly as `appendEvent` does for a
+replayed trace record. Text is never the test: a person may say the same
+sentence twice, and meaning it twice is not the same as it arriving twice.
 
 ### Starting over
 

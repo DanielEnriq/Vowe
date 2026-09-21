@@ -1,4 +1,5 @@
 import type { DecisionRouter } from '../decision/decision-router.js';
+import type { RunHandle, VoweRunRecorder } from '../execution/run-recorder.js';
 import type { LlmClient } from '../llm/llm-client.js';
 import type {
   CommunicationAction,
@@ -11,6 +12,8 @@ export interface CommunicationPolicyOptions {
   router?: DecisionRouter;
   /** Optional; used only when no decision router answered. */
   llm?: LlmClient;
+  /** Where each attempt at a decision is recorded, when anywhere. */
+  runs?: VoweRunRecorder;
   onError?: (scope: string, error: unknown) => void;
 }
 
@@ -41,12 +44,29 @@ const ACTIONS: Record<CommunicationAction, string> = {
 export class CommunicationPolicy {
   private readonly router: DecisionRouter | undefined;
   private readonly llm: LlmClient | undefined;
+  private readonly runs: VoweRunRecorder | null;
   private readonly onError: (scope: string, error: unknown) => void;
 
   constructor(options: CommunicationPolicyOptions = {}) {
     this.router = options.router;
     this.llm = options.llm;
+    this.runs = options.runs ?? null;
     this.onError = options.onError ?? (() => undefined);
+  }
+
+  /**
+   * One run per attempt, not one per decision.
+   *
+   * The two strategies are two different model calls to two different
+   * providers, and which of them actually answered is the interesting part of
+   * the record. Collapsing them into one run would lose exactly that.
+   */
+  private beginRun(candidate: SurfaceUpdate, strategy: string): RunHandle | undefined {
+    return this.runs?.begin({
+      kind: 'communication_decision',
+      sessionId: candidate.sessionId,
+      metadata: { strategy, surfaceUpdateId: candidate.id },
+    });
   }
 
   async evaluate(
@@ -76,27 +96,37 @@ export class CommunicationPolicy {
     preference: string | null,
   ): Promise<CommunicationDecision | null> {
     if (!this.router?.available) return null;
+    const run = this.beginRun(candidate, 'router');
     try {
-      const result = await this.router.choose<CommunicationAction>({
-        instructions: preference
-          ? `A developer said this about being interrupted while their coding agent works: "${preference}". A development just occurred. What should happen?`
-          : 'A developer has not said how closely they want to be kept informed while their coding agent works. A development just occurred. What should happen?',
-        criteria: ACTIONS,
-        state: {
-          development: candidate.message,
-          whyItMattersNow: candidate.whyNow,
-          urgencyAsJudgedByTheObserver: candidate.urgency,
+      const result = await this.router.choose<CommunicationAction>(
+        {
+          instructions: preference
+            ? `A developer said this about being interrupted while their coding agent works: "${preference}". A development just occurred. What should happen?`
+            : 'A developer has not said how closely they want to be kept informed while their coding agent works. A development just occurred. What should happen?',
+          criteria: ACTIONS,
+          state: {
+            development: candidate.message,
+            whyItMattersNow: candidate.whyNow,
+            urgencyAsJudgedByTheObserver: candidate.urgency,
+          },
         },
-      });
-      if (!result) return null;
+        run,
+      );
+      if (!result) {
+        // The router declined to answer. Nothing went wrong; this strategy
+        // simply produced no decision, and the next one is tried.
+        await run?.complete();
+        return null;
+      }
       // A `DecisionRouter` is an interface anyone can implement, and this class
       // is what defines the action set — so validate rather than trust. An
       // unrecognized action falls through to the next strategy.
       if (!(result.choice in ACTIONS)) {
-        this.onError(
-          'policy:router',
-          new Error(`Decision model returned an unknown action: ${result.choice}`),
+        const unknown = new Error(
+          `Decision model returned an unknown action: ${result.choice}`,
         );
+        this.onError('policy:router', unknown);
+        await run?.failed(unknown);
         return null;
       }
 
@@ -111,9 +141,11 @@ export class CommunicationPolicy {
       if (result.confidence !== undefined) metadata.confidence = result.confidence;
       if (result.probabilities) metadata.probabilities = result.probabilities;
       if (Object.keys(metadata).length) decision.metadata = metadata;
+      await run?.complete({ metadata: { decision: decision.action } });
       return decision;
     } catch (error) {
       this.onError('policy:router', error);
+      await run?.failed(error);
       return null;
     }
   }
@@ -123,39 +155,51 @@ export class CommunicationPolicy {
     preference: string | null,
   ): Promise<CommunicationDecision | null> {
     if (!this.llm) return null;
+    const run = this.beginRun(candidate, 'llm');
     try {
-      const answer = await this.llm.answerQuestion({
-        sessionId: candidate.sessionId,
-        question: [
-          'A developer is being kept company while their coding agent works.',
-          preference
-            ? `They said: "${preference}"`
-            : 'They have not said how closely they want to be kept informed.',
-          '',
-          `Something happened: ${candidate.message}`,
-          `The observer thought it mattered because: ${candidate.whyNow}`,
-          '',
-          'Answer with exactly one word and nothing else:',
-          ...Object.entries(ACTIONS).map(([action, meaning]) => `${action} — ${meaning}`),
-        ].join('\n'),
-        task: null,
-        cwd: null,
-        semanticState: null,
-        events: [],
-        conversation: [],
-      });
+      const answer = await this.llm.answerQuestion(
+        {
+          sessionId: candidate.sessionId,
+          question: [
+            'A developer is being kept company while their coding agent works.',
+            preference
+              ? `They said: "${preference}"`
+              : 'They have not said how closely they want to be kept informed.',
+            '',
+            `Something happened: ${candidate.message}`,
+            `The observer thought it mattered because: ${candidate.whyNow}`,
+            '',
+            'Answer with exactly one word and nothing else:',
+            ...Object.entries(ACTIONS).map(
+              ([action, meaning]) => `${action} — ${meaning}`,
+            ),
+          ].join('\n'),
+          task: null,
+          cwd: null,
+          semanticState: null,
+          events: [],
+          conversation: [],
+        },
+        run,
+      );
 
       const action = parseAction(answer);
-      if (!action) return null;
-      return {
+      if (!action) {
+        await run?.complete();
+        return null;
+      }
+      const decision: CommunicationDecision = {
         action,
         reason: preference
           ? `Judged against the developer's stated preference: "${preference}".`
           : 'No stated preference; judged on its own terms.',
         source: 'llm',
       };
+      await run?.complete({ metadata: { decision: decision.action } });
+      return decision;
     } catch (error) {
       this.onError('policy:llm', error);
+      await run?.failed(error);
       return null;
     }
   }

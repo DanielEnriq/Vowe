@@ -7,6 +7,13 @@ import type {
 } from '../src/live/live-transport.js';
 import type { Unsubscribe } from '../src/types/adapter.js';
 
+/** Where an utterance sits on the provider's session timeline. */
+export interface Timing {
+  startMs?: number;
+  endMs?: number;
+  durationMs?: number;
+}
+
 export interface Appended {
   channel: 'thinking' | 'commentary' | 'instructions';
   content: string;
@@ -24,6 +31,15 @@ export class FakeLiveSideband implements LiveSideband {
   readonly appended: Appended[] = [];
   closed = false;
   private readonly listeners = new Set<(event: LiveServerEvent) => void>();
+  /**
+   * The provider's session timeline, in milliseconds.
+   *
+   * Real fragments carry a provider-assigned offset, and two things now depend
+   * on it: a turn's stable identity, and whether one speaker began before the
+   * other had finished. A fake that stamped every utterance at zero would make
+   * the first look duplicated and the second impossible to express.
+   */
+  private cursor = 0;
 
   constructor(readonly liveSessionId: string) {}
 
@@ -38,8 +54,30 @@ export class FakeLiveSideband implements LiveSideband {
   }
 
   /** Say something as the user, as a stream of fragments would. */
-  userSays(text: string): void {
-    this.emit({ type: 'transcript.user', delta: text, startMs: 0, endMs: 1 });
+  userSays(text: string, timing: Timing = {}): void {
+    this.emit({ type: 'transcript.user', delta: text, ...this.span(timing) });
+  }
+
+  /** Say something as Vo. */
+  voSays(text: string, timing: Timing = {}): void {
+    this.emit({ type: 'transcript.assistant', delta: text, ...this.span(timing) });
+  }
+
+  /**
+   * Replay an utterance exactly as it first arrived.
+   *
+   * What a retry or a reconnect does: the same fragments, with the same
+   * provider offsets. It must not become a second turn.
+   */
+  replay(event: LiveServerEvent): void {
+    this.emit(event);
+  }
+
+  private span(timing: Timing): { startMs: number; endMs: number } {
+    const startMs = timing.startMs ?? this.cursor;
+    const endMs = timing.endMs ?? startMs + (timing.durationMs ?? 1000);
+    this.cursor = Math.max(this.cursor, endMs);
+    return { startMs, endMs };
   }
 
   async appendThinking(content: string, delegationId: string | null = null): Promise<void> {
