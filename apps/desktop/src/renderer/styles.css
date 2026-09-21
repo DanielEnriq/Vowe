@@ -545,6 +545,38 @@ button:disabled { cursor: not-allowed; }
 .timeline .who.instr { color: var(--instr); }
 .timeline .text { white-space: pre-wrap; overflow-wrap: anywhere; }
 
+/* An investigation in flight. Quiet: it resolves into the answer in place. */
+.timeline .pending {
+  font-size: 12px;
+  color: var(--text-3);
+  animation: breathe 1.6s ease-in-out infinite;
+}
+@keyframes breathe { 50% { opacity: 0.45; } }
+
+/* What an answer was grounded in. Modelled on .now .provenance. */
+.timeline .refs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.timeline .refs-count { font-weight: 600; }
+.timeline .refs code {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--code);
+  color: var(--text-3);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Evidence panel */
 .evidence {
   width: 380px;

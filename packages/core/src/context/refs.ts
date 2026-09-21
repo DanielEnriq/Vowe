@@ -8,6 +8,13 @@
  * Each ref has a compact string form so a model can read one out of a search
  * result and hand it straight back to `open_context` without the application
  * having to maintain a side table of handles.
+ *
+ * **This module imports nothing, and must keep importing nothing.** It is
+ * published as the `@vowe/core/refs` subpath so the renderer can format a ref
+ * for display, and the renderer is a browser context: every other runtime value
+ * in `@vowe/core` reaches a filesystem or a process sooner or later, which is
+ * why the UI imports only types from the package root. A single import added
+ * here would drag `node:fs` into that bundle.
  */
 
 export type ContextSource = 'windows' | 'trace' | 'transcript' | 'repo';

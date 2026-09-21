@@ -29,7 +29,7 @@ Every value is optional and Vowe degrades around each missing one:
 
 | Missing | What still works |
 |---|---|
-| Model key | Discovery, ingestion, windows, deterministic status — notes just say nothing interpreted them |
+| Model key | Discovery, ingestion, windows, deterministic status — notes just say nothing interpreted them, and a question falls back to reporting the observed state |
 | `OPENAI_API_KEY` | Everything except talking to Vo. The UI says so. Observation is unaffected |
 | Decision key | Everything; each decision falls back to something deterministic |
 
@@ -58,9 +58,10 @@ VOWE_LLM_MODEL=anthropic/claude-opus-5   # when capability beats latency
 VOWE_LLM_EFFORT=medium                   # low | medium | high
 ```
 
-Delegated questions always take one step more effort than routine observation:
-someone is waiting on that answer out loud, and it is the call most likely to be
-wrong if rushed.
+Questions always take one step more effort than routine observation: someone is
+waiting on that answer, and it is the call most likely to be wrong if rushed.
+That holds whether the question was spoken or typed — the same investigator runs
+either way.
 
 ## What it does
 
@@ -73,7 +74,11 @@ wrong if rushed.
   provider's original record.
 - Maintains an evolving description of what each session appears to be doing,
   with provenance back to the events that produced it.
-- **Ask Vowe** answers from observed state. It never reaches the coding agent.
+- **Ask Vowe** investigates and answers with provenance — reading the session's
+  trace, the working tree, the current diff and what the Project has learned
+  about its own repository. It is the same investigator Vo delegates to, so
+  typing a question and speaking it reach the same intelligence. It never
+  reaches the coding agent.
 - **Send to agent** delivers an instruction to the real worker, and is disabled
   with an explanation when that session cannot receive one.
 - **Observes a session continuously**, dividing its trace into ordered windows

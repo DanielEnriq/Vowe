@@ -82,6 +82,20 @@ thought arrives in conversation rather than out of nowhere.
 The session runs with client delegation: when Vo decides a question needs real
 work, it hands it to Vowe rather than guessing.
 
+Voice is not the only way in. `DelegatedQuestionRunner` is Vowe's one grounded
+investigator, and the typed **Ask Vowe** composer reaches the same instance
+through `CompanionService`:
+
+```
+       text ──▶ CompanionService ──┐
+                                   ├──▶ DelegatedQuestionRunner
+      voice ──▶ LiveBridge ────────┘
+```
+
+Everything below this line is therefore about both. The bridge's only special
+responsibility is reconstructing the question, because the provider does not
+send it.
+
 **The delegation event does not carry the user's utterance.** That is by design —
 Vo is not the author of the question. So the bridge accumulates
 `session.input_transcript.delta` and `session.output_transcript.delta`
@@ -120,6 +134,12 @@ right artifact to read and the wrong thing to hear: it cannot be interrupted
 cleanly, and it buries the answer. So the backend produces both. Only
 `spokenAnswer` is sent to the live model. The full account is persisted as a
 conversation entry with its references and rendered in Vowe's own window.
+
+Both forms are produced on every investigation, including one that arrived by
+being typed. That is not waste — it is what keeps the two modalities honest
+about being one engine, and the typed path never receives the spoken form
+anyway: the main process drops it at the IPC boundary rather than trusting the
+renderer to ignore it.
 
 Long answers are **never** split across consecutive `commentary` appends to make
 Vo read everything aloud. If the developer wants more, they ask, and the next

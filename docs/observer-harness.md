@@ -152,12 +152,19 @@ never said" is visible rather than invisible.
 
 ### Delegated questions
 
-The developer asks Vo something Vo cannot answer from its background updates.
+The developer asks something that cannot be answered from background updates.
 `DelegatedQuestionRunner` investigates with the same three read tools the
 observer has, and returns a grounded answer.
 
 It is read-only by construction: no `surface_update`, no control path, no
 adapter or registry anywhere in its object graph.
+
+There is one of these, and both ways of asking reach it — Vo delegating through
+`LiveBridge`, and the typed composer through `CompanionService`. The runner does
+not know which it was, and nothing downstream of it asks. That is what makes
+"typing a question and speaking it have access to the same intelligence" a
+property of the object graph rather than a promise about two code paths staying
+in step.
 
 ## Concurrency
 
@@ -165,14 +172,15 @@ Two independent loops. This is load-bearing.
 
 ```
 LOOP A                          LOOP B
-trace → window → note           user speech → Vo → delegated question
-  → next window                   → ContextNavigator → answer
+trace → window → note           a question, typed or spoken
+  → next window                   → DelegatedQuestionRunner
+                                  → ContextNavigator → answer
 ```
 
 - The observer has a per-session queue with a coalescing re-drain. New trace is
   accepted synchronously and never waits behind a model call.
-- A delegated question never touches that queue. A long investigation cannot
-  pause ingestion, and a slow window cannot delay an answer.
+- A question never touches that queue, typed or spoken. A long investigation
+  cannot pause ingestion, and a slow window cannot delay an answer.
 - A window that closes mid-conversation is persisted and becomes available to
   the next turn naturally.
 

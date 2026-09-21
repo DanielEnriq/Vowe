@@ -22,6 +22,7 @@ import {
   NdjsonEventStore,
   ObservationService,
   ConservativeMemoryAdmission,
+  describeObservedState,
   ProjectKnowledgeService,
   ProjectMemoryStore,
   ProjectService,
@@ -37,7 +38,7 @@ import { AnthropicLlmClient } from '@vowe/llm';
 import { JevDecisionRouter } from '@vowe/decision-jev';
 import { OpenAiLiveTransport } from '@vowe/live-openai';
 
-import { IPC, type AppStatus, type ObservationView } from '../shared/ipc.js';
+import { IPC, type AppStatus, type AskResult, type ObservationView } from '../shared/ipc.js';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -47,6 +48,8 @@ interface Services {
   projects: ProjectService;
   knowledge: ProjectKnowledgeService;
   companion: CompanionService;
+  /** The one grounded investigator. Typed questions and Vo both arrive here. */
+  delegated: DelegatedQuestionRunner;
   runner: InterpretationRunner;
   observation: ObservationService;
   live: LiveBridge;
@@ -64,9 +67,14 @@ let window: BrowserWindow | null = null;
 /**
  * Wires the application together.
  *
- * Note what is handed to what: the companion gets the store and (optionally)
- * an LLM. It never sees the registry or an adapter, so a question asked of
- * Vowe has no path to the coding agent even by accident.
+ * Note what is handed to what. There is exactly one `DelegatedQuestionRunner`,
+ * and both ways of asking a question reach it: `CompanionService` for typed
+ * questions and `LiveBridge` for ones delegated from Vo. One instance means one
+ * set of read tools, one `onAnswer` hook into project memory, and no way for
+ * the two modalities to drift apart.
+ *
+ * It gets a store and a navigator. It never sees the registry or an adapter, so
+ * a question asked of Vowe has no path to the coding agent even by accident.
  */
 async function createServices(): Promise<Services> {
   if (envFile) console.log(`[vowe] loaded configuration from ${envFile}`);
@@ -108,8 +116,6 @@ async function createServices(): Promise<Services> {
     onError: (error) => console.error('[vowe] interpretation runner', error),
   });
   runner.start();
-
-  const companion = new CompanionService({ store, llm });
 
   // Structured decisions. Constructed here because project knowledge needs it
   // to decide what is worth remembering.
@@ -179,7 +185,7 @@ async function createServices(): Promise<Services> {
   const observation = new ObservationService({
     store,
     registry,
-    observer: llm ?? nullObserver(),
+    observer: llm ?? nullObserver(store),
     navigator,
     policy: new CommunicationPolicy({
       router,
@@ -190,28 +196,37 @@ async function createServices(): Promise<Services> {
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
   });
 
+  // The one grounded investigator, constructed once and shared. A question
+  // typed into Vowe and the same question asked out loud run through this
+  // object, so they cannot diverge in what they can look at or in what they
+  // leave behind.
+  const delegated = new DelegatedQuestionRunner({
+    store,
+    navigator,
+    investigator: llm ?? nullObserver(store),
+    onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
+    // After the answer is delivered, never during. Most answers are not kept.
+    // Text and voice share this hook; nothing about admission asks which it was.
+    onAnswer: (result) => {
+      const projectId = registry.get(result.entry.sessionId)?.projectId;
+      if (!projectId) return;
+      void knowledge
+        .consider({
+          projectId,
+          question: result.question,
+          answer: result.fullAnswer,
+          refs: result.refs,
+        })
+        .catch((error) => console.warn('[vowe] knowledge:consider', error));
+    },
+  });
+
+  const companion = new CompanionService({ store, delegated });
+
   const live = new LiveBridge({
     transport: liveTransport,
     observation,
-    delegated: new DelegatedQuestionRunner({
-      store,
-      navigator,
-      investigator: llm ?? nullObserver(),
-      onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
-      // After the answer is delivered, never during. Most answers are not kept.
-      onAnswer: (result) => {
-        const projectId = registry.get(result.entry.sessionId)?.projectId;
-        if (!projectId) return;
-        void knowledge
-          .consider({
-            projectId,
-            question: result.question,
-            answer: result.fullAnswer,
-            refs: result.refs,
-          })
-          .catch((error) => console.warn('[vowe] knowledge:consider', error));
-      },
-    }),
+    delegated,
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
   });
 
@@ -251,6 +266,7 @@ async function createServices(): Promise<Services> {
     projects,
     knowledge,
     companion,
+    delegated,
     runner,
     observation,
     live,
@@ -270,19 +286,32 @@ async function createServices(): Promise<Services> {
 /**
  * The observation model when none is configured.
  *
- * Observation needs a model in a way interpretation does not — there is no
- * deterministic prose to fall back to. Saying so plainly, once per window, is
- * better than a heuristic that pretends to have understood something.
+ * The two halves degrade differently, and deliberately so. **Observation** needs
+ * a model in a way interpretation does not — there is no deterministic prose
+ * that could stand in for having understood a window — so it says so plainly,
+ * once per window, rather than pretending. **A question** does have a floor:
+ * the session's phase, its current activity and its last few observed events.
+ * That is not an answer, but it is what Ask Vowe has always fallen back to, and
+ * it is far more use than repeating that nothing is configured.
  */
-function nullObserver(): import('@vowe/core').ObservationLlm {
-  const message =
-    'No model is configured, so this window was recorded but not interpreted. Its trace range is still addressable.';
+function nullObserver(store: NdjsonEventStore): import('@vowe/core').ObservationLlm {
   return {
     async observeWindow() {
-      return { summary: message };
+      return {
+        summary:
+          'No model is configured, so this window was recorded but not interpreted. Its trace range is still addressable.',
+      };
     },
-    async investigate() {
-      return { spokenAnswer: message, fullAnswer: message, refs: [] };
+    async investigate(input) {
+      return {
+        spokenAnswer:
+          'No model is configured, so I can only report what I observed directly.',
+        fullAnswer: `No model is configured, so I could not investigate the question. Here is what I have observed:\n\n${describeObservedState(
+          store.getSession(input.sessionId)?.semanticState ?? null,
+          store.getEvents(input.sessionId, { limit: 80 }),
+        )}`,
+        refs: [],
+      };
     },
   };
 }
@@ -333,9 +362,18 @@ function registerIpc(): void {
     (await requireServices()).knowledge.describe(projectId),
   );
 
-  // Answered from what we observed. Deliberately has no adapter in reach.
-  ipcMain.handle(IPC.ask, async (_event, sessionId: string, question: string) =>
-    (await requireServices()).companion.ask(sessionId, question),
+  // Grounded by going and looking — the same investigator Vo delegates to, with
+  // the same three read tools. Still deliberately has no adapter in reach.
+  //
+  // `spokenAnswer` is dropped here rather than ignored in the renderer. The
+  // short form exists for a voice channel, and making it structurally
+  // unavailable to the typed UI is cheaper than a convention about not using it.
+  ipcMain.handle(
+    IPC.ask,
+    async (_event, sessionId: string, question: string): Promise<AskResult> => {
+      const result = await (await requireServices()).companion.ask(sessionId, question);
+      return { entry: result.entry, refs: result.refs, failed: result.failed };
+    },
   );
 
   // The control channel. Separate handler, separate service, separate button.

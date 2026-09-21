@@ -27,9 +27,9 @@ code they are four different objects, with deliberately different reach.
         │                          ┌──────────┴──────────┐
         │                          ▼                     ▼
         │                 ┌──────────────┐      ┌──────────────┐
-        │                 │ INTERPRETER  │─────▶│  COMPANION   │
-        │                 │ heuristic /  │      │ answers from │
-        │                 │ LLM          │      │ stored state │
+        │                 │ INTERPRETER  │      │  COMPANION   │
+        │                 │ heuristic /  │      │ fronts the   │
+        │                 │ LLM          │      │ investigator │
         │                 └──────────────┘      └──────────────┘
         │
         │  ┌──────────────────┐
@@ -44,10 +44,12 @@ exists.
 `NormalizedEvent`s that always carry the provider's original record (`raw`) and
 its physical address (`rawRef`).
 
-**Companion** — `CompanionService`, constructed with an `EventStore` and
-optionally an `LlmClient`. It holds no adapter, no registry and no transport.
-Asking Vowe a question cannot reach the coding agent because there is nothing
-in the object graph to reach it with.
+**Companion** — `CompanionService`, constructed with an `EventStore` and the
+one `DelegatedQuestionRunner`. It is a facade: a typed question and a question
+delegated from Vo reach the *same* investigator instance, with the same three
+read tools and the same hook into project memory. It holds no adapter, no
+registry and no transport. Asking Vowe a question cannot reach the coding agent
+because there is nothing in the object graph to reach it with.
 
 **Control channel** — `SessionRegistry.sendInstruction()`, which owns the
 adapters. A separate IPC handler (`vowe:agent:send-instruction`) and a separate
@@ -162,6 +164,22 @@ Three new boundaries, each with deliberately different reach:
 | `ObserverRunner` | store, navigator, observation model | reach a worker — no adapter, no registry |
 | `DelegatedQuestionRunner` | store, navigator, model | surface anything, or reach a worker |
 | `LiveBridge` | transport, observation service, delegated runner | read the trace itself |
+| `CompanionService` | store, delegated runner | anything the runner cannot |
+
+There is **one** `DelegatedQuestionRunner`, constructed once in the application
+wiring and handed to both `CompanionService` and `LiveBridge`:
+
+```
+       text ──▶ CompanionService ──┐
+                                   ├──▶ DelegatedQuestionRunner ──▶ ContextNavigator
+      voice ──▶ LiveBridge ────────┘
+```
+
+Typing a question and speaking it have access to the same intelligence.
+Modality decides presentation — the short spoken form versus the full written
+one — never reasoning capability. One instance is also why memory admission
+needs no per-modality wiring: there is a single `onAnswer`, and nothing
+downstream of it asks how the question arrived.
 
 `DecisionRouter` and `LiveTransport` join `AgentAdapter` and `LlmClient` as
 interfaces whose implementations live in their own packages, so `@vowe/core`
