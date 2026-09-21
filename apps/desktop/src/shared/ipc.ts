@@ -1,6 +1,7 @@
 import type {
   AgentSession,
   ContextRef,
+  ConversationChange,
   ConversationEntry,
   InstructionResult,
   LiveStatus,
@@ -14,6 +15,7 @@ import type {
   TraceWindow,
   UserProfile,
   WindowNote,
+  WorkbenchArtifact,
 } from '@vowe/core';
 
 /**
@@ -116,11 +118,29 @@ export interface VoweApi {
   getPresenceProfile(): Promise<PresenceProfile>;
   setPresenceProfile(profile: PresenceProfile): Promise<PresenceProfile>;
 
+  // ------------------------------------------------------------- workbench
+
+  /**
+   * One reference, resolved into something a person can look at.
+   *
+   * Deliberately one call rather than `openDiff` / `openSource` / `openMemory`:
+   * a ref already says what it addresses, and the renderer has no business
+   * knowing which store answers. Reading a repository, reconstructing a diff
+   * and finding what Vowe remembered all stay on the other side of this line.
+   */
+  openArtifact(ref: ContextRef): Promise<WorkbenchArtifact>;
+
   onSessionsChanged(listener: () => void): () => void;
   onSessionEvent(listener: (event: NormalizedEvent) => void): () => void;
   onObservationChanged(listener: (sessionId: string) => void): () => void;
   onProjectKnowledgeChanged(listener: (projectId: string) => void): () => void;
   onLiveStatus(listener: (status: LiveStatus) => void): () => void;
+  /**
+   * A session's persisted conversation has changed — typed answer, answer
+   * delegated from Vo, or an instruction and its result. Carries the session,
+   * not the entry: the renderer re-reads, so there is one source of truth.
+   */
+  onConversationChanged(listener: (change: ConversationChange) => void): () => void;
 }
 
 /** Everything the observation panel needs, in one round trip. */
@@ -198,9 +218,11 @@ export const IPC = {
   setUserProfile: 'vowe:profile:set',
   getPresenceProfile: 'vowe:presence:get',
   setPresenceProfile: 'vowe:presence:set',
+  openArtifact: 'vowe:artifact:open',
   sessionsChanged: 'vowe:sessions:changed',
   sessionEvent: 'vowe:session:event',
   observationChanged: 'vowe:observe:changed',
   projectKnowledgeChanged: 'vowe:knowledge:changed',
   liveStatusChanged: 'vowe:live:status-changed',
+  conversationChanged: 'vowe:session:conversation-changed',
 } as const;

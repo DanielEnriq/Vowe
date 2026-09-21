@@ -10,6 +10,7 @@ import { loadLocalEnv } from './env.js';
 const envFile = loadLocalEnv();
 
 import {
+  ArtifactResolver,
   CommunicationPolicy,
   CompanionService,
   ContextNavigator,
@@ -19,7 +20,7 @@ import {
   InterpretationRunner,
   LiveBridge,
   LlmSemanticInterpreter,
-  NdjsonEventStore,
+  SqliteEventStore,
   ObservationService,
   ConservativeMemoryAdmission,
   describeObservedState,
@@ -42,12 +43,12 @@ import { JevDecisionRouter } from '@vowe/decision-jev';
 import { OpenAiLiveTransport } from '@vowe/live-openai';
 
 import { IPC, type AppStatus, type AskResult, type ObservationView } from '../shared/ipc.js';
-import type { PresenceProfile, UserProfile } from '@vowe/core';
+import type { ContextRef, PresenceProfile, UserProfile } from '@vowe/core';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
 interface Services {
-  store: NdjsonEventStore;
+  store: SqliteEventStore;
   registry: SessionRegistry;
   projects: ProjectService;
   knowledge: ProjectKnowledgeService;
@@ -57,6 +58,8 @@ interface Services {
   profile: UserProfileStore;
   presence: PresenceProfileStore;
   companion: CompanionService;
+  /** Resolves a ContextRef into something the renderer can display. */
+  workbench: ArtifactResolver;
   /** The one grounded investigator. Typed questions and Vo both arrive here. */
   delegated: DelegatedQuestionRunner;
   runner: InterpretationRunner;
@@ -88,7 +91,9 @@ let window: BrowserWindow | null = null;
 async function createServices(): Promise<Services> {
   if (envFile) console.log(`[vowe] loaded configuration from ${envFile}`);
   const storeRoot = path.join(app.getPath('userData'), 'vowe');
-  const store = new NdjsonEventStore(storeRoot);
+  const store = new SqliteEventStore(storeRoot, {
+    onError: (scope, error) => console.warn(`[vowe] store:${scope}`, error),
+  });
   await store.init();
 
   const llm = AnthropicLlmClient.fromEnvironment();
@@ -203,6 +208,16 @@ async function createServices(): Promise<Services> {
     knowledge,
   });
 
+  // One reference, resolved into something a person can look at. A projection
+  // over the navigator and the stores — it opens no file of its own, which is
+  // what keeps an artifact and the answer that cited it from disagreeing.
+  const workbench = new ArtifactResolver({
+    navigator,
+    store,
+    memory: knowledge,
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+  });
+
   const liveTransport: LiveTransport = process.env.OPENAI_API_KEY
     ? new OpenAiLiveTransport({
         onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
@@ -262,6 +277,13 @@ async function createServices(): Promise<Services> {
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
   });
 
+  // Every conversation write converges on the store, so this one subscription
+  // covers a typed answer, an answer delegated from Vo, and an instruction and
+  // its result — including the last of those, which notified nothing before.
+  store.onConversationChanged((change) => {
+    window?.webContents.send(IPC.conversationChanged, change);
+  });
+
   observation.on('note', (note) => {
     window?.webContents.send(IPC.observationChanged, note.sessionId);
   });
@@ -301,6 +323,7 @@ async function createServices(): Promise<Services> {
     profile,
     presence,
     companion,
+    workbench,
     delegated,
     runner,
     observation,
@@ -329,7 +352,7 @@ async function createServices(): Promise<Services> {
  * That is not an answer, but it is what Ask Vowe has always fallen back to, and
  * it is far more use than repeating that nothing is configured.
  */
-function nullObserver(store: NdjsonEventStore): import('@vowe/core').ObservationLlm {
+function nullObserver(store: SqliteEventStore): import('@vowe/core').ObservationLlm {
   return {
     async observeWindow() {
       return {
@@ -432,6 +455,12 @@ function registerIpc(): void {
       const result = await (await requireServices()).companion.ask(sessionId, question);
       return { entry: result.entry, refs: result.refs, failed: result.failed };
     },
+  );
+
+  // The generic artifact open. `ContextNavigator` itself stays off the bridge:
+  // the renderer gets display projections, never the read toolset.
+  ipcMain.handle(IPC.openArtifact, async (_event, ref: ContextRef) =>
+    (await requireServices()).workbench.resolve(ref),
   );
 
   // The control channel. Separate handler, separate service, separate button.
@@ -539,6 +568,13 @@ app.whenReady().then(async () => {
     broadcastSessions();
   } catch (error) {
     console.error('[vowe] failed to start services', error);
+    // A store that would not open is not a degraded Vowe, it is a Vowe with no
+    // memory — and a schema migration that failed is the one startup error a
+    // person can actually act on. Say so rather than leaving an empty window.
+    dialog.showErrorBox(
+      'Vowe could not open its local database',
+      error instanceof Error ? error.message : String(error),
+    );
   }
 
   app.on('activate', () => {
@@ -555,4 +591,7 @@ app.on('before-quit', () => {
   services?.runner.stop();
   services?.observation.stopAll();
   void services?.live.stop();
+  // Last: everything above may still be writing. Closing the database
+  // checkpoints the write-ahead log and releases the file.
+  void services?.store.close();
 });

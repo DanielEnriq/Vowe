@@ -59,7 +59,7 @@ function candidate(id: string): SurfaceUpdate {
   };
 }
 
-describe('NdjsonEventStore — observation persistence', () => {
+describe('SqliteEventStore — observation persistence', () => {
   it('rebuilds windows, notes, candidates and the cursor after a restart', async () => {
     const fixture = await temporaryStore();
     cleanup = fixture.cleanup;

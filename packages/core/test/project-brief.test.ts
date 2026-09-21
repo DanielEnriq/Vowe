@@ -7,7 +7,7 @@ import {
   type ProjectBriefKnowledge,
 } from '../src/product/project-brief.js';
 import { sessionTitle } from '../src/product/session-display.js';
-import type { NdjsonEventStore } from '../src/store/ndjson-event-store.js';
+import type { SqliteEventStore } from '../src/store/sqlite-event-store.js';
 import type { AgentSession } from '../src/types/session.js';
 import { makeEvents, storeEvents, temporaryStore, testSession } from './helpers.js';
 
@@ -23,7 +23,7 @@ afterEach(async () => {
 async function harness(
   sessions: AgentSession[] = [],
   knowledge?: ProjectBriefKnowledge,
-): Promise<{ store: NdjsonEventStore; service: ProjectBriefService }> {
+): Promise<{ store: SqliteEventStore; service: ProjectBriefService }> {
   const fixture = await temporaryStore();
   cleanup = fixture.cleanup;
   const service = new ProjectBriefService({

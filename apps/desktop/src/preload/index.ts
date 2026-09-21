@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import type {
+  ContextRef,
+  ConversationChange,
   LiveStatus,
   NormalizedEvent,
   PresenceProfile,
@@ -49,6 +51,8 @@ const api: VoweApi = {
 
   // The SDP offer goes out and the answer comes back; the API key never
   // crosses this boundary in either direction.
+  openArtifact: (ref: ContextRef) => ipcRenderer.invoke(IPC.openArtifact, ref),
+
   startLive: (sessionId, sdpOffer) =>
     ipcRenderer.invoke(IPC.startLive, sessionId, sdpOffer),
   stopLive: () => ipcRenderer.invoke(IPC.stopLive),
@@ -73,6 +77,11 @@ const api: VoweApi = {
     const handler = (_: unknown, projectId: string) => listener(projectId);
     ipcRenderer.on(IPC.projectKnowledgeChanged, handler);
     return () => ipcRenderer.off(IPC.projectKnowledgeChanged, handler);
+  },
+  onConversationChanged: (listener) => {
+    const handler = (_: unknown, change: ConversationChange) => listener(change);
+    ipcRenderer.on(IPC.conversationChanged, handler);
+    return () => ipcRenderer.off(IPC.conversationChanged, handler);
   },
   onLiveStatus: (listener) => {
     const handler = (_: unknown, status: LiveStatus) => listener(status);

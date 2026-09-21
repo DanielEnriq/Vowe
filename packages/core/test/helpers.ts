@@ -2,30 +2,52 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { NdjsonEventStore } from '../src/store/ndjson-event-store.js';
+import { SqliteEventStore } from '../src/store/sqlite-event-store.js';
 import type { AdapterEvent, NormalizedEvent } from '../src/types/events.js';
 import type { AgentSession } from '../src/types/session.js';
 
-/** A real store on a real temp directory — persistence is under test. */
+/**
+ * A real store on a real temp directory — persistence is under test.
+ *
+ * Every store-backed test in the suite comes through here, which is what makes
+ * this the parity gate: the whole suite exercises the real database, on a real
+ * file, rather than a fake that would prove nothing about durability.
+ */
 export async function temporaryStore(): Promise<{
-  store: NdjsonEventStore;
+  store: SqliteEventStore;
   root: string;
-  reopen: () => Promise<NdjsonEventStore>;
+  reopen: () => Promise<SqliteEventStore>;
   cleanup: () => Promise<void>;
 }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'vowe-test-'));
-  const store = new NdjsonEventStore(root);
-  await store.init();
+  const opened: SqliteEventStore[] = [];
+
+  const open = async (): Promise<SqliteEventStore> => {
+    const next = new SqliteEventStore(root);
+    await next.init();
+    opened.push(next);
+    return next;
+  };
+
+  const store = await open();
   return {
     store,
     root,
-    /** A second store over the same directory — i.e. "restart Vowe". */
+    /**
+     * A second store over the same directory — i.e. "restart Vowe".
+     *
+     * The previous handle is closed first. Two open writers on one file is not
+     * what a restart looks like, and leaving handles open would leak them and
+     * the WAL sidecars across the suite.
+     */
     reopen: async () => {
-      const next = new NdjsonEventStore(root);
-      await next.init();
-      return next;
+      for (const previous of opened.splice(0)) await previous.close();
+      return open();
     },
-    cleanup: () => rm(root, { recursive: true, force: true }),
+    cleanup: async () => {
+      for (const previous of opened.splice(0)) await previous.close();
+      await rm(root, { recursive: true, force: true });
+    },
   };
 }
 
@@ -108,7 +130,7 @@ export function steadyEvents(count: number, sessionId = TEST_SESSION): AdapterEv
 }
 
 export async function storeEvents(
-  store: NdjsonEventStore,
+  store: SqliteEventStore,
   events: AdapterEvent[],
   sessionId = TEST_SESSION,
 ): Promise<NormalizedEvent[]> {

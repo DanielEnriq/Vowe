@@ -55,6 +55,17 @@ export interface OpenResult {
   notFound?: string;
 }
 
+/** A window of a file, as something that draws its own gutter wants it. */
+export interface SourceSlice {
+  path: string;
+  /** The lines themselves, unnumbered. */
+  text: string;
+  /** 1-based and inclusive, so a viewer can label the gutter truthfully. */
+  startLine: number;
+  endLine: number;
+  truncated: boolean;
+}
+
 export interface GetDiffInput {
   sessionId: string;
   path?: string;
@@ -568,20 +579,59 @@ export class ContextNavigator {
     return this.result(ref, lines.join('\n'), related);
   }
 
+  /**
+   * The same window of a file, unnumbered and with its bounds.
+   *
+   * A model reads a gutter; a code viewer draws one. This is the shape for
+   * anything that is going to render the source itself, and `readSlice` is the
+   * numbering wrapper the model-facing paths keep using.
+   */
+  async readSource(
+    ref: Extract<ContextRef, { kind: 'repo' }>,
+  ): Promise<SourceSlice | null> {
+    const slice = await this.sliceOf(ref.path, ref.line);
+    if (!slice) return null;
+    const joined = slice.lines.join('\n');
+    const truncated = joined.length > this.maxOpenBytes;
+    return {
+      path: ref.path,
+      text: truncated ? `${joined.slice(0, this.maxOpenBytes)}\n… truncated …` : joined,
+      startLine: slice.startLine,
+      endLine: slice.endLine,
+      truncated,
+    };
+  }
+
   /** A numbered window around a line, or the head of the file without one. */
   private async readSlice(
     file: string,
     line: number | undefined,
   ): Promise<string | null> {
+    const slice = await this.sliceOf(file, line);
+    if (!slice) return null;
+    if (line === undefined) return slice.lines.join('\n');
+    return slice.lines
+      .map(
+        (text, offset) =>
+          `${String(slice.startLine + offset).padStart(5)} ${text}`,
+      )
+      .join('\n');
+  }
+
+  /** The window itself: which lines, and where they start. 1-based, inclusive. */
+  private async sliceOf(
+    file: string,
+    line: number | undefined,
+  ): Promise<{ lines: string[]; startLine: number; endLine: number } | null> {
     try {
       const lines = (await readFile(file, 'utf8')).split('\n');
-      if (line === undefined) return lines.slice(0, 200).join('\n');
+      if (line === undefined) {
+        const head = lines.slice(0, 200);
+        return { lines: head, startLine: 1, endLine: head.length };
+      }
       const from = Math.max(0, line - 30);
       const to = Math.min(lines.length, line + 30);
-      return lines
-        .slice(from, to)
-        .map((text, offset) => `${String(from + offset + 1).padStart(5)} ${text}`)
-        .join('\n');
+      return { lines: lines.slice(from, to), startLine: from + 1, endLine: to };
     } catch {
       return null;
     }

@@ -1,6 +1,10 @@
 import type { AdapterEvent, NormalizedEvent } from '../types/events.js';
 import type { AgentSession, SemanticState } from '../types/session.js';
-import type { ConversationEntry } from '../types/conversation.js';
+import type {
+  ConversationDelivery,
+  ConversationEntry,
+  DeliveryProgress,
+} from '../types/conversation.js';
 import type { Project } from '../projects/project.js';
 import type {
   CommunicationDecision,
@@ -17,6 +21,14 @@ export interface WindowQuery {
   sinceIndex?: number;
 }
 
+/**
+ * An object rather than a bare session id, so this can gain a field — which
+ * entry, which role — without breaking every listener.
+ */
+export interface ConversationChange {
+  sessionId: string;
+}
+
 export interface EventQuery {
   /** Return at most this many events, taken from the end of the stream. */
   limit?: number;
@@ -27,13 +39,22 @@ export interface EventQuery {
 /**
  * Local persistence boundary.
  *
- * Deliberately narrow so the NDJSON implementation can be swapped for SQLite
- * (or anything else) without touching callers. Reads are synchronous because
- * the implementation keeps its working set in memory; writes are async because
- * they hit disk.
+ * Deliberately narrow, so what is behind it can change without touching
+ * callers — which is exactly what happened: this interface outlived the NDJSON
+ * implementation it was first written for. Reads are synchronous and writes are
+ * async, and that stays true of SQLite.
  */
 export interface EventStore {
   init(): Promise<void>;
+
+  /**
+   * Release the underlying resources.
+   *
+   * A file-backed store holds a handle; a caller that deletes the store
+   * directory, or opens a second store over the same one, needs this to have
+   * happened first.
+   */
+  close(): Promise<void>;
 
   upsertSession(session: AgentSession): Promise<void>;
   listSessions(): AgentSession[];
@@ -55,8 +76,66 @@ export interface EventStore {
   appendSemanticState(sessionId: string, state: SemanticState): Promise<void>;
   getSemanticHistory(sessionId: string, limit?: number): SemanticState[];
 
-  appendConversationEntry(entry: ConversationEntry): Promise<void>;
+  /**
+   * Persist a conversational turn, and optionally how it was delivered.
+   *
+   * The delivery is an argument rather than a second call because the two are
+   * one fact: an answer that was spoken and an answer that was merely recorded
+   * must not become distinguishable by a crash landing between two writes.
+   */
+  appendConversationEntry(
+    entry: ConversationEntry,
+    delivery?: Omit<ConversationDelivery, 'id' | 'entryId' | 'sessionId'>,
+  ): Promise<void>;
   getConversation(sessionId: string, limit?: number): ConversationEntry[];
+
+  // ------------------------------------------------- conversation delivery
+
+  /**
+   * What happened while a turn was communicated.
+   *
+   * The split is the point. A `ConversationEntry` holds the complete semantic
+   * turn; a `ConversationDelivery` records an attempt to convey it. An answer
+   * interrupted halfway through being spoken is one entry with the full text
+   * and one delivery saying how far the audio got — never a truncated entry,
+   * and never a second copy of the answer.
+   *
+   * That is also what keeps a turn persisted exactly once as voice grows up:
+   * a surface that did not write the entry attaches a delivery to it, because
+   * there is nowhere here to put another copy of the text.
+   */
+  recordDelivery(delivery: ConversationDelivery): Promise<void>;
+
+  /**
+   * Advance a delivery already in flight — typically from `started` to how it
+   * ended. Only delivery state moves; identity and modality are fixed at
+   * creation. `null` when there is no such delivery.
+   */
+  updateDelivery(
+    deliveryId: string,
+    progress: DeliveryProgress,
+  ): Promise<ConversationDelivery | null>;
+
+  /** Every delivery of one entry, oldest first. */
+  getDeliveries(entryId: string): ConversationDelivery[];
+  getDeliveriesForSession(
+    sessionId: string,
+    limit?: number,
+  ): ConversationDelivery[];
+
+  /**
+   * A conversation has changed, and is already readable.
+   *
+   * Here rather than on the writers because every conversation write converges
+   * on `appendConversationEntry` — a grounded answer typed or spoken, and an
+   * instruction and its result — while the writers themselves do not converge
+   * anywhere. A notification a future writer could forget to send is one the UI
+   * would be wrong to rely on.
+   *
+   * Fires after the entry is durable and after `getConversation` would return
+   * it, so a listener may re-read straight away. Returns its own unsubscribe.
+   */
+  onConversationChanged(listener: (change: ConversationChange) => void): () => void;
 
   // ------------------------------------------------------ observation (L1)
 
@@ -116,11 +195,4 @@ export interface EventStore {
    * user's repository, and stable across restarts.
    */
   projectDataDir(projectId: string): string;
-
-  /**
-   * Opaque per-adapter scratch state (tail offsets, launch tables, ...).
-   * Core never interprets the contents.
-   */
-  getAdapterState(provider: string): unknown;
-  setAdapterState(provider: string, state: unknown): Promise<void>;
 }

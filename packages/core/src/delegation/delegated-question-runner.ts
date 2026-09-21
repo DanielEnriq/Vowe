@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ContextNavigator } from '../context/context-navigator.js';
-import { dedupeRefs, type ContextRef } from '../context/refs.js';
+import { dedupeRefs, parseRef, type ContextRef } from '../context/refs.js';
 import type {
   DelegatedAnswer,
   InvestigationInput,
@@ -10,6 +10,7 @@ import type {
 } from '../llm/observation-llm.js';
 import type { EventStore } from '../store/event-store.js';
 import type { ConversationEntry } from '../types/conversation.js';
+import { InvestigationRecorder } from './investigation-recorder.js';
 
 export interface DelegatedQuestionRunnerOptions {
   store: EventStore;
@@ -85,7 +86,8 @@ export class DelegatedQuestionRunner {
 
   async answer(question: DelegatedQuestion): Promise<DelegatedResult> {
     const session = this.store.getSession(question.sessionId);
-    const touched: ContextRef[] = [];
+    // The refs the investigation touches, and the order it touched them in.
+    const recorder = new InvestigationRecorder();
 
     const input: InvestigationInput = {
       sessionId: question.sessionId,
@@ -106,10 +108,14 @@ export class DelegatedQuestionRunner {
 
     let answer: DelegatedAnswer;
     let failed = false;
+    // Measured around the investigation itself, so an answer can truthfully say
+    // how long it took to go and look. Not telemetry: one number, one answer.
+    const startedAt = Date.now();
+    let durationMs = 0;
     try {
       answer = await this.investigator.investigate(
         input,
-        this.readTools(question.sessionId, touched),
+        this.readTools(question.sessionId, recorder),
       );
     } catch (error) {
       this.onError('investigate', error);
@@ -124,9 +130,11 @@ export class DelegatedQuestionRunner {
         fullAnswer: `The investigation failed before it could answer the question.\n\n${message}`,
         refs: [],
       };
+    } finally {
+      durationMs = Date.now() - startedAt;
     }
 
-    const refs = dedupeRefs([...answer.refs, ...touched]);
+    const refs = dedupeRefs([...answer.refs, ...recorder.refs()]);
     const entry: ConversationEntry = {
       id: randomUUID(),
       sessionId: question.sessionId,
@@ -137,6 +145,12 @@ export class DelegatedQuestionRunner {
       provenance: {
         eventIds: eventIdsFrom(refs),
       },
+      // Only when something was actually looked at. An answer that opened
+      // nothing — because no model is configured, or because the investigation
+      // fell over before its first tool call — carries no receipt rather than
+      // an empty one. There is nothing to show, and `Checked 0 things` is not a
+      // thing to say.
+      ...(recorder.length ? { investigation: recorder.receipt(durationMs) } : {}),
     };
     await this.store.appendConversationEntry(entry);
 
@@ -155,8 +169,14 @@ export class DelegatedQuestionRunner {
     return result;
   }
 
-  /** The same three tools the observer gets. Nothing else. */
-  private readTools(sessionId: string, touched: ContextRef[]): ReadOnlyToolset {
+  /**
+   * The same three tools the observer gets. Nothing else.
+   *
+   * The recorder sits here rather than anywhere further out because this is the
+   * only place that sees a tool call actually happen. Everything above it has
+   * the model's account of what it did, which is a different thing.
+   */
+  private readTools(sessionId: string, recorder: InvestigationRecorder): ReadOnlyToolset {
     return {
       searchContext: async (input) => {
         const hits = await this.navigator.searchContext({
@@ -165,7 +185,7 @@ export class DelegatedQuestionRunner {
           ...(input.sources ? { sources: input.sources } : {}),
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
         });
-        for (const hit of hits) touched.push(hit.ref);
+        recorder.searched(input.sources, hits);
         return hits;
       },
       openContext: async (input) => {
@@ -173,7 +193,10 @@ export class DelegatedQuestionRunner {
           ref: input.ref,
           ...(input.depth ? { depth: input.depth } : {}),
         });
-        if (!result.notFound) touched.push(result.ref);
+        // The address that was asked for, which is what the label describes.
+        // A model can hand back nonsense, in which case there is nothing to
+        // name and the check says only that a reference was followed.
+        recorder.opened(parseRef(input.ref), result);
         return result;
       },
       getDiff: async (input) => {
@@ -182,7 +205,7 @@ export class DelegatedQuestionRunner {
           ...(input.path ? { path: input.path } : {}),
           ...(input.around ? { around: input.around } : {}),
         });
-        touched.push({
+        recorder.diffed({
           kind: 'diff',
           sessionId,
           ...(input.path ? { path: input.path } : {}),
