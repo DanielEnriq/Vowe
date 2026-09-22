@@ -54,7 +54,7 @@ export function SessionRoom({
   sidebarOpen,
   narrow,
 }: Props): ReactElement {
-  const { observing } = useObservationStatus(session.id);
+  const { observing, notes } = useObservationStatus(session.id);
   const thread = useSessionThread(session.id);
   const [workbench, dispatch] = useReducer(workbenchReducer, EMPTY_WORKBENCH);
   const [asking, setAsking] = useState(false);
@@ -115,9 +115,9 @@ export function SessionRoom({
         sessionId: session.id,
         cursor,
         events: thread.events,
-        notes: [],
+        notes,
       }),
-    [session.id, cursor, thread.events],
+    [session.id, cursor, thread.events, notes],
   );
 
   const attach = useCallback((attachment: Attachment) => {

@@ -11,6 +11,7 @@ import type {
   ProjectConversationEntry,
   SessionAttentionCursor,
   TemperamentProfile,
+  WindowNote,
   VoicePreference,
   WorkerMilestone,
 } from '@vowe/core';
@@ -314,11 +315,17 @@ export function useAttentionCursor(
 export function useObservationStatus(sessionId: string | null): {
   observing: boolean;
   catchingUp: boolean;
+  /** The observer's own notes, which is where a checkpoint's prose comes from. */
+  notes: WindowNote[];
 } {
-  const [status, setStatus] = useState({ observing: false, catchingUp: false });
+  const [status, setStatus] = useState<{
+    observing: boolean;
+    catchingUp: boolean;
+    notes: WindowNote[];
+  }>({ observing: false, catchingUp: false, notes: [] });
 
   useEffect(() => {
-    setStatus({ observing: false, catchingUp: false });
+    setStatus({ observing: false, catchingUp: false, notes: [] });
     if (!sessionId) return;
 
     let live = true;
@@ -330,6 +337,7 @@ export function useObservationStatus(sessionId: string | null): {
             setStatus({
               observing: view.status.observing,
               catchingUp: view.status.catchingUp,
+              notes: view.notes,
             });
           }
         })
