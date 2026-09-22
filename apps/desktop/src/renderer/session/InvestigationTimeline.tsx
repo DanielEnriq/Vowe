@@ -119,15 +119,18 @@ function TraceViewport({
   const following = useRef(followTail);
   const counted = useRef(rowCount);
   const held = useRef<{ row: HTMLElement; offset: number } | null>(null);
-  const [edges, setEdges] = useState({ above: false, below: false });
+  const [edges, setEdges] = useState({ above: false, below: false, fits: true });
   const [unseen, setUnseen] = useState(0);
 
   const measure = useCallback(() => {
     const el = scroller.current;
     if (!el) return;
     const above = el.scrollTop > 1;
-    const below = el.scrollHeight - el.scrollTop - el.clientHeight > 1;
-    setEdges((was) => (was.above === above && was.below === below ? was : { above, below }));
+    const below = el.scrollHeight - el.scrollTop - el.clientHeight > SLIVER;
+    const fits = el.scrollHeight - el.clientHeight <= SLIVER;
+    setEdges((was) =>
+      was.above === above && was.below === below && was.fits === fits ? was : { above, below, fits },
+    );
   }, []);
 
   const toTail = useCallback(() => {
@@ -201,8 +204,14 @@ function TraceViewport({
     <div className="exec-viewport">
       <div
         ref={scroller}
-        className={`exec-scroll${edges.above ? ' more-above' : ''}${edges.below ? ' more-below' : ''}`}
+        className={`exec-scroll${edges.above ? ' more-above' : ''}${edges.below ? ' more-below' : ''}${edges.fits ? ' fits' : ''}`}
         onScroll={onScroll}
+        // Rows arrive with a short rise, and a row still sitting a few pixels
+        // low counts as overflow while it does. A transform ending resizes
+        // nothing, so nothing else would notice the overflow is gone: without
+        // this a short trace kept its bottom fade, and a sliver of scroll that
+        // swallowed the wheel, until something else changed its height.
+        onAnimationEnd={measure}
       >
         <div ref={content} className="exec" aria-live="polite">
           <HoldRow.Provider value={hold}>{children}</HoldRow.Provider>
@@ -225,6 +234,13 @@ function TraceViewport({
  * up on purpose.
  */
 const TAIL_WITHIN = 12;
+
+/**
+ * Overflow too small to be content: the few pixels a row occupies below its
+ * place while it rises in. Treating it as "more below" flashed a fade over a
+ * trace that fits.
+ */
+const SLIVER = 6;
 
 function atTail(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= TAIL_WITHIN;

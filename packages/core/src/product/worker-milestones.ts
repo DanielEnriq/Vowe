@@ -237,6 +237,14 @@ function testOutcome(event: NormalizedEvent, failed: boolean): string {
 }
 
 /**
+ * The pass and fail counts a test run printed, each `null` where it printed
+ * none. Shared with the return brief, so both read a run's output one way.
+ */
+export function testCounts(output: string): { passed: number | null; failed: number | null } {
+  return { passed: countOf(output, 'passed'), failed: countOf(output, 'failed') };
+}
+
+/**
  * How many tests, not how many files.
  *
  * Real runners print both, files first: vitest's summary is `Test Files 38

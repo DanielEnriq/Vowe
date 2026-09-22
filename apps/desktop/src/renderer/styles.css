@@ -1383,6 +1383,8 @@ code.inline {
   );
 }
 .exec-scroll.more-above { --fade-above: 18px; }
+/* Short enough to show whole: not a scroller at all, so the wheel goes to the page. */
+.exec-scroll.fits { overflow-y: hidden; }
 .exec-scroll.more-below { --fade-below: 18px; }
 /* Work arrived below while the reader was up the column. Said once, quietly. */
 .exec-latest {
@@ -1542,27 +1544,176 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
 .live-answer .markdown > :first-child { margin-top: 0; }
 .live-answer .markdown > :last-child { margin-bottom: 0; }
 
-.checkpoint {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-left: 15px;
-  border-left: 2px solid var(--border-2);
+/*
+ * While you were away: a note Vowe left, not a status card.
+ *
+ * One ribbon on the conversation's own measure, in the column rather than over
+ * it, so opening it pushes the conversation down like anything else in the
+ * flow. No enclosing box: a flat, barely lifted surface with hairlines top and
+ * bottom, the top one in the colour Vowe's presence is lit with. It arrives
+ * once — a short rise — and then holds still.
+ */
+.ribbon-lane { padding: 18px 40px 0; display: flex; justify-content: center; }
+.ribbon {
+  --ribbon-accent: #f3f7ff;
+  position: relative;
+  width: 100%;
+  max-width: var(--measure);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.022);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--ribbon-accent) 11%, transparent),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+  animation: ribbon-arrive 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
-.checkpoint.needs-decision { border-left-color: rgba(228, 169, 76, 0.55); }
-.checkpoint .top { display: flex; align-items: center; gap: 10px; }
-.checkpoint .when {
+.ribbon-lane.with-workbench .ribbon { max-width: var(--measure-narrow); }
+.ribbon.needs-decision { --ribbon-accent: var(--attention); }
+@keyframes ribbon-arrive {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.ribbon-row { display: flex; align-items: center; gap: 4px; padding-right: 10px; }
+.ribbon-face {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 0;
+  background: transparent;
+  padding: 11px 8px 11px 16px;
+  text-align: left;
+  border-radius: 10px;
+}
+.ribbon .ribbon-mark { flex: 0 0 18px; width: 18px; height: 18px; }
+.ribbon-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ribbon-when {
   font-family: var(--mono);
   font-size: 9.5px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
+  color: color-mix(in srgb, var(--ribbon-accent) 38%, var(--ink-8));
+}
+.ribbon-line { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.ribbon-summary { flex: 0 0 auto; font-size: 14px; line-height: 1.4; color: var(--ink-2); }
+/* One line at rest. The facts give way at a narrow width; the details hold all of them. */
+.ribbon-facts {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink-7);
+}
+.ribbon-caret { flex: 0 0 auto; display: inline-flex; color: var(--ink-9); transition: transform 220ms ease, color 160ms ease; }
+.ribbon-face:hover .ribbon-caret { color: var(--ink-5); }
+.ribbon-face:hover .ribbon-summary { color: var(--ink); }
+.ribbon.open .ribbon-caret { transform: rotate(90deg); }
+.ribbon-dismiss { opacity: 0.7; }
+.ribbon-dismiss:hover { opacity: 1; }
+
+/* Opening grows the same ribbon: a track from nothing to its content's height. */
+.ribbon-details {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 320ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 240ms ease;
+}
+.ribbon.open .ribbon-details { grid-template-rows: 1fr; opacity: 1; }
+.ribbon-details-inner { min-height: 0; overflow: hidden; }
+.ribbon-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 48px 16px;
+}
+.ribbon-details-body::before {
+  content: '';
+  display: block;
+  height: 1px;
+  background: var(--divider);
+}
+/*
+ * The brief: four short answers under small headings, set like a note rather
+ * than a report. Headings in the ribbon's own mono label voice; answers in
+ * reading ink; checks as a quiet table whose results line up.
+ */
+.ribbon-brief { display: flex; flex-direction: column; gap: 14px; }
+.ribbon-brief section { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ribbon-brief h4 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
   color: var(--ink-9);
 }
-.checkpoint.needs-decision .when { color: var(--attention); }
-.checkpoint ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
-.checkpoint li { font-size: 14px; line-height: 1.55; color: var(--ink-2); text-wrap: pretty; }
-.checkpoint p { margin: 0; font-size: 15.5px; line-height: 1.62; color: var(--ink-2); text-wrap: pretty; }
+.ribbon-brief p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--ink-3); text-wrap: pretty; }
+.ribbon-brief p.changed { color: var(--ink-2); }
+.ribbon-brief .activity { color: var(--ink-6); }
+.ribbon-brief p.calm { color: var(--ink-6); }
+.ribbon-brief p.needs { color: var(--attention); }
+.ribbon-brief .verified {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: 8px minmax(0, max-content) auto;
+  column-gap: 10px;
+  row-gap: 3px;
+  justify-content: start;
+  align-items: center;
+}
+.ribbon-brief .verified li { display: contents; font-size: 13px; line-height: 1.5; }
+.ribbon-brief .verified .mark {
+  justify-self: center;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--good);
+}
+.ribbon-brief .verified .failed .mark { background: var(--bad); }
+.ribbon-brief .verified .label { color: var(--ink-3); min-width: 0; }
+.ribbon-brief .verified .runs { color: var(--ink-8); }
+.ribbon-brief .verified .result {
+  padding-left: 18px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-5);
+  text-align: right;
+}
+.ribbon-brief .verified .failed .result { color: var(--bad); }
+.ribbon-brief .touched { display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-4); }
+.ribbon-brief .touched .more { color: var(--ink-8); font-family: inherit; }
+
+/* The raw activity, one step further down, for anyone who wants the log. */
+.ribbon-activity { display: flex; flex-direction: column; gap: 6px; }
+.ribbon-activity > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  font-size: 11.5px;
+  color: var(--ink-7);
+}
+.ribbon-activity > button:hover { color: var(--ink-4); }
+.ribbon-activity > button svg { transition: transform 160ms ease; }
+.ribbon-activity.open > button svg { transform: rotate(90deg); }
+.ribbon-milestones { margin: 0; padding: 0 0 0 18px; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.ribbon-milestones li { font-size: 12px; line-height: 1.5; color: var(--ink-7); }
+.ribbon-milestones li.failed { color: var(--bad); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ribbon { animation: none; }
+  .ribbon-details, .ribbon-caret { transition: none; }
+}
 
 /* -------------------------------------------------------------- composer */
 

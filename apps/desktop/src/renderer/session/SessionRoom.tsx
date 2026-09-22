@@ -18,7 +18,7 @@ import type {
   WorkbenchArtifact,
 } from '@vowe/core';
 import { formatRef } from '@vowe/core/refs';
-import { returnCheckpoint } from '@vowe/core/projections';
+import { attentionFor, returnCheckpoint } from '@vowe/core/projections';
 
 import {
   useAttentionCursor,
@@ -162,8 +162,14 @@ export function SessionRoom({
         cursor,
         events: thread.events,
         notes,
+        // The same projection the project's Needs You is built from, so the
+        // ribbon can never disagree with it about whether a decision waits.
+        needsAttention: session.projectId
+          ? attentionFor(session, session.projectId, thread.events)
+          : [],
+        session,
       }),
-    [session.id, cursor, thread.events, notes],
+    [session, cursor, thread.events, notes],
   );
 
   const attach = useCallback((attachment: Attachment) => {
@@ -272,7 +278,13 @@ export function SessionRoom({
             />
           ) : (
             <>
-              {checkpoint && <ReturnCheckpoint checkpoint={checkpoint} />}
+              {checkpoint && (
+                <ReturnCheckpoint
+                  checkpoint={checkpoint}
+                  presence={presence}
+                  workbenchOpen={workbench.open && !narrow}
+                />
+              )}
               <Conversation
                 entries={thread.entries}
                 deliveries={thread.deliveries}

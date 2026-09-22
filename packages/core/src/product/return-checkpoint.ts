@@ -1,7 +1,9 @@
 import type { ContextRef } from '../context/refs.js';
 import type { WindowNote } from '../observation/trace-window.js';
 import type { NormalizedEvent } from '../types/events.js';
+import type { AgentSession } from '../types/session.js';
 import type { AttentionItem } from './attention.js';
+import { returnBrief, type ReturnBrief } from './return-brief.js';
 import { workerMilestones, type WorkerMilestone } from './worker-milestones.js';
 
 /**
@@ -39,6 +41,8 @@ export interface ReturnCheckpoint {
   notableChanges: NotableChange[];
   /** Non-empty is the difference between "nothing needs you" and a decision. */
   needsAttention: AttentionItem[];
+  /** The same period read as answers: what changed, what was verified, where things are. */
+  brief: ReturnBrief;
 }
 
 export interface NotableChange {
@@ -53,6 +57,8 @@ export interface ReturnCheckpointInput {
   events: readonly NormalizedEvent[];
   notes: readonly WindowNote[];
   needsAttention?: readonly AttentionItem[];
+  /** Where the session is now, for the brief's current-state line. */
+  session?: Pick<AgentSession, 'status' | 'semanticState'>;
   /** Defaults to now. Injected so the projection is testable and pure. */
   at?: Date;
 }
@@ -125,6 +131,13 @@ export function returnCheckpoint(
     milestones,
     notableChanges,
     needsAttention,
+    brief: returnBrief({
+      events: fresh,
+      notes: input.notes,
+      since: cursor.lastMeaningfullyViewedAt,
+      needsAttention,
+      ...(input.session ? { session: input.session } : {}),
+    }),
   };
 }
 
