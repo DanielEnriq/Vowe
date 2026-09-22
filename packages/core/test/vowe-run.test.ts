@@ -209,3 +209,68 @@ describe('what Vowe did, beside what Vowe said', () => {
     ]);
   });
 });
+
+describe('Vowe execution — what is in flight', () => {
+  /**
+   * Presence asks this lane what Vowe is doing, so the lane has to answer while
+   * the work is happening rather than after it. A run announced only on
+   * completion would light the presence up exactly when it should go quiet.
+   */
+  it('announces a run when it starts and when it ends', async () => {
+    const { store, cleanup: close } = await temporaryStore();
+    cleanup = close;
+
+    const runs = new VoweRunRecorder({ store });
+    const seen: string[][] = [];
+    runs.on('activity', (activity) => seen.push([...activity.kinds]));
+
+    expect(runs.activity.kinds).toEqual([]);
+
+    const investigation = runs.begin({ kind: 'investigation', sessionId: TEST_SESSION });
+    expect(runs.activity.kinds).toEqual(['investigation']);
+
+    const observation = runs.begin({ kind: 'observation', sessionId: TEST_SESSION });
+    expect(runs.activity.kinds).toEqual(['investigation', 'observation']);
+
+    await investigation.complete();
+    expect(runs.activity.kinds).toEqual(['observation']);
+
+    await observation.cancel();
+    expect(runs.activity.kinds).toEqual([]);
+
+    expect(seen).toEqual([
+      ['investigation'],
+      ['investigation', 'observation'],
+      ['observation'],
+      [],
+    ]);
+  });
+
+  it('stays quiet about a run that ends twice', async () => {
+    const { store, cleanup: close } = await temporaryStore();
+    cleanup = close;
+
+    const runs = new VoweRunRecorder({ store });
+    let announcements = 0;
+    runs.on('activity', () => announcements++);
+
+    const run = runs.begin({ kind: 'interpretation' });
+    await run.complete();
+    await run.complete();
+
+    expect(announcements).toBe(2);
+    expect(runs.activity.kinds).toEqual([]);
+  });
+
+  /** A failed run is a finished run: the presence must not keep thinking. */
+  it('clears a run that ended badly', async () => {
+    const { store, cleanup: close } = await temporaryStore();
+    cleanup = close;
+
+    const runs = new VoweRunRecorder({ store });
+    const run = runs.begin({ kind: 'live_response' });
+    await run.failed(new Error('the provider gave up'));
+
+    expect(runs.activity.kinds).toEqual([]);
+  });
+});

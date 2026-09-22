@@ -7,6 +7,7 @@ import type {
   NormalizedEvent,
   PresenceProfile,
   UserProfile,
+  VoweRunActivity,
 } from '@vowe/core';
 import { IPC, type VoweApi } from '../shared/ipc.js';
 
@@ -40,6 +41,7 @@ const api: VoweApi = {
   getPresenceProfile: () => ipcRenderer.invoke(IPC.getPresenceProfile),
   setPresenceProfile: (profile: PresenceProfile) =>
     ipcRenderer.invoke(IPC.setPresenceProfile, profile),
+  getRunActivity: () => ipcRenderer.invoke(IPC.getRunActivity),
 
   startObserving: (sessionId) =>
     ipcRenderer.invoke(IPC.startObserving, sessionId),
@@ -88,6 +90,11 @@ const api: VoweApi = {
     const handler = (_: unknown, status: LiveStatus) => listener(status);
     ipcRenderer.on(IPC.liveStatusChanged, handler);
     return () => ipcRenderer.off(IPC.liveStatusChanged, handler);
+  },
+  onRunActivity: (listener) => {
+    const handler = (_: unknown, activity: VoweRunActivity) => listener(activity);
+    ipcRenderer.on(IPC.runActivityChanged, handler);
+    return () => ipcRenderer.off(IPC.runActivityChanged, handler);
   },
 };
 

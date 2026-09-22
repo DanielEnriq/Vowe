@@ -15,6 +15,7 @@ import type {
   SurfaceUpdate,
   TraceWindow,
   UserProfile,
+  VoweRunActivity,
   WindowNote,
   WorkbenchArtifact,
 } from '@vowe/core';
@@ -132,6 +133,16 @@ export interface VoweApi {
   getPresenceProfile(): Promise<PresenceProfile>;
   setPresenceProfile(profile: PresenceProfile): Promise<PresenceProfile>;
 
+  /**
+   * What Vowe itself is executing right now.
+   *
+   * The execution lane already records every model call Vowe makes on its own
+   * behalf, so this publishes that rather than adding a second notion of
+   * busy — and it carries kinds, because following a worker and answering a
+   * person are different things to be doing and the UI must not merge them.
+   */
+  getRunActivity(): Promise<VoweRunActivity>;
+
   // ------------------------------------------------------------- workbench
 
   /**
@@ -149,6 +160,8 @@ export interface VoweApi {
   onObservationChanged(listener: (sessionId: string) => void): () => void;
   onProjectKnowledgeChanged(listener: (projectId: string) => void): () => void;
   onLiveStatus(listener: (status: LiveStatus) => void): () => void;
+  /** Vowe started or finished executing something. */
+  onRunActivity(listener: (activity: VoweRunActivity) => void): () => void;
   /**
    * A session's persisted conversation has changed — typed answer, answer
    * delegated from Vo, or an instruction and its result. Carries the session,
@@ -234,10 +247,12 @@ export const IPC = {
   getPresenceProfile: 'vowe:presence:get',
   setPresenceProfile: 'vowe:presence:set',
   openArtifact: 'vowe:artifact:open',
+  getRunActivity: 'vowe:runs:activity',
   sessionsChanged: 'vowe:sessions:changed',
   sessionEvent: 'vowe:session:event',
   observationChanged: 'vowe:observe:changed',
   projectKnowledgeChanged: 'vowe:knowledge:changed',
   liveStatusChanged: 'vowe:live:status-changed',
   conversationChanged: 'vowe:session:conversation-changed',
+  runActivityChanged: 'vowe:runs:activity-changed',
 } as const;

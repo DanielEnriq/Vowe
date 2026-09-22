@@ -426,11 +426,18 @@ Do not implement until core redesigned Session Room is real.
 
 ## 16. Vowe Presence
 
-One implementation everywhere — no separate Project/Voice/Studio orb implementations:
+**Implemented — Slice 5.** One implementation everywhere: one renderer, proven
+across every size, with no separate Project/Voice/Studio orb.
 
 ```tsx
-<VowePresence profile={profile} state={state} size={size} audio={audioState} />
+<VowePresence state={state} profile={profile} size={size} activity={level} onActivate={fn} />
 ```
+
+`apps/desktop/src/renderer/presence/` — `VowePresence` is the product
+abstraction, `PointCloudOrb` the Three.js renderer, and nothing about WebGL
+appears above that line. The shipped states, sizes and parameter mapping live in
+`packages/core/src/product/presence-state.ts` and `presence-visuals.ts`, which
+is also where they are tested.
 
 ```ts
 type PresenceSize = "signature" | "compact" | "project" | "voice" | "studio";
@@ -439,6 +446,51 @@ type PresenceState =
   | "idle" | "observing" | "joining" | "listening"
   | "thinking" | "speaking" | "attention" | "unavailable";
 ```
+
+**States are postures, not colours.** Each one differs in motion, deformation,
+rhythm and density, and the difference survives the developer changing the
+material or asking the system for reduced motion. `joining` has no counterpart
+in the design and is defined in `presence-visuals.ts`.
+
+**Resolved from runtime truth**, by `resolvePresenceState(PresenceSignals)` —
+never by the component, and never from a signal the application cannot produce:
+
+```text
+no model configured        → unavailable
+live playback active       → speaking
+live call, not muted       → listening
+live call being joined     → joining
+ProjectBrief.needsAttention→ attention
+VoweRun in flight:
+  investigation, live_response                        → thinking
+  observation, interpretation, communication_decision → observing
+ObservationStatus.observing                           → observing
+```
+
+A voice call outranks attention, as in the design; unavailability outranks
+everything. Worker activity is never Vowe thinking: a coding agent working while
+Vowe follows it is `observing`.
+
+The two signals this needed are published from the lanes that already record
+them — `LiveStatus.playbackActive` from the renderer's own playback measurement,
+and `VoweRunActivity` (`getRunActivity` / `onRunActivity`) from the execution
+recorder. Neither is a second notion of busy.
+
+**Profile surface honoured:** `material` (all four), `motion` (all three),
+`accent` (tints the lit colour only), `form` (`point-cloud`, the only one
+implemented). **Not honoured:** nothing — the renderer supports the whole of
+`PresenceProfile` as it stands.
+
+**Detail by size:** point count scales with size (about 2.8k points at the 26px
+signature, 15.7k at full size) and the two small sizes run at 30fps rather than
+60 — measured at roughly half the CPU and GPU of the uncapped version for a
+presence that is on screen all day. Rendering stops entirely when the presence
+is off screen or its window is hidden.
+
+**Where it is mounted today:** the sidebar "Your Vowe" signature. Session Room,
+Project Room, voice stage and Presence Studio are Slice 6. A development preview
+of every state and size lives at `src/renderer/preview/`, built only outside
+production and opened with `pnpm --filter @vowe/desktop dev:presence`.
 
 ### Presence Studio (C — new capability)
 
@@ -561,7 +613,7 @@ vowe/
         ...
 ```
 
-Superseded by Slice 3: Vowe-owned durable state is one SQLite database. Small
+Superseded by the SQLite slice: Vowe-owned durable state is one database. Small
 user configuration stays as files, and project knowledge stays a directory
 because an external tool reads and writes it.
 
@@ -633,18 +685,25 @@ Slice 2 — Workbench substrate
   generic artifact IPC, conversation-changed event
   (current UI keeps working)
 
-Slice 3 — Presence
-  VowePresence, point-cloud renderer, state API, material/motion presets,
-  Presence Studio — prove one renderer across signature/compact/project/voice/studio
-  before rewiring the full application
+Slice 3 — SQLite storage
+  one canonical local database for Vowe-owned durable state
 
-Slice 4 — Production UI transplant
+Slice 4 — Conversation continuity
+  one durable conversation, delivery, and the Vowe execution lane
+
+Slice 5 — Vowe Presence / Orb
+  VowePresence, point-cloud renderer, state API, material/motion presets —
+  one renderer proven across signature/compact/project/voice/studio,
+  mounted on the sidebar signature only
+
+Slice 6 — Production UI transplant
   Replace ProjectSidebar visuals, ProjectRoom, SessionDetail, composer,
-  conversation, Workbench, voice presentation — bound to Slices 1–3 contracts
+  conversation, Workbench, voice presentation, Presence Studio —
+  bound to the Slice 1–5 contracts
 
-Slice 5 — Intelligent polish (only after core redesigned app is real)
+Slice 7 — Intelligent polish (only after core redesigned app is real)
   automatic artifact surfacing, inline pointing, return checkpoints,
   speaker signatures, worker-instruction suggestion, full durable voice transcript
 ```
 
-Next narrow scope after this document: **Slice 1 only** — `ProjectBrief` + Needs You + Latest Signal + local `UserProfile`/`PresenceProfile` persistence. Do not touch the redesigned renderer yet.
+Slices 1–5 are done. Next narrow scope: **Slice 6** — the UI transplant, built around the finished `<VowePresence />` rather than alongside it.

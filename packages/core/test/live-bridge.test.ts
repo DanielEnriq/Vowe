@@ -300,3 +300,49 @@ describe('LiveBridge — acceptance 8: degraded modes', () => {
     expect(observation.status(TEST_SESSION).windowsProcessed).toBeGreaterThan(0);
   });
 });
+
+describe('LiveBridge — who is speaking', () => {
+  /**
+   * The provider declares no speaking lifecycle at all, so the only honest
+   * account of Vowe speaking is the audio the renderer measured itself
+   * playing. It already crosses the boundary for the conversation record;
+   * publishing it on the status is what lets the rest of the application see
+   * it without measuring anything a second time.
+   */
+  it('publishes playback on the status, and only during a call', async () => {
+    const { bridge } = await build();
+    const seen: boolean[] = [];
+    bridge.on('status', (status) => seen.push(status.playbackActive));
+
+    expect(bridge.status.playbackActive).toBe(false);
+
+    await bridge.start(TEST_SESSION, 'offer');
+    expect(bridge.status.playbackActive).toBe(false);
+
+    bridge.reportPlayback({ kind: 'started', at: new Date().toISOString() });
+    expect(bridge.status.playbackActive).toBe(true);
+
+    bridge.reportPlayback({ kind: 'stopped', at: new Date().toISOString(), audioMs: 900 });
+    expect(bridge.status.playbackActive).toBe(false);
+
+    bridge.reportPlayback({ kind: 'started', at: new Date().toISOString() });
+    await bridge.stop();
+    // A call that ended while audio was playing is not a presence still
+    // speaking: there is nothing left to hear.
+    expect(bridge.status.playbackActive).toBe(false);
+
+    expect(seen).toContain(true);
+  });
+
+  it('says nothing when a report changes nothing', async () => {
+    const { bridge } = await build();
+    await bridge.start(TEST_SESSION, 'offer');
+
+    let announcements = 0;
+    bridge.on('status', () => announcements++);
+
+    bridge.reportPlayback({ kind: 'started', at: new Date().toISOString() });
+    bridge.reportPlayback({ kind: 'started', at: new Date().toISOString() });
+    expect(announcements).toBe(1);
+  });
+});

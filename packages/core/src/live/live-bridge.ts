@@ -63,6 +63,16 @@ export interface LiveStatus {
   /** The session Vo is currently talking about. */
   sessionId: string | null;
   liveSessionId: string | null;
+  /**
+   * True while Vowe's own audio is actually playing.
+   *
+   * The provider declares no speaking lifecycle, so the only honest account is
+   * the audio the renderer measured itself playing — which already crosses this
+   * boundary as a `PlaybackReport` for the conversation record. Publishing it
+   * back on the status is what lets the rest of the application know Vowe is
+   * speaking without measuring anything a second time.
+   */
+  playbackActive: boolean;
 }
 
 interface Attachment {
@@ -117,6 +127,8 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
    */
   private queued: SurfaceUpdate[] = [];
   private listening = false;
+  /** What the renderer last reported about the audio it is playing. */
+  private playing = false;
 
   constructor(options: LiveBridgeOptions) {
     super();
@@ -140,6 +152,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
       sidebandAttached: this.attachment?.sideband != null,
       sessionId: this.attachment?.sessionId ?? null,
       liveSessionId: this.attachment?.liveSessionId ?? null,
+      playbackActive: this.attachment !== null && this.playing,
     };
   }
 
@@ -170,6 +183,9 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
       sdpOffer,
       instructions: VO_SYSTEM_PROMPT,
     });
+
+    // Nothing has been played on this call yet, whatever the last one did.
+    this.playing = false;
 
     this.attachment = {
       sessionId,
@@ -219,6 +235,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     const attachment = this.attachment;
     this.attachment = null;
     this.queued = [];
+    this.playing = false;
     if (!attachment) return;
     attachment.detach?.();
     // Whatever was half-said is still what was said. Closing the call is not a
@@ -494,6 +511,10 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
    */
   reportPlayback(report: PlaybackReport): void {
     this.attachment?.recorder?.playback(report);
+    const playing = report.kind === 'started';
+    if (playing === this.playing) return;
+    this.playing = playing;
+    this.emit('status', this.status);
   }
 
   private sidebandFor(sessionId: string): LiveSideband | null {
