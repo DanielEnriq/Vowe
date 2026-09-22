@@ -153,6 +153,28 @@ export class ProjectKnowledgeService {
     }
   }
 
+  /**
+   * Everything Vowe has worked out about this project, newest first.
+   *
+   * For the memory surface the design calls "What Vowe knows". A read, not a
+   * search: the developer is looking at what is there rather than asking a
+   * question, so nothing is scored and nothing is admitted.
+   *
+   * Superseded records are already absent — the store stops returning a record
+   * once a correction replaces it, while keeping it in the file.
+   */
+  async listMemories(projectId: string, limit?: number): Promise<ProjectMemoryRecord[]> {
+    if (!this.memory) return [];
+    try {
+      const records = await this.memory.list(projectId);
+      const newestFirst = [...records].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+      return typeof limit === 'number' ? newestFirst.slice(0, limit) : newestFirst;
+    } catch (error) {
+      this.onError('knowledge:memory-list', error);
+      return [];
+    }
+  }
+
   async open(
     projectId: string,
     nodeId: string,

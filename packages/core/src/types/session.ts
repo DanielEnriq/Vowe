@@ -77,6 +77,15 @@ export interface AgentSession {
    * directory / short id, but the durable identity is always `id`.
    */
   displayLabel: string;
+  /**
+   * A short name for this work, produced once from the task.
+   *
+   * Stored beside the provider's own metadata rather than over it: `task` and
+   * `displayLabel` remain exactly what the adapter reported, and this is
+   * Vowe's reading of them. Absent until generated, which is why every display
+   * path goes through `displayTitle`.
+   */
+  generatedTitle?: string;
   /** Working directory, when the provider exposes one. */
   cwd: string | null;
   /**

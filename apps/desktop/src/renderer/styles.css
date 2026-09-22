@@ -1,209 +1,2512 @@
-/*
- * Calm, native macOS. Light and dark follow the system appearance.
- * Two accents carry the product's central boundary:
- *   --ask    blue   — talking to Vowe, never reaches the agent
- *   --instr  amber  — instructing the agent through the control channel
+/**
+ * Vowe's one stylesheet.
+ *
+ * Ported from the approved design, token for token. Two rules keep it honest:
+ * no domain semantics live here — a class says how something looks, never what
+ * it means — and every colour comes from the block below rather than from a
+ * literal buried in a rule.
+ *
+ * Dark only. The design is a single quiet dark language and its palette has no
+ * light counterpart; inventing one would ship a theme nobody approved.
  */
+
 :root {
-  --win: #ffffff;
-  --side: #f4f3f1;
-  --side-sel: #e4e2de;
-  --line: #e7e5e1;
-  --line-strong: #d3d0ca;
-  --text: #1d1d1f;
-  --text-2: #5c5c61;
-  --text-3: #737378;
-  --surface: #faf9f7;
-  --chip: #edebe8;
-  --field: #ffffff;
-  --code: #f3f2ef;
-  --ask: #0b63ce;
-  --on-ask: #ffffff;
-  --ask-tint: #eaf1fb;
-  --instr: #a4540a;
-  --on-instr: #ffffff;
-  --instr-tint: #fbf0e4;
-  --good: #1e8e4e;
-  --warn: #b7791f;
-  --bad: #c0362c;
-  --idle: #8e8e93;
-  --done: #bdbbb6;
-  --scrim: rgba(20, 18, 15, 0.22);
-  --shadow: rgba(0, 0, 0, 0.12);
-  --shadow-strong: rgba(0, 0, 0, 0.22);
+  color-scheme: dark;
 
-  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
-  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  /*
+   * Top chrome geometry, in one place.
+   *
+   * The window has two chrome slots — one per panel — and everything that has
+   * to line up with them is derived from these four numbers rather than
+   * re-guessed per surface. A slot is a fixed box at a fixed inset; the
+   * reserve is the room a header must leave so its own content clears one.
+   *
+   * `--chrome-top` is the only value that differs between windowed and
+   * fullscreen, and it differs for exactly one real reason: macOS puts traffic
+   * lights in that space in a window and does not in fullscreen. Every other
+   * measurement follows from it, so there is no second set of offsets to keep
+   * in step.
+   */
+  --chrome-slot: 26px;
+  --chrome-gutter: 14px;
+  --chrome-top: 46px;
+  --chrome-reserve: calc(var(--chrome-gutter) * 2 + var(--chrome-slot));
 
-  font-family: var(--font);
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text);
-  color-scheme: light dark;
-}
+  /* Layers, back to front. */
+  --app: #08090a;
+  --rail: #0b0c0e;
+  --pane: #0e0f11;
+  --surface: #111214;
+  --field: #131417;
+  --menu: #15161a;
+  --selected: #191b1f;
+  --chip: #22242a;
+  --chip-strong: #24262b;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --win: #1e1e20;
-    --side: #262628;
-    --side-sel: #39393c;
-    --line: #333336;
-    --line-strong: #4a4a4e;
-    --text: #f2f2f4;
-    --text-2: #aeaeb4;
-    --text-3: #8e8e94;
-    --surface: #232325;
-    --chip: #323235;
-    --field: #19191b;
-    --code: #161618;
-    --ask: #5aa5ff;
-    --on-ask: #0a1a2e;
-    --ask-tint: #1d2a3b;
-    --instr: #f0a84e;
-    --on-instr: #2a1a06;
-    --instr-tint: #35281a;
-    --good: #4cc27e;
-    --warn: #e0a83a;
-    --bad: #ff7b72;
-    --idle: #8e8e94;
-    --done: #5e5e63;
-    --scrim: rgba(0, 0, 0, 0.45);
-    --shadow: rgba(0, 0, 0, 0.5);
-    --shadow-strong: rgba(0, 0, 0, 0.55);
-  }
+  /* Ink, brightest first. */
+  --ink-bright: #f4f4f6;
+  --ink-strong: #f1f1f3;
+  --ink: #e9e9ec;
+  --ink-2: #dfe0e4;
+  --ink-3: #c9cbd1;
+  --ink-4: #a8aab1;
+  --ink-5: #9ea0a6;
+  --ink-6: #7a7d85;
+  --ink-7: #6b6d74;
+  --ink-8: #65676e;
+  --ink-9: #5e6068;
+  --ink-10: #55565c;
+  --ink-11: #4f5158;
+
+  /* Lines. */
+  --hairline: rgba(255, 255, 255, 0.055);
+  --divider: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-2: rgba(255, 255, 255, 0.1);
+  --border-3: rgba(255, 255, 255, 0.14);
+  --hover: rgba(255, 255, 255, 0.035);
+  --hover-strong: rgba(255, 255, 255, 0.055);
+
+  /* Meaning. Two accents, and they are not interchangeable: blue is Vowe
+     talking, amber is the worker being talked to or waiting on a person. */
+  --good: #55c08a;
+  --attention: #e4a94c;
+  --on-attention: #241703;
+  --attention-line: rgba(228, 169, 76, 0.28);
+  --attention-wash: rgba(228, 169, 76, 0.045);
+  --ask: #8fb0e8;
+  --bad: #c4736a;
+  --warn: #e4c07a;
+  --idle: #8e8e94;
+
+  --font: 'Schibsted Grotesk', -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Geometry the design specifies rather than implies. */
+  --sidebar: 252px;
+  /* How far the text dissolves for. One distance, so every fade matches. */
+  --fade: 2.4em;
+  /*
+   * The reading measure, and the width the room is allowed to become.
+   *
+   * Wider than it was, because the shell now genuinely gives the centre back
+   * the width a closed panel was holding: at the old 880px a developer who
+   * shut both panels got two empty gutters instead of a wider column, which
+   * read as the phantom columns the layout was accused of.
+   */
+  --measure: 1100px;
+  --measure-narrow: 860px;
+  --shadow-menu: 0 18px 40px rgba(0, 0, 0, 0.55);
 }
 
 * { box-sizing: border-box; }
 
-body {
+html, body, #root {
   margin: 0;
-  background: var(--win);
-  color: var(--text);
+  padding: 0;
+  height: 100%;
+  background: var(--app);
+}
+
+body {
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 13.5px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  overflow: hidden;
 }
 
-button, input, textarea { font: inherit; color: inherit; }
-button { cursor: pointer; }
-button:disabled { cursor: not-allowed; }
-:focus-visible { outline: 2px solid var(--ask); outline-offset: 1px; }
+button { font: inherit; color: inherit; cursor: pointer; }
+textarea, input { font: inherit; color: inherit; }
+::selection { background: rgba(180, 196, 255, 0.22); }
 
-.mono { font-family: var(--mono); }
-.visually-hidden {
-  position: absolute; width: 1px; height: 1px; overflow: hidden;
-  clip: rect(0 0 0 0); white-space: nowrap;
+/*
+ * A scrollbar sits a shade above whatever it is on, and no more.
+ *
+ * A white wash is the mechanism rather than a colour choice: the same alpha
+ * over `--rail`, `--pane` and `--surface` lands a few levels above each of
+ * them, so the thumb is *just* lighter than its own background everywhere
+ * without a rule per panel. The alpha is what was wrong — at `0.09` it was
+ * roughly twenty levels up, which made the brightest vertical line in the
+ * window a piece of furniture beside the text it was scrolling.
+ *
+ * It still has to be findable once you reach for it, so it comes up under the
+ * pointer. That is the only time it should be the thing you notice.
+ */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.08);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* Focus is never removed, only shaped: this UI must be usable from a keyboard. */
+:focus-visible {
+  outline: 2px solid var(--ask);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
-/* ── Buttons ─────────────────────────────────────────────── */
+@keyframes vowe-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes vowe-stream-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
+}
 
-.btn {
-  height: 30px;
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ------------------------------------------------------------------ shell */
+
+.app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--app);
+}
+/* No traffic lights to clear, so the chrome row sits where the window edge is. */
+.app.fullscreen { --chrome-top: 14px; }
+
+/*
+ * The drag strip, and nothing else.
+ *
+ * The window's controls are the real macOS ones; this only gives the top of
+ * the window somewhere to be dragged by. No application control lives here —
+ * one that did would vanish into the menu bar's hover region in fullscreen.
+ */
+.titlebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  height: 28px;
+  -webkit-app-region: drag;
+}
+
+/*
+ * The panel controls: overlay chrome, at one coordinate, in both states.
+ *
+ * `position: fixed` is the whole point. These are not laid out by the shell,
+ * so the column under them can be the panel's width or nothing at all and the
+ * control does not move by a pixel — the panel animates underneath it. It also
+ * means neither of them can reserve a strip of width, which is what a rail
+ * mounted in the row would have done.
+ *
+ * The coordinate is the window's, from the chrome variables: a stable inset
+ * that clears the traffic lights in a window and sits high in fullscreen where
+ * there are none. Same x, same y, same hit box, open or closed.
+ */
+.panel-toggle {
+  position: fixed;
+  top: var(--chrome-top);
+  z-index: 6;
+  width: var(--chrome-slot);
+  height: var(--chrome-slot);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 14px;
-  border-radius: 6px;
-  border: 1px solid var(--line-strong);
-  background: var(--win);
-  color: var(--text);
-  white-space: nowrap;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-7);
+  -webkit-app-region: no-drag;
+  /* Only the appearance moves. Position is not animated because it never changes. */
+  transition: color 180ms ease, background 180ms ease;
 }
-.btn:hover:not(:disabled) { background: var(--surface); }
-.btn:disabled { opacity: 0.5; }
-.btn.primary { border: 0; background: var(--ask); color: var(--on-ask); font-weight: 500; }
-.btn.primary:hover:not(:disabled) { background: var(--ask); filter: brightness(1.08); }
-.btn.instr { border: 0; background: var(--instr); color: var(--on-instr); font-weight: 600; }
-.btn.instr:hover:not(:disabled) { background: var(--instr); filter: brightness(1.08); }
-.btn.small { height: 28px; padding: 0 14px; font-size: 12.5px; font-weight: 600; }
+.panel-toggle.left { left: var(--chrome-gutter); }
+.panel-toggle.right { right: var(--chrome-gutter); }
+.panel-toggle:hover { background: var(--selected); color: var(--ink); }
+.panel-toggle.open { color: var(--ink-5); }
 
-.icon-btn {
-  width: 28px;
+/* Something arrived that has not been looked at. A dot, never a count. */
+.panel-toggle .unseen {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent, #7aa2ff);
+}
+
+/*
+ * Text that runs out of room, dissolved rather than cut short.
+ *
+ * `text-overflow: ellipsis` spends three characters saying that something was
+ * removed, in the middle of the phrase it removed it from. The mask shows the
+ * same fact instead: the text fades into the surface it is set on, which is
+ * what is actually happening to it.
+ *
+ * **One treatment, everywhere.** This was briefly on titles alone, which put
+ * two different truncations one line apart in the same sidebar row — a name
+ * that faded above an activity line that trailed three dots. Every rule in
+ * this file that used to end in an ellipsis now ends here instead, and the
+ * fade is the same distance and the same curve in all of them.
+ *
+ * The class that turns the mask on is set by `Fading` from a real
+ * measurement, because "is this overflowing?" is the one question CSS cannot
+ * answer — an unconditional mask would fade the tail of every short string
+ * too. Nothing is removed from the document: the whole string is still the
+ * element's text and its tooltip.
+ */
+.fading {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+}
+.fading.is-faded {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+}
+
+/*
+ * The same shadow, for a block held to a couple of lines.
+ *
+ * `-webkit-line-clamp` draws its own ellipsis and cannot be talked out of it,
+ * so the height is set here instead — and the fade still creeps in from the
+ * right, on the last line, rather than dimming that line across its width. A
+ * block that faded downwards would have been a second kind of truncation in a
+ * file whose whole point is that there is one.
+ *
+ * Two mask layers: the last line's band carries the same right-hand gradient
+ * every other faded element has, and the lines above it are fully opaque. They
+ * union, so nothing above the last line is touched.
+ */
+.fading-block {
+  --fade-line: calc(1em * var(--fade-leading, 1.5));
+  min-width: 0;
+  overflow: hidden;
+  max-height: calc(var(--fade-lines, 2) * var(--fade-line));
+}
+.fading-block.is-faded {
+  -webkit-mask-image:
+    linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%),
+    linear-gradient(#000, #000);
+  -webkit-mask-size: 100% var(--fade-line), 100% calc(100% - var(--fade-line));
+  -webkit-mask-position: left bottom, left top;
+  -webkit-mask-repeat: no-repeat;
+  mask-image:
+    linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%),
+    linear-gradient(#000, #000);
+  mask-size: 100% var(--fade-line), 100% calc(100% - var(--fade-line));
+  mask-position: left bottom, left top;
+  mask-repeat: no-repeat;
+}
+
+.icon-button {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-7);
+}
+.icon-button:hover { background: var(--selected); color: var(--ink); }
+
+/*
+ * The shell's columns.
+ *
+ * `--left-column` is the panel's width when it is there and `0px` when it is
+ * not, so a closed panel is a column of nothing rather than a box slid out of
+ * view — the centre is `minmax(0, 1fr)` and takes the width back. Panel
+ * toggles are fixed and the resize handle is absolute, so this row has exactly
+ * the two tracks it says it has and nothing reserves a third.
+ */
+.body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--left-column, 0px) minmax(0, 1fr);
+  /*
+   * One row, as tall as the window and no taller. A grid's implicit row is
+   * sized to its content, which made the room as tall as the conversation and
+   * left the conversation nothing to scroll.
+   */
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+  transition: grid-template-columns 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+/* A dragged edge follows the pointer; it does not ease behind it. */
+.body.resizing { transition: none; }
+
+.pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--pane);
+}
+
+/* ---------------------------------------------------------------- sidebar */
+
+/*
+ * The panel fills whatever column it was given, and clips.
+ *
+ * No border on the edge: the divider is gone on purpose — a panel that can be
+ * dragged does not need a rule announcing it, and the two surfaces read as one
+ * window without it. `overflow: hidden` is what lets the column go to zero
+ * without the contents spilling into the room.
+ */
+.sidebar {
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--rail);
+  transition: opacity 200ms ease;
+}
+.sidebar.closed { opacity: 0; pointer-events: none; }
+.sidebar > * { min-width: var(--panel-width, var(--sidebar)); }
+
+/*
+ * Clears the traffic lights in a window; in fullscreen there are none to
+ * clear, and reserving the space anyway leaves a dead band at the top.
+ */
+.sidebar-title {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  /*
+   * The panel's own header shares the chrome row: same top edge, same height,
+   * with its content starting where the slot ends. That is what makes the
+   * toggle read as belonging to this panel when it is open, without the
+   * toggle having to live inside it and travel with it.
+   */
+  min-height: var(--chrome-slot);
+  /*
+   * The left inset is the panel's clearance for the window's own toggle, which
+   * is fixed above this row in both states. Reserving it here is padding
+   * inside the panel and not a column in the shell.
+   */
+  padding: var(--chrome-top) 8px 8px var(--chrome-reserve);
+  -webkit-app-region: no-drag;
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-9);
+}
+
+.sidebar-nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/*
+ * The resize affordance, with nothing drawn.
+ *
+ * Absolutely positioned over the boundary rather than laid out between the
+ * columns, so it costs no width and the grid keeps the two tracks it declares.
+ * A few transparent pixels straddling the edge is the whole control: the
+ * surface stays clean and the panel is still draggable, which is what "assume
+ * it can be resized" means.
+ */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  z-index: 4;
+  cursor: col-resize;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.resize-handle.left { left: calc(var(--left-column, 0px) - 4px); }
+.resize-handle.right { right: calc(var(--right-column, 0px) - 4px); }
+/* Only while it is being dragged, and only as a hint that it is. */
+.resize-handle.active { background: rgba(143, 176, 232, 0.12); }
+
+.project-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+}
+.project-row:hover { background: var(--hover); }
+.project-row.selected { background: var(--selected); }
+
+/*
+ * Two controls in one row, because these are two different acts: showing a
+ * project's sessions, and opening the project.
+ */
+/* The project's own icon is the disclosure control. */
+.project-row .disclose {
+  flex: 0 0 26px;
+  width: 26px;
   height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-2);
-  flex-shrink: 0;
-}
-.icon-btn:hover:not(:disabled) { background: var(--chip); color: var(--text); }
-.icon-btn:disabled { opacity: 0.4; }
-.icon-btn.spinning svg { animation: spin 0.9s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.tool-btn {
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 500;
-}
-.tool-btn:hover { background: var(--chip); color: var(--text); }
-.tool-btn.on { background: var(--chip); color: var(--text); }
-
-.link-btn {
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: var(--ask);
-}
-.link-btn:hover:not(:disabled) { text-decoration: underline; }
-.link-btn:disabled { color: var(--text-3); }
-
-/* Segmented control */
-.segmented {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 7px;
-  background: var(--chip);
-}
-.segmented button {
-  height: 24px;
-  padding: 0 12px;
+  margin-left: 4px;
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 500;
+  color: var(--ink-7);
 }
-.segmented button[aria-pressed='true'] {
-  background: var(--win);
-  color: var(--text);
-  box-shadow: 0 1px 2px var(--shadow);
+.project-row .disclose:hover:not(:disabled) { color: var(--ink); background: var(--hover-strong); }
+/* Open reads brighter; a project with nothing in it has nothing to disclose. */
+.project-row .disclose.expanded { color: var(--ink-3); }
+.project-row .disclose:disabled { opacity: 0.4; }
+.project-row .open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  padding: 6px 8px 6px 6px;
+  text-align: left;
+  color: inherit;
 }
-.segmented button:disabled { color: var(--text-3); opacity: 0.55; }
-.segmented.stretch { display: flex; }
-.segmented.stretch button { flex: 1; }
+.project-row .name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink-3);
+}
+.project-row.selected .name { color: var(--ink); }
+.project-row .count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink-4);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 17px;
+  text-align: center;
+}
 
-/* ── App shell ───────────────────────────────────────────── */
+.session-list { display: flex; flex-direction: column; padding-left: 19px; }
 
-.app { display: flex; height: 100vh; overflow: hidden; }
-
-.titlebar-drag { -webkit-app-region: drag; }
-.titlebar-drag button, .titlebar-drag input { -webkit-app-region: no-drag; }
-
-/* ── Sidebar ─────────────────────────────────────────────── */
-
-.sidebar {
-  width: 272px;
-  flex: 0 0 272px;
+.session-row {
+  position: relative;
   display: flex;
   flex-direction: column;
-  background: var(--side);
-  border-right: 1px solid var(--line);
+  gap: 1px;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 6px 8px;
+  text-align: left;
+}
+.session-row:hover { background: var(--hover); }
+.session-row.selected { background: var(--selected); }
+.session-row .line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
-.sidebar-top { height: 52px; flex-shrink: 0; }
+.session-row .label {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.session-row .provider {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--ink-9);
+}
+.session-row .activity {
+  padding-left: 14px;
+  font-size: 11px;
+  color: var(--ink-6);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px; display: inline-block; }
+.dot.working, .dot.starting { background: var(--good); }
+.dot.waiting { background: var(--attention); }
+.dot.idle { background: var(--idle); }
+.dot.finished, .dot.unknown { background: var(--ink-10); }
+.dot.lg { width: 7px; height: 7px; flex-basis: 7px; }
+.dot.hollow { background: transparent; border: 1.5px solid var(--attention); }
+
+.vowe-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 8px;
+  text-align: left;
+  width: calc(100% - 16px);
+}
+.vowe-row:hover { background: var(--hover); }
+.vowe-row.selected { background: var(--selected); }
+.vowe-row .who { display: flex; flex-direction: column; min-width: 0; }
+.vowe-row .name { font-size: 12.5px; font-weight: 500; color: var(--ink-2); }
+.vowe-row .doing {
+  font-size: 10.5px;
+  color: var(--ink-7);
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.sidebar-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 14px 16px;
+  border-top: 1px solid var(--hairline);
+}
+.avatar {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #2a2c32;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.sidebar-footer .who {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------- pane headers */
+
+.pane-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 22px var(--chrome-reserve) 0 40px;
+}
+.pane-header.clear-titlebar { padding-top: 56px; }
+.pane-header h1 {
+  margin: 0;
+  flex: 0 1 auto;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.018em;
+}
+.pane-header .meta { font-size: 12px; color: var(--ink-6); }
+.pane-header .meta .path { color: var(--ink-9); }
+
+.scroll { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* ----------------------------------------------------------- project room */
+
+.room { padding: 0 40px 8px; }
+/*
+ * The room grows with the window. The ceiling is generous rather than tight
+ * because the shell now hands back the width a closed panel was holding, and
+ * capping it at a fixed measure is how that width turned into an empty column
+ * on the right instead of into content.
+ */
+.room-inner { width: 100%; max-width: 1400px; display: flex; flex-direction: column; }
+
+.synthesis {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 48px;
+  align-items: center;
+  padding: 42px 0 34px;
+}
+.synthesis .reading { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.headline {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.24;
+  font-weight: 500;
+  letter-spacing: -0.021em;
+  max-width: 21em;
+  white-space: pre-line;
+  text-wrap: pretty;
+  color: var(--ink-bright);
+}
+.detail-lines { display: flex; flex-direction: column; gap: 3px; max-width: 44em; }
+.detail-lines span {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-4);
+  text-wrap: pretty;
+  --fade-leading: 1.55;
+}
+.synthesis .actions {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.link-button {
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  color: var(--ink-6);
+  font-size: 13px;
+}
+.link-button:hover { color: var(--ink); }
+.link-button.underlined {
+  align-self: flex-start;
+  color: var(--ink-5);
+  font-size: 12.5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+.link-button:disabled { color: var(--ink-10); cursor: default; }
+
+.knows {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  color: var(--ink-8);
+  font-size: 12px;
+}
+
+.rule { height: 1px; background: var(--divider); }
+
+.section { padding: 26px 0 4px; }
+.section h2 {
+  margin: 0 0 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-7);
+}
+.section h2.attention { color: var(--attention); }
+.quiet-line { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+/* An ordinary quiet state should not occupy a card's worth of room. */
+.quiet-line.spare { padding: 14px 0 2px; }
+
+/*
+ * A quiet project, still saying what has been happening in it. Restrained on
+ * purpose: one lead, one name, one line of what it was doing.
+ */
+.quiet-orientation {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  margin-top: 4px;
+}
+.quiet-orientation .lead { font-size: 13px; color: var(--ink-6); }
+.quiet-orientation .link-button { font-size: 14px; color: var(--ink-2); padding: 0; }
+.quiet-orientation .what { font-size: 12.5px; color: var(--ink-7); }
+.quiet-line span:last-child { font-size: 13px; color: var(--ink-6); }
+
+.attention-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--attention-line);
+  border-radius: 10px;
+  background: var(--attention-wash);
+}
+.attention-card .top { display: flex; align-items: center; gap: 10px; }
+.attention-card .title {
+  flex: 1;
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.attention-card .waiting { font-size: 11.5px; color: var(--attention); }
+.attention-card p {
+  margin: 0;
+  padding-left: 17px;
+  color: var(--ink-3);
+  font-size: 13px;
+  text-wrap: pretty;
+  max-width: 60ch;
+}
+.attention-card .actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 17px;
+}
+
+.button {
+  height: 28px;
+  padding: 0 13px;
+  border: 1px solid var(--border-3);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-strong);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.button:hover { background: var(--hover-strong); }
+.button.primary {
+  border: 0;
+  background: var(--attention);
+  color: var(--on-attention);
+  font-weight: 600;
+}
+.button.primary:hover { background: #eeb55b; }
+
+.work-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 198px;
+  column-gap: 24px;
+  row-gap: 3px;
+  align-items: baseline;
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 10px 14px 11px;
+  text-align: left;
+}
+.work-row:hover { background: rgba(255, 255, 255, 0.028); }
+.work-row .name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+/*
+ * Only the label grows.
+ *
+ * This was `.work-row .name span`, which also matched the status dot beside
+ * it — `flex: 1` beat the dot's fixed basis and stretched a 7px circle into a
+ * full-width coloured bar. A status is a dot; it is not a progress bar, and
+ * there is no progress here to measure.
+ */
+.work-row .name .label {
+  flex: 1;
+  font-size: 13.5px;
+  font-weight: 550;
+  letter-spacing: -0.008em;
+}
+.work-row .state { font-size: 11.5px; color: var(--ink-5); white-space: nowrap; }
+.work-row .state.waiting { color: var(--attention); }
+/* Two lines of current activity is context; six is the task pasted again. */
+.work-row .note {
+  padding-left: 17px;
+  color: #9a9ca3;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.work-row .where {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  color: var(--ink-8);
+  white-space: nowrap;
+}
+
+/*
+ * What has happened here, and what Vowe has learned from it.
+ *
+ * Two columns when there are two, one when there is one — `auto-fit` decides,
+ * so a repository with no memory yet does not get a half-width heading over
+ * nothing.
+ *
+ * No nested scroll area. The list used to sit in a 232px box with a scrollbar
+ * of its own inside a room that was mostly empty, which is a smaller window
+ * volunteered for no reason. It shows a few rows and then the rest on request;
+ * expanded, the page scrolls, because the page is the thing that scrolls.
+ */
+.outcomes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  column-gap: 56px;
+  row-gap: 26px;
+  padding: 26px 0 34px;
+}
+/* Work in flight is the story; history is a tail under it. */
+.outcomes.secondary { padding: 18px 0 28px; opacity: 0.86; }
+.column { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.column .rows { display: flex; flex-direction: column; gap: 2px; }
+.column .link-button { align-self: flex-start; font-size: 12.5px; }
+
+/* What Vowe worked out and kept, named by the question it answers. */
+.learned { display: flex; flex-direction: column; gap: 7px; }
+.learned .item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 9px;
+}
+.learned .bullet { color: var(--ink-10); }
+.learned .what {
+  min-width: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+.learned .when { font-size: 11px; color: var(--ink-9); white-space: nowrap; }
+.column h2 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-7);
+}
+.signal {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 52ch;
+  text-wrap: pretty;
+}
+
+.recent-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 20px;
+  row-gap: 2px;
+  align-items: baseline;
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 4px 0;
+  text-align: left;
+}
+.recent-row:hover { background: rgba(255, 255, 255, 0.028); }
+.recent-row .name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.recent-row .name .label {
+  flex: 1;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--ink-4);
+}
+.recent-row .when { font-size: 11.5px; color: var(--ink-8); white-space: nowrap; }
+.recent-row .where {
+  padding-left: 23px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  color: var(--ink-8);
+}
+.check { display: inline-flex; color: var(--ink-10); flex: 0 0 auto; }
+
+/*
+ * Asking about the repository, as an input rather than as a link to one.
+ *
+ * Sized to the hero's reading measure so it belongs to the orientation above
+ * it: this is the thing to do once you have read what happened.
+ */
+.project-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 660px;
+  margin-top: 2px;
+}
+.project-thread { display: flex; flex-direction: column; gap: 18px; }
+.ask-field {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+  background: var(--field);
+}
+.ask-field textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 24px;
+  max-height: 120px;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+  padding: 3px 0;
+}
+
+.empty { font-size: 13px; color: var(--ink-6); text-wrap: pretty; }
+.empty-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 28px 0;
+  max-width: 52ch;
+}
+.empty-block h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink-2);
+  font-family: var(--font);
+  text-transform: none;
+}
+
+/* ----------------------------------------------------------- session room */
+
+/*
+ * The room's own two columns, on the shell's model.
+ *
+ * `--right-column` is the desk's width or `0px`, so closing the desk gives the
+ * conversation the width back instead of leaving a gutter where the panel was.
+ * The desk's toggle is fixed chrome and its resize handle is absolute, so this
+ * row also has exactly the tracks it declares.
+ */
+.session-room {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--right-column, 0px);
+  /* Bounded for the same reason as `.body`: the conversation scrolls, not the room. */
+  grid-template-rows: minmax(0, 1fr);
+  background: var(--pane);
+  transition: grid-template-columns 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+/* Too narrow to hold both, so the desk is the room and there is no second track. */
+.session-room.desk-takes-pane {
+  grid-template-columns: minmax(0, 1fr);
+  transition: none;
+}
+.conversation-column {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * A fixed height, whatever is open.
+ *
+ * Opening the sidebar or the workbench changes how much width this has; it
+ * must not change how tall it is. Nothing here wraps — the metadata row is
+ * `nowrap` and every child sets `min-width: 0` so it truncates instead of
+ * pushing a second line and moving the divider down.
+ */
+/*
+ * Room for the rail on the right. The control is fixed to the window, so the
+ * header keeps clear of it rather than the other way round — which is what
+ * lets a long title ellipsize instead of running underneath it.
+ */
+.session-header {
+  flex: 0 0 auto;
+  height: 68px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 var(--chrome-reserve) 0 28px;
+  border-bottom: 1px solid var(--hairline);
+  overflow: hidden;
+}
+/*
+ * With the projects panel away the window's toggle sits over this row instead
+ * of over the panel, so the row makes the same clearance on its left that the
+ * panel's own header does. Without it the toggle lands on the voice presence.
+ */
+.session-header.clear-titlebar {
+  height: 88px;
+  padding-top: 22px;
+  padding-left: var(--chrome-reserve);
+  align-items: center;
+}
+.session-header .identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+/* Shrinks and fades; the metadata beside it keeps its size. */
+.session-header h1 {
+  margin: 0;
+  flex: 0 1 auto;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.016em;
+}
+/* Where and whether, on one line under the title. Context, not activity. */
+.session-header .where {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--ink-8);
+}
+.session-header .state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  color: var(--ink-6);
+}
+.session-header .talk { flex: 0 0 auto; }
+
+.talk {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin-top: 1px;
+  color: var(--ink-5);
+}
+.talk:hover { color: var(--ink); }
+.talk .hint { font-size: 11.5px; white-space: nowrap; }
+
+/*
+ * The column starts at the top and grows downwards, like a document.
+ *
+ * `align-items: flex-start` rather than the default stretch: a measure
+ * stretched to the height of the scroller puts its content wherever its own
+ * layout decides, and any bottom-anchored rule inside it would press the live
+ * turn against the composer. Here the turns simply follow the question.
+ */
+.conversation {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 30px 40px 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+/*
+ * The column finishes before the composer begins.
+ *
+ * A generous tail rather than a few pixels: at the scroll bottom the last turn
+ * should have finished, not be pressed against the input. It is padding on the
+ * measure rather than a margin on the dock so the space scrolls with the
+ * conversation and the final turn is never left under the composer.
+ */
+.conversation-measure {
+  width: 100%;
+  max-width: var(--measure);
+  padding-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+.conversation-measure.with-workbench { max-width: var(--measure-narrow); }
+
+/*
+ * Two kinds of thing in one column, and they should not look alike.
+ *
+ * Vowe's turn is a document: left aligned, the full reading measure, no
+ * container, identified by the mark and byline. The developer's turn is an
+ * object they handed over: right aligned, on a surface, and `fit-content` so a
+ * short prompt is a short box rather than a wide one with a ragged right edge.
+ * The eye reads which is which before it reads either.
+ *
+ * Deliberately not symmetric bubbles. Both sides in containers makes the
+ * analysis look like a reply in a chat client, which is the one thing the
+ * editorial treatment exists to avoid.
+ */
+.turn { display: flex; flex-direction: column; gap: 9px; min-width: 0; align-items: stretch; }
+.turn .speaker {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-9);
+}
+.turn .signature-line { display: flex; align-items: center; gap: 7px; margin-bottom: -2px; }
+.turn .signature-line .doing {
+  font-size: 12.5px;
+  color: var(--ink-7);
+  animation: vowe-pulse 1.9s ease-in-out infinite;
+}
+.turn p {
+  margin: 0;
+  font-size: 15.5px;
+  line-height: 1.62;
+  color: var(--ink-strong);
+  text-wrap: pretty;
+}
+.turn p.secondary { color: var(--ink-3); }
+
+/*
+ * The developer's turn.
+ *
+ * `align-items: flex-end` puts the label and the surface on one right edge,
+ * which is the alignment that makes the pair read as one object rather than as
+ * a caption near a box. `fit-content` with a ceiling keeps a one-line prompt on
+ * one line — the previous `78%` of the measure gave every message the same wide
+ * box whatever was in it.
+ */
+.turn.user { align-items: flex-end; gap: 5px; }
+/*
+ * Deliberate rather than decorative: a fill barely above the page, a radius
+ * that says "card" rather than "chat pill", and no border or shadow — the fill
+ * is edge enough, and nothing here is floating above anything.
+ */
+.turn.user .message-body {
+  width: fit-content;
+  max-width: 62%;
+  padding: 8px 13px 9px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.032);
+}
+.turn.user .message-body p,
+.turn.user .message-body .markdown {
+  /* Inside the surface the text is ordinary prose, set left like any other. */
+  text-align: left;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/*
+ * Vowe's mark in the conversation: the orb's own numbers, drawn in CSS.
+ *
+ * Every custom property here is set by `VoweMark` from
+ * `resolvePresenceVisuals` — the same table the WebGL presence reads. The two
+ * layers are the two things the orb does: the shell breathes (`amp`, at the
+ * state's own `speed`) and the point field drifts around it (`spin`, sheared
+ * by `torsion`). The ring is the design's `halo`, which is `0` at idle, so a
+ * settled byline has no ring rather than a dimmer one.
+ *
+ * Two elements rather than one because the two motions have different periods
+ * and both are transforms. Still CSS all the way down: a thread with fifty
+ * turns costs fifty spans rather than fifty GPU contexts.
+ */
+.vowe-mark {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--mark-body, transparent);
+  box-shadow: 0 0 var(--mark-halo-size, 0) 0 var(--mark-halo, transparent);
+  filter: brightness(var(--mark-bright, 1));
+}
+.vowe-mark .field {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  /*
+   * The point grid: `--mark-grid` is the orb's own column spacing at this size
+   * and `--mark-row` its row spacing, so the dots sit on the same lattice the
+   * sprites do rather than on a square one invented here.
+   */
+  background-image: radial-gradient(
+    circle at center,
+    var(--mark-dot, transparent) var(--mark-dot-size, 0.7px),
+    transparent calc(var(--mark-dot-size, 0.7px) + 0.35px)
+  );
+  background-size: var(--mark-grid, 3px) var(--mark-row, 3px);
+  transform: skewX(var(--mark-torsion, 0deg));
+  /*
+   * The field is a sphere seen from outside, not a stamped disc: the points
+   * are strongest where the light is and fall away towards the limb. Without
+   * this the lattice ends in a hard circular cut and the mark reads as a
+   * textured coin rather than as the point cloud it is a portrait of.
+   */
+  -webkit-mask-image: radial-gradient(
+    circle at 42% 36%,
+    #000 42%,
+    rgba(0, 0, 0, 0.55) 78%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    circle at 42% 36%,
+    #000 42%,
+    rgba(0, 0, 0, 0.55) 78%,
+    transparent 100%
+  );
+}
+
+/* The busy states move; a settled byline is still. */
+.vowe-mark.is-thinking,
+.vowe-mark.is-answering {
+  animation: vowe-mark-breathe var(--mark-period, 1.6s) ease-in-out infinite;
+}
+.vowe-mark.is-thinking .field,
+.vowe-mark.is-answering .field {
+  animation: vowe-mark-drift var(--mark-spin-period, 9s) linear infinite;
+}
+/* Displacement depth, as the shell's scale. `--mark-amp` carries `pulse` too. */
+@keyframes vowe-mark-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(var(--mark-amp, 1.05)); }
+}
+/* Rotational drift of the field, sheared by the state's torsion. */
+@keyframes vowe-mark-drift {
+  from { transform: skewX(var(--mark-torsion, 0deg)) rotate(0deg); }
+  to { transform: skewX(var(--mark-torsion, 0deg)) rotate(360deg); }
+}
+/*
+ * `speed`, `pulse` and `spin` are already damped for reduced motion upstream,
+ * so the presence still differs by state. Here the animation stops outright:
+ * a byline is not the subject, and repeated motion in a reading column is
+ * exactly what the preference is about.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .vowe-mark.is-thinking,
+  .vowe-mark.is-answering,
+  .vowe-mark.is-thinking .field,
+  .vowe-mark.is-answering .field { animation: none; }
+}
+
+code.inline {
+  font-family: var(--mono);
+  font-size: 13.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--hover-strong);
+}
+
+.milestone {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.milestone span.rule { flex: 1; height: 1px; background: var(--divider); }
+.milestone .text {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-9);
+  white-space: nowrap;
+}
+.milestone .text.failed { color: var(--bad); }
+
+/* The kind of lookup, as a glyph beside its label. */
+.check-icon { flex: 0 0 auto; color: var(--ink-9); }
+
+/*
+ * One execution timeline: lookups and thinking, in the order they happened.
+ *
+ * Not two regions. Reasoning used to sit in a faded box of its own with a
+ * gradient over it, which said that the honest part of this column was a
+ * shadow and lost the interleaving entirely — look, think, look, think became
+ * four lookups and one blur.
+ */
+/*
+ * The window onto the column.
+ *
+ * Tall enough for about ten rows on an ordinary window and never the length of
+ * the page: the height follows the app's, within bounds, rather than a row
+ * count, because rows are not all one line. Short traces take their natural
+ * height; long ones scroll inside themselves.
+ *
+ * The edge fades are a mask on the scroller, not a gradient drawn over the
+ * rows, so they fade into whatever the conversation sits on, catch no clicks,
+ * and are only as deep as a fraction of a row. Each one is present only while
+ * there is something beyond that edge.
+ */
+.exec-viewport { position: relative; min-width: 0; }
+.exec-scroll {
+  --fade-above: 0px;
+  --fade-below: 0px;
+  max-height: clamp(180px, 34vh, 300px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-above),
+    #000 calc(100% - var(--fade-below)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-above),
+    #000 calc(100% - var(--fade-below)),
+    transparent 100%
+  );
+}
+.exec-scroll.more-above { --fade-above: 18px; }
+/* Short enough to show whole: not a scroller at all, so the wheel goes to the page. */
+.exec-scroll.fits { overflow-y: hidden; }
+.exec-scroll.more-below { --fade-below: 18px; }
+/* Work arrived below while the reader was up the column. Said once, quietly. */
+.exec-latest {
+  position: absolute;
+  right: 14px;
+  bottom: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--pane);
+  padding: 1px 9px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-6);
+  animation: vowe-stream-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.exec-latest:hover { color: var(--ink-3); }
+
+/* A settled investigation, before anyone opens it: one line in the same ink. */
+.settled-investigation { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.exec-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 1px 8px 1px 6px;
+  font-size: 12.5px;
+  color: var(--ink-7);
+}
+.exec-summary:hover { background: var(--hover); color: var(--ink-4); }
+.exec-summary svg { flex: 0 0 auto; color: var(--ink-9); transition: transform 160ms ease; }
+.exec-summary.open svg { transform: rotate(90deg); }
+
+.exec {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-left: 5px;
+  padding-left: 5px;
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
+}
+.exec-step {
+  min-width: 0;
+  animation: vowe-stream-in 320ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.exec-step.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-start;
+  max-width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 1px 8px;
+  text-align: left;
+}
+/* Following a lookup opens what it found. Only a lookup that found something. */
+button.exec-step.check:hover { background: var(--hover); }
+button.exec-step.check:hover .target-label { color: var(--ink-4); }
+.exec-step .target-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--ink-6);
+}
+
+/*
+ * A span of exposed working, in the same language as a lookup.
+ *
+ * Same scale, same indentation, same muted ink, same icon slot — thinking is
+ * an execution event and not an announcement. It had grown a presence mark and
+ * a larger face, which made the least certain row in the column the loudest
+ * and put Vowe's identity beside a line that is not Vowe speaking.
+ */
+.exec-step.thought { display: flex; flex-direction: column; gap: 2px; }
+.exec-step.thought > .label { padding: 1px 8px; }
+.exec-step.thought,
+.exec-step.thought > button {
+  color: var(--ink-6);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.exec-step.thought > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-start;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 1px 8px;
+}
+.exec-step.thought > button svg { flex: 0 0 auto; color: var(--ink-9); }
+.exec-step.thought > button:hover { background: var(--hover); color: var(--ink-4); }
+.exec-step.thought > button svg { transition: transform 160ms ease; }
+.exec-step.thought.open > button svg { transform: rotate(90deg); }
+/* The one counting up is the live state, so it carries the pulse. */
+.exec-step.thought.live > button .label,
+.exec-step.thought.live > .label { animation: vowe-pulse 1.9s ease-in-out infinite; }
+/*
+ * The body of a thought, set like a tool row's detail rather than like prose.
+ *
+ * Scoped under `.exec` so it outranks `.turn p`, which had been winning and
+ * setting exposed reasoning in the answer's size and the answer's white. One
+ * step brighter than its label for reading, and still well short of the answer.
+ */
+.exec .thought-text {
+  margin: 1px 0 4px 26px;
+  max-width: 60ch;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-5);
+  white-space: pre-wrap;
+  text-wrap: pretty;
+}
+
+.interrupted {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--ink-6);
+}
+.interrupted .mark { color: var(--attention); }
+.unheard {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-7);
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+  text-wrap: pretty;
+}
+
+/*
+ * The live turn: the work, then the answer, in the order they happened.
+ *
+ * An ordinary block in an ordinary column — no bottom anchoring of any kind.
+ * The investigation appears under the question and the answer under the
+ * investigation, which is the shape of the conversation rather than a panel
+ * docked above the composer.
+ */
+.turn.live { gap: 8px; }
+
+/* One body renderer, so a settled answer looks exactly like the arriving one. */
+.message-body > .markdown > :first-child { margin-top: 0; }
+.message-body > .markdown > :last-child { margin-bottom: 0; }
+
+/*
+ * The answer, being written. Styled exactly as the settled one, so the moment
+ * the durable entry replaces it nothing on screen moves.
+ */
+.live-answer .markdown > :first-child { margin-top: 0; }
+.live-answer .markdown > :last-child { margin-bottom: 0; }
+
+/*
+ * While you were away: a note Vowe left, not a status card.
+ *
+ * One ribbon on the conversation's own measure, in the column rather than over
+ * it, so opening it pushes the conversation down like anything else in the
+ * flow. No enclosing box: a flat, barely lifted surface with hairlines top and
+ * bottom, the top one in the colour Vowe's presence is lit with. It arrives
+ * once — a short rise — and then holds still.
+ */
+.ribbon-lane { padding: 18px 40px 0; display: flex; justify-content: center; }
+.ribbon {
+  --ribbon-accent: #f3f7ff;
+  position: relative;
+  width: 100%;
+  max-width: var(--measure);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.022);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--ribbon-accent) 11%, transparent),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+  animation: ribbon-arrive 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.ribbon-lane.with-workbench .ribbon { max-width: var(--measure-narrow); }
+.ribbon.needs-decision { --ribbon-accent: var(--attention); }
+@keyframes ribbon-arrive {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.ribbon-row { display: flex; align-items: center; gap: 4px; padding-right: 10px; }
+.ribbon-face {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 0;
+  background: transparent;
+  padding: 11px 8px 11px 16px;
+  text-align: left;
+  border-radius: 10px;
+}
+.ribbon .ribbon-mark { flex: 0 0 18px; width: 18px; height: 18px; }
+.ribbon-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ribbon-when {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--ribbon-accent) 38%, var(--ink-8));
+}
+.ribbon-line { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.ribbon-summary { flex: 0 0 auto; font-size: 14px; line-height: 1.4; color: var(--ink-2); }
+/* One line at rest. The facts give way at a narrow width; the details hold all of them. */
+.ribbon-facts {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink-7);
+}
+.ribbon-caret { flex: 0 0 auto; display: inline-flex; color: var(--ink-9); transition: transform 220ms ease, color 160ms ease; }
+.ribbon-face:hover .ribbon-caret { color: var(--ink-5); }
+.ribbon-face:hover .ribbon-summary { color: var(--ink); }
+.ribbon.open .ribbon-caret { transform: rotate(90deg); }
+.ribbon-dismiss { opacity: 0.7; }
+.ribbon-dismiss:hover { opacity: 1; }
+
+/* Opening grows the same ribbon: a track from nothing to its content's height. */
+.ribbon-details {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 320ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 240ms ease;
+}
+.ribbon.open .ribbon-details { grid-template-rows: 1fr; opacity: 1; }
+.ribbon-details-inner { min-height: 0; overflow: hidden; }
+.ribbon-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 48px 16px;
+}
+.ribbon-details-body::before {
+  content: '';
+  display: block;
+  height: 1px;
+  background: var(--divider);
+}
+/*
+ * The brief: four short answers under small headings, set like a note rather
+ * than a report. Headings in the ribbon's own mono label voice; answers in
+ * reading ink; checks as a quiet table whose results line up.
+ */
+.ribbon-brief { display: flex; flex-direction: column; gap: 14px; }
+.ribbon-brief section { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ribbon-brief h4 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-9);
+}
+.ribbon-brief p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--ink-3); text-wrap: pretty; }
+.ribbon-brief p.changed { color: var(--ink-2); }
+.ribbon-brief .activity { color: var(--ink-6); }
+.ribbon-brief p.calm { color: var(--ink-6); }
+.ribbon-brief p.needs { color: var(--attention); }
+.ribbon-brief .verified {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: 8px minmax(0, max-content) auto;
+  column-gap: 10px;
+  row-gap: 3px;
+  justify-content: start;
+  align-items: center;
+}
+.ribbon-brief .verified li { display: contents; font-size: 13px; line-height: 1.5; }
+.ribbon-brief .verified .mark {
+  justify-self: center;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--good);
+}
+.ribbon-brief .verified .failed .mark { background: var(--bad); }
+.ribbon-brief .verified .label { color: var(--ink-3); min-width: 0; }
+.ribbon-brief .verified .runs { color: var(--ink-8); }
+.ribbon-brief .verified .result {
+  padding-left: 18px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-5);
+  text-align: right;
+}
+.ribbon-brief .verified .failed .result { color: var(--bad); }
+.ribbon-brief .touched { display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-4); }
+.ribbon-brief .touched .more { color: var(--ink-8); font-family: inherit; }
+
+/* The raw activity, one step further down, for anyone who wants the log. */
+.ribbon-activity { display: flex; flex-direction: column; gap: 6px; }
+.ribbon-activity > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  font-size: 11.5px;
+  color: var(--ink-7);
+}
+.ribbon-activity > button:hover { color: var(--ink-4); }
+.ribbon-activity > button svg { transition: transform 160ms ease; }
+.ribbon-activity.open > button svg { transform: rotate(90deg); }
+.ribbon-milestones { margin: 0; padding: 0 0 0 18px; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.ribbon-milestones li { font-size: 12px; line-height: 1.5; color: var(--ink-7); }
+.ribbon-milestones li.failed { color: var(--bad); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ribbon { animation: none; }
+  .ribbon-details, .ribbon-caret { transition: none; }
+}
+
+/* -------------------------------------------------------------- composer */
+
+/*
+ * The composer stands clear of the conversation, and grows upwards.
+ *
+ * The dock is `flex: 0 0 auto` beside a `flex: 1` conversation, which is what
+ * makes an attachment chip expand the composer into its own space rather than
+ * displace the thread: the column above it re-measures and keeps its scroll at
+ * the tail, so nothing old moves and no inset has to be computed for it. That
+ * is also why there is no `ResizeObserver` here — the layout already answers
+ * the question one would be measuring.
+ *
+ * The space between the two is here rather than only on the scrolling measure
+ * because the measure stretches to its container: its bottom padding sits at
+ * the bottom of a stretched box, which is nowhere near the last turn when the
+ * column is short. Padding on the dock is outside the scroller and therefore
+ * always between the two.
+ */
+.composer-dock {
+  flex: 0 0 auto;
+  padding: 18px 40px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.composer {
+  position: relative;
+  width: 100%;
+  max-width: var(--measure);
+  display: flex;
+  flex-direction: column;
+  /*
+   * Tight. A 16px gap between the chip row and the field opened a band of
+   * empty surface the moment anything was attached, so adding context looked
+   * like it had knocked a hole in the composer.
+   */
+  gap: 6px;
+  padding: 10px 10px 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--field);
+}
+.composer.narrow { max-width: var(--measure-narrow); }
+.composer.to-worker { border-color: rgba(228, 169, 76, 0.4); background: var(--attention-wash); }
+.composer textarea {
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  width: 100%;
+  /*
+   * Two lines at rest, and it grows from there — the component sets the height
+   * from `scrollHeight`, so the box is never taller than what is in it and the
+   * text is never clipped by a fixed floor.
+   */
+  min-height: 44px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px 4px 0;
+}
+.composer-row { display: flex; align-items: center; gap: 8px; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 6px 3px 7px;
+  border: 1px solid var(--border-2);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.028);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.chip button { display: inline-flex; border: 0; background: transparent; padding: 0; color: var(--ink-8); }
+.chip button:hover { color: var(--ink); }
+
+.round-button {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #85878e;
+}
+.round-button:hover { background: var(--hover-strong); color: var(--ink-3); }
+.round-button:disabled { color: var(--ink-11); cursor: default; background: transparent; }
+
+.destination {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #9a9ca3;
+  font-size: 12px;
+}
+.destination:hover { background: var(--hover-strong); }
+.destination.to-worker { color: var(--attention); }
+
+.send {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--ink-strong);
+}
+.send.to-worker { background: var(--attention); color: var(--on-attention); }
+.send:disabled { background: rgba(255, 255, 255, 0.06); color: var(--ink-10); cursor: default; }
+.shortcut { font-family: var(--mono); font-size: 10px; color: var(--ink-11); }
+
+.menu {
+  position: absolute;
+  bottom: 46px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--menu);
+  box-shadow: var(--shadow-menu);
+}
+.menu.context { left: 10px; width: 206px; gap: 1px; }
+.menu.destination-menu { left: 44px; width: 274px; }
+.menu .menu-label {
+  padding: 5px 9px 6px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-9);
+}
+.menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 7px 9px;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.menu button:hover { background: var(--hover-strong); }
+.menu button:disabled { color: var(--ink-8); cursor: default; background: transparent; }
+.menu button.stacked { flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 10px; }
+.menu button .title { font-size: 13px; font-weight: 500; color: var(--ink-strong); }
+.menu button .what { font-size: 11.5px; color: var(--ink-6); text-wrap: pretty; }
+.menu button:disabled .title { color: var(--ink-6); }
+
+.offer {
+  width: 100%;
+  max-width: var(--measure);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--attention-line);
+  border-radius: 10px;
+  background: rgba(228, 169, 76, 0.05);
+}
+.offer.narrow { max-width: var(--measure-narrow); }
+.offer span { flex: 1; min-width: 0; font-size: 12.5px; color: #dfd6c4; text-wrap: pretty; }
+.offer button {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--attention);
+  color: var(--on-attention);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.viewing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-9);
+}
+.viewing span {
+  overflow: hidden;
+  white-space: nowrap;
+}
+.viewing button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #85878e;
+  font-size: 11.5px;
+  white-space: nowrap;
+  font-family: var(--font);
+}
+.viewing button:hover { color: var(--ink); }
+
+/* ------------------------------------------------------------ voice stage */
+
+.voice-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  row-gap: 18px;
+  justify-items: center;
+  align-items: center;
+  padding: 28px 28px 34px;
+  overflow: hidden;
+  background: radial-gradient(
+    66% 72% at 50% 42%,
+    rgba(146, 162, 186, 0.085),
+    rgba(146, 162, 186, 0.02) 46%,
+    transparent 74%
+  );
+}
+.voice-caption {
+  width: 100%;
+  max-width: 660px;
+  height: 112px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  overflow: hidden;
+}
+.voice-caption .state {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #5a5c64;
+}
+.voice-caption p {
+  margin: 0;
+  text-align: center;
+  font-size: 21px;
+  line-height: 1.42;
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  text-wrap: pretty;
+  color: var(--ink-5);
+  transition: opacity 320ms ease;
+}
+.voice-caption p.speaking { color: var(--ink-strong); }
+.voice-controls { display: flex; align-items: center; gap: 18px; }
+.voice-controls button {
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  color: var(--ink-6);
+  font-size: 12px;
+}
+.voice-controls button:hover { color: var(--ink); }
+
+/* -------------------------------------------------------------- workbench */
+
+/*
+ * The desk fills the column it was given, and clips — the mirror of the
+ * projects panel, including the missing divider. Its width is dragged from its
+ * own edge and lives in `--right-column`; nothing here fixes a percentage.
+ */
+.workbench {
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--rail);
+}
+.workbench > * { min-width: var(--desk-width, 380px); }
+.workbench.full { min-width: 0; }
+.workbench.full > * { min-width: 0; }
+
+/*
+ * The desk's own header, which is where its close control lives.
+ *
+ * Top inset from `--chrome-top` so that control sits in the same chrome row as
+ * the sidebar's collapse and as the rail that replaces it — one vertical
+ * rhythm across the window, kept as the boundary moves rather than by pinning
+ * anything to a coordinate.
+ */
+.workbench-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  /*
+   * The right inset is this panel's clearance for the window's own desk
+   * toggle, which is fixed above this row in both states — padding inside the
+   * panel, never a column in the room.
+   */
+  padding: var(--chrome-top) var(--chrome-reserve) 12px 20px;
+}
+.workbench-header .titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.workbench-header .title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.006em;
+}
+.workbench-header .kind {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-8);
+}
+/* Why this is in front of you. Present only when there is a true answer. */
+.workbench-header .because {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--ink-6);
+}
+
+.workbench-actions { display: flex; align-items: center; gap: 6px; margin: 0 20px 16px; }
+.small-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 25px;
+  padding: 0 9px;
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+.small-button:hover { background: var(--hover-strong); }
+.small-button.on {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--ink-strong);
+}
+
+.workbench-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.artifact { display: flex; flex-direction: column; gap: 8px; }
+.artifact .path { font-family: var(--mono); font-size: 10.5px; color: var(--ink-6); }
+.artifact .note { font-size: 11.5px; color: var(--ink-6); text-wrap: pretty; }
+
+pre.code {
+  margin: 0;
+  padding: 11px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--ink-4);
+  overflow-x: auto;
+}
+pre.code .line { display: block; white-space: pre; }
+pre.code .gutter {
+  display: inline-block;
+  width: 3.5ch;
+  margin-right: 1ch;
+  text-align: right;
+  color: var(--ink-9);
+  user-select: none;
+}
+pre.code .line.focus { background: rgba(143, 176, 232, 0.1); }
+
+/*
+ * A file's change as two panes, after Magic UI's Code Comparison.
+ *
+ * Stacked in an ordinary desk and side by side once the desk is wide enough to
+ * hold two columns of code — measured on the desk, not the window. The `VS`
+ * mark only exists in the side-by-side form, where there is a seam for it to
+ * sit on. Shiki paints its own background inline, so the pane's surface has to
+ * win with `!important`.
+ */
+.diff-files {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  container-type: inline-size;
+}
+.code-comparison {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.code-comparison .sides { display: grid; grid-template-columns: minmax(0, 1fr); }
+.code-comparison .side { min-width: 0; display: flex; flex-direction: column; }
+.code-comparison .side + .side { border-top: 1px solid var(--divider); }
+.code-comparison .side-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--divider);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--ink-6);
+}
+.code-comparison .side-head svg { flex: 0 0 auto; }
+.code-comparison .side-head .name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+.code-comparison .side-head .which { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-8); }
+.code-comparison .side-note { margin: 0; padding: 10px 12px; font-size: 11.5px; color: var(--ink-7); }
+.side-code {
+  flex: 1;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+.side-code pre {
+  margin: 0;
+  padding: 6px 0;
+  min-width: max-content;
+  background: transparent !important;
+}
+.side-code pre.plain { color: var(--ink-3); }
+.side-code code { display: block; font: inherit; }
+/*
+ * Inline blocks, as in the original: Shiki separates its line spans with
+ * newlines, and block-level lines would turn each of those into a blank row.
+ */
+.side-code .line {
+  display: inline-block;
+  width: 100%;
+  min-height: 1.6em;
+  padding: 0 12px;
+  box-sizing: border-box;
+  white-space: pre;
+}
+.side-code .line.add { background: rgba(16, 185, 129, 0.16); }
+.side-code .line.remove { background: rgba(244, 63, 94, 0.16); }
+.side-code .line.gap { color: var(--ink-9); background: rgba(255, 255, 255, 0.025); font-style: italic; }
+.code-comparison .vs {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-3);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-5);
+  pointer-events: none;
+}
+@container (min-width: 640px) {
+  .code-comparison .sides { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .code-comparison .side + .side { border-top: 0; border-left: 1px solid var(--divider); }
+  .code-comparison .vs { display: flex; }
+}
+
+/* --------------------------------------------------------------- markdown */
+
+.artifact-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.artifact-head .path { flex: 1; }
+.segmented.tiny { flex: 0 0 auto; padding: 1px; }
+.segmented.tiny button { padding: 3px 8px; font-size: 10.5px; }
+
+.markdown { font-size: 13px; line-height: 1.62; color: var(--ink-3); }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 {
+  margin: 18px 0 8px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--ink-strong);
+  line-height: 1.3;
+}
+.markdown h1 { font-size: 17px; }
+.markdown h2 { font-size: 15px; }
+.markdown h3 { font-size: 13.5px; }
+.markdown h4 { font-size: 13px; color: var(--ink-2); }
+.markdown p { margin: 0 0 10px; text-wrap: pretty; }
+.markdown ul, .markdown ol { margin: 0 0 10px; padding-left: 20px; }
+.markdown li { margin: 3px 0; }
+.markdown li::marker { color: var(--ink-8); }
+.markdown blockquote {
+  margin: 0 0 10px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+  color: var(--ink-5);
+}
+.markdown code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--hover-strong);
+  color: var(--ink-2);
+}
+.markdown pre.md-code {
+  margin: 0 0 10px;
+  white-space: pre;
+}
+.markdown pre.md-code code {
+  padding: 0;
+  background: transparent;
+  font-size: 11px;
+  color: var(--ink-4);
+}
+.markdown hr { border: 0; border-top: 1px solid var(--divider); margin: 16px 0; }
+/* Not an anchor: a document being read as evidence does not navigate. */
+.markdown .md-link { color: var(--ask); border-bottom: 1px solid rgba(143, 176, 232, 0.35); }
+.markdown table {
+  width: 100%;
+  margin: 0 0 10px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.markdown th, .markdown td {
+  border: 1px solid var(--divider);
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.markdown th { color: var(--ink-2); font-weight: 600; background: rgba(255, 255, 255, 0.02); }
+.markdown img { max-width: 100%; }
+
+.raw-evidence { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height: 1.6; }
+
+.narrative {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ink-3);
+  white-space: pre-wrap;
+  text-wrap: pretty;
+}
+.memory-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 11px 13px;
+  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid var(--divider);
+}
+.memory-card .text { font-size: 13px; color: var(--ink-2); text-wrap: pretty; }
+.memory-card .when { font-family: var(--mono); font-size: 10px; color: var(--ink-9); }
+
+.desk {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--hairline);
+}
+.desk .items { display: flex; flex-wrap: wrap; gap: 6px; }
+.desk-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 6px;
+  background: transparent;
+  padding: 3px 9px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: #8a8d95;
+}
+.desk-item:hover { color: var(--ink); }
+.desk-item.active {
+  background: #23252a;
+  border-color: var(--border-3);
+  color: var(--ink-strong);
+}
+.desk-item .new { width: 5px; height: 5px; border-radius: 50%; background: var(--ask); }
+.desk-item .pinned { color: #8a8d95; }
+
+/* ---------------------------------------------------------- presence studio */
+
+.studio { flex: 1; min-width: 0; display: flex; background: var(--pane); }
+.studio-stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 28px 24px;
+}
+.studio-stage.clear-titlebar { padding-top: 56px; }
+.studio-stage .identity { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.studio-stage .identity .summary {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-4);
+}
+.studio-stage .identity .what {
+  font-size: 12px;
+  color: var(--ink-6);
+  max-width: 64ch;
+  text-wrap: pretty;
+}
+.studio-preview {
+  flex: 1 1 auto;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 14px 0 0;
+  overflow: hidden;
+}
+.studio-states {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 16px 2px 4px;
+}
+.studio-states .options { display: flex; flex-wrap: wrap; gap: 6px; }
+.state-button {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  padding: 4px 11px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.state-button.on { background: var(--chip); }
+.studio-states .note {
+  font-size: 11.5px;
+  color: var(--ink-8);
+  text-align: right;
+  max-width: 26ch;
+  text-wrap: pretty;
+}
+
+.studio-panel {
+  flex: 0 0 352px;
+  min-width: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--hairline);
+  background: var(--rail);
+  padding: 22px 22px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.panel-heading { display: flex; flex-direction: column; gap: 2px; }
+.panel-heading .title { font-size: 13px; font-weight: 600; letter-spacing: -0.006em; }
+.panel-heading .what { font-size: 11.5px; color: var(--ink-8); }
+
+.studio-section { display: flex; flex-direction: column; gap: 10px; }
+.swatches { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.swatch {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+.swatch .chip-fill {
+  position: relative;
+  display: block;
+  height: 46px;
+  border-radius: 8px;
+  border: 1px solid var(--border-2);
+}
+.swatch .label { font-size: 11px; color: var(--ink-5); }
+.swatch.on::after {
+  content: '';
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  top: -3px;
+  height: 52px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 11px;
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.045);
+}
+.segmented button {
+  position: relative;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding: 5px 0;
+  border-radius: 5px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.segmented button.on { background: var(--chip-strong); }
+
+.accents { display: flex; align-items: center; gap: 12px; }
+.accents .label { flex: 0 0 78px; font-size: 12.5px; color: var(--ink-5); }
+.accents .options { display: flex; gap: 7px; }
+.accent {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0;
+}
+.accent.on { outline: 2px solid var(--ask); outline-offset: 2px; }
+
+.slider-row { display: flex; flex-direction: column; gap: 7px; }
+.slider-row .ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--ink-6);
+}
+.slider-row .named { display: flex; align-items: baseline; gap: 10px; }
+.slider-row .named span:first-child { flex: 1; font-size: 12.5px; color: var(--ink-5); }
+.slider-row .named .value { font-family: var(--mono); font-size: 10.5px; color: var(--ink-8); }
+.slider-row input[type='range'] {
+  width: 100%;
+  accent-color: #8a8d95;
+  background: transparent;
+}
+
+.studio-panel textarea {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  resize: none;
+  outline: none;
+  width: 100%;
+}
+.studio-panel select {
+  height: 30px;
+  border: 1px solid var(--border-2);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  padding: 0 8px;
+}
+.fine { font-size: 11.5px; color: var(--ink-8); text-wrap: pretty; }
 
 /* --------------------------------------------------------------- presence */
 
@@ -234,686 +2537,79 @@ button:disabled { cursor: not-allowed; }
 .presence-signature { width: 26px; height: 26px; }
 .presence-compact { width: 36px; height: 36px; }
 .presence-project { width: 176px; height: 176px; }
-.presence-voice { width: clamp(150px, 34vh, 300px); height: clamp(150px, 34vh, 300px); }
+/*
+ * Square, and never larger than the row it is in.
+ *
+ * The stage clips what overflows it, so a short window used to crop the orb
+ * from below. Bounded by its own cell and kept square by its aspect ratio, it
+ * shrinks instead of being cut.
+ */
+.presence-voice {
+  width: clamp(150px, 34vh, 300px);
+  height: clamp(150px, 34vh, 300px);
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 1 / 1;
+}
 .presence-studio { width: clamp(180px, 34vh, 420px); height: clamp(180px, 34vh, 420px); }
 
-/* "Your Vowe": one identity, above the work it is watching. */
-.vowe-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 2px 18px 10px;
-  min-width: 0;
-}
-.vowe-row .who {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.vowe-row .name { font-size: 12.5px; font-weight: 500; color: var(--text); }
-.vowe-row .doing {
-  font-size: 10.5px;
-  color: var(--text-3);
-  font-family: var(--mono);
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sidebar-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 12px 6px 18px;
-}
-.sidebar-heading h1 {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-2);
-}
-.session-list {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 0 8px 12px;
-}
-.group-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-3);
-  padding: 8px 10px 4px;
-}
-.group-label + .session-row { margin-top: 0; }
-.session-list .group-label:not(:first-child) { padding-top: 14px; }
-.sidebar-empty { padding: 10px 10px; font-size: 12px; color: var(--text-3); }
+/* Hover grows the project orb, as in the design. */
+.presence-project.hoverable { transition: width 320ms cubic-bezier(0.2, 0.7, 0.2, 1), height 320ms cubic-bezier(0.2, 0.7, 0.2, 1); }
+.presence-project.hoverable:hover { width: 208px; height: 208px; }
+.presence-compact.header { width: 34px; height: 34px; transition: width 200ms ease, height 200ms ease; }
+.presence-compact.header:hover { width: 40px; height: 40px; }
 
-.session-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  text-align: left;
-  border: 0;
-  border-radius: 7px;
-  padding: 7px 10px;
-  background: transparent;
-  color: var(--text);
-  min-width: 0;
-}
-.session-row:hover { background: color-mix(in srgb, var(--side-sel) 55%, transparent); }
-.session-row.selected { background: var(--side-sel); }
-.session-row .line1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.session-row .label {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.session-row .observe { color: var(--text-3); flex-shrink: 0; display: inline-flex; }
-.session-row .activity {
-  padding-left: 16px;
-  font-size: 11.5px;
-  color: var(--text-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sidebar-footer {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 12px 18px 14px;
-  border-top: 1px solid var(--line);
-  font-size: 11.5px;
-  color: var(--text-2);
-}
-.sidebar-footer .sub { color: var(--text-3); }
-
-.dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; display: inline-block; }
-.dot.small { width: 7px; height: 7px; flex-basis: 7px; }
-.dot.working { background: var(--good); }
-.dot.waiting { background: var(--warn); }
-.dot.starting { background: var(--ask); }
-.dot.idle { background: var(--idle); }
-.dot.finished, .dot.unknown { background: var(--done); }
-
-/* ── Detail ──────────────────────────────────────────────── */
-
-.detail { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-
-.detail-header {
-  height: 52px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 16px 0 28px;
-  border-bottom: 1px solid var(--line);
-}
-.detail-header .titles { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.detail-header .title {
-  font-size: 13.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.detail-header .subtitle {
-  font-size: 11.5px;
-  color: var(--text-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 12px;
-  background: var(--chip);
-  font-size: 12px;
-  font-weight: 500;
-  flex-shrink: 0;
-}
-
-.detail-main { flex: 1; min-height: 0; display: flex; }
-.detail-scroll {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 32px;
-  padding: 28px 40px 28px 28px;
-}
-.detail-scroll > section { max-width: 680px; }
-
-/* Now — the interpreted state */
-.now { display: flex; flex-direction: column; gap: 12px; }
-.now .meta { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-3); flex-wrap: wrap; }
-.phase-chip {
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 8px;
-  border-radius: 5px;
-  background: var(--chip);
-  color: var(--text);
-  font-weight: 500;
-  text-transform: capitalize;
-}
-.now .headline {
-  margin: 0;
-  font-size: 20px;
-  line-height: 1.35;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  text-wrap: pretty;
-  overflow-wrap: anywhere;
-}
-.now .task { margin: 0; color: var(--text-2); text-wrap: pretty; }
-.now .task .k { color: var(--text-3); margin-right: 6px; }
-.progress { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 0; padding: 0; list-style: none; }
-.progress li { display: flex; gap: 10px; align-items: flex-start; overflow-wrap: anywhere; }
-.progress svg { flex-shrink: 0; margin-top: 3px; color: var(--good); }
-.now .latest { margin: 0; font-size: 12.5px; color: var(--text-2); }
-.now .latest .k { color: var(--text-3); margin-right: 6px; }
-.now .provenance { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); flex-wrap: wrap; }
-.now .empty-state { margin: 0; color: var(--text-2); }
-
-.notice {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 14px 16px;
-  border-radius: 10px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-}
-.notice strong { font-weight: 600; }
-.notice p { margin: 0; color: var(--text-2); text-wrap: pretty; }
-.notice code.inline {
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--code);
-  font-family: var(--mono);
-  font-size: 12px;
-}
-.notice code {
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--code);
-  font-family: var(--mono);
-  font-size: 12px;
-}
-
-/* Vo — the voice strip under the title bar */
-.vo-bar {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 16px 9px 28px;
-  border-bottom: 1px solid var(--line);
-  background: var(--ask-tint);
-}
-.vo-bar.error-bar { background: var(--instr-tint); }
-.vo-bar .label { font-size: 12.5px; font-weight: 500; }
-.vo-bar .spacer, .obs-head .spacer { flex: 1; }
-.warn-chip {
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 8px;
-  border-radius: 5px;
-  background: var(--instr-tint);
-  color: var(--instr);
-  font-size: 11.5px;
-  font-weight: 500;
-}
-.btn.tiny { height: 26px; padding: 0 12px; font-size: 12px; }
-
-/* Observation — window notes, surfaced candidates, the preference */
-.observation { display: flex; flex-direction: column; gap: 14px; }
-.obs-head { display: flex; align-items: center; gap: 10px; }
-.obs-head h2 { margin: 0; font-size: 11px; font-weight: 600; color: var(--text-2); }
-.obs-head .state-chip {
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-  border-radius: 5px;
-  background: var(--chip);
-  font-size: 11.5px;
-  font-weight: 500;
-}
-.obs-head .count { font-size: 11.5px; color: var(--text-3); }
-.observation .field input { height: 30px; font-family: var(--font); font-size: 12.5px; }
-.observation h3 { margin: 4px 0 0; font-size: 11px; font-weight: 600; color: var(--text-3); }
-.observation .none { margin: 0; color: var(--text-3); text-wrap: pretty; }
-
-.degraded {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  font-size: 12.5px;
-  color: var(--text-2);
-  text-wrap: pretty;
-}
-.degraded svg { flex-shrink: 0; margin-top: 2px; color: var(--text-3); }
-
-.surfaced { display: flex; flex-direction: column; gap: 10px; }
-.surface {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--surface);
-}
-.surface.spoken { background: var(--instr-tint); }
-.surface .line { display: flex; align-items: baseline; gap: 8px; }
-.surface .message { overflow-wrap: anywhere; }
-.surface .why { font-size: 12.5px; color: var(--text-2); }
-.surface .decision { font-size: 11.5px; color: var(--text-3); }
-.action-chip {
-  height: 19px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 7px;
-  border-radius: 5px;
-  background: var(--chip);
-  color: var(--text-2);
-  font-size: 11px;
-  font-weight: 600;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.action-chip.spoken { background: var(--instr); color: var(--on-instr); }
-
-.notes {
-  display: grid;
-  grid-template-columns: 46px minmax(0, 1fr);
-  row-gap: 14px;
-  column-gap: 14px;
-}
-.notes .w {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-3);
-  padding-top: 2px;
-}
-.note { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
-.note .summary { overflow-wrap: anywhere; }
-.note .chip {
-  margin-left: 8px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--chip);
-  color: var(--text-2);
-  font-size: 11px;
-}
-.note .aside { font-size: 12.5px; color: var(--text-2); }
-.note .link-btn { font-size: 12.5px; }
-
-/* Activity */
-.activity h2 { margin: 0 0 14px; font-size: 11px; font-weight: 600; color: var(--text-2); }
-.activity .none { margin: 0; color: var(--text-3); }
-.timeline {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  row-gap: 12px;
-  column-gap: 14px;
-}
-.timeline .time { font-family: var(--mono); font-size: 11px; color: var(--text-3); padding-top: 2px; }
-.timeline .observed { color: var(--text-2); overflow-wrap: anywhere; }
-.timeline .observed.attention { color: var(--warn); }
-.timeline .note { color: var(--text-3); font-size: 12px; }
-.timeline .said { display: flex; flex-direction: column; gap: 2px; }
-.timeline .block {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--surface);
-}
-.timeline .block.ask { background: var(--ask-tint); }
-.timeline .block.instr { background: var(--instr-tint); }
-.timeline .who { font-size: 11px; font-weight: 600; color: var(--text-2); }
-.timeline .who.ask { color: var(--ask); }
-.timeline .who.instr { color: var(--instr); }
-.timeline .text { white-space: pre-wrap; overflow-wrap: anywhere; }
-
-/* An investigation in flight. Quiet: it resolves into the answer in place. */
-.timeline .pending {
-  font-size: 12px;
-  color: var(--text-3);
-  animation: breathe 1.6s ease-in-out infinite;
-}
-@keyframes breathe { 50% { opacity: 0.45; } }
-
-/* What an answer was grounded in. Modelled on .now .provenance. */
-.timeline .refs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--text-3);
-}
-.timeline .refs-count { font-weight: 600; }
-.timeline .refs code {
-  font-family: var(--mono);
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--code);
-  color: var(--text-3);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Evidence panel */
-.evidence {
-  width: 380px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  border-left: 1px solid var(--line);
-  background: var(--surface);
-  min-height: 0;
-}
-.evidence-head { display: flex; align-items: center; gap: 8px; padding: 14px 12px 10px 20px; }
-.evidence-head .titles { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.evidence-head .title { font-size: 13px; font-weight: 600; }
-.evidence-head .sub { font-size: 11.5px; color: var(--text-3); }
-.evidence .segmented { margin: 0 20px 12px; }
-.evidence-list {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 0 10px 16px;
-  font-family: var(--mono);
-  font-size: 11.5px;
-}
-.evidence-list .none { font-family: var(--font); color: var(--text-3); padding: 8px 10px; font-size: 12px; }
-.ev { border-radius: 6px; }
-.ev.cited { background: var(--ask-tint); }
-.ev.open { padding-bottom: 10px; }
-.ev-row {
-  display: grid;
-  grid-template-columns: 34px 118px minmax(0, 1fr);
-  gap: 8px;
-  width: 100%;
-  padding: 7px 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  text-align: left;
-  font: inherit;
-}
-.ev-row:hover { background: color-mix(in srgb, var(--chip) 70%, transparent); }
-.ev.cited .ev-row:hover { background: transparent; }
-.ev-row .seq { color: var(--text-3); }
-.ev-row .kind { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ev-row .sum { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ev-ref { display: block; padding: 0 10px; font-size: 10.5px; color: var(--text-3); overflow-wrap: anywhere; }
-.ev pre {
-  margin: 8px 10px 0;
-  padding: 10px;
-  border-radius: 6px;
-  background: var(--code);
-  font: inherit;
-  font-size: 11px;
-  line-height: 1.5;
-  overflow: auto;
-  max-height: 320px;
-}
-
-/* Composer */
-.composer-wrap { flex-shrink: 0; padding: 12px 20px 16px; }
-.composer {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: var(--win);
-  border: 1px solid var(--line-strong);
-  box-shadow: 0 1px 3px var(--shadow);
-}
-.composer.instruct { background: var(--instr-tint); border-color: var(--instr); }
-.composer .top { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.composer .hint { font-size: 11.5px; color: var(--text-3); min-width: 0; }
-.composer.instruct .hint { color: var(--instr); }
-.composer textarea {
-  border: 0;
-  outline: none;
-  resize: none;
-  background: transparent;
-  font-size: 13.5px;
-  padding: 2px 0;
-  width: 100%;
-}
-.composer textarea::placeholder { color: var(--text-3); }
-.composer .bottom { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
-.composer .kbd { font-size: 11.5px; color: var(--text-3); }
-.composer .error { margin-right: auto; }
-
-.error { color: var(--bad); font-size: 12.5px; }
-
-/* Empty / placeholder */
-.placeholder { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px; }
-.placeholder .inner { width: 460px; display: flex; flex-direction: column; gap: 20px; }
-.placeholder h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.015em; }
-.placeholder p { margin: 0; color: var(--text-2); font-size: 13.5px; text-wrap: pretty; }
-.placeholder .fine { font-size: 12px; color: var(--text-3); }
-
-/* ── Sheet ───────────────────────────────────────────────── */
+/* ----------------------------------------------------------------- sheet */
 
 .scrim {
   position: fixed;
   inset: 0;
-  background: var(--scrim);
+  z-index: 20;
   display: flex;
+  align-items: center;
   justify-content: center;
-  align-items: flex-start;
-  padding-top: 52px;
-  z-index: 10;
+  background: rgba(0, 0, 0, 0.45);
 }
 .sheet {
-  width: 480px;
+  width: min(560px, calc(100vw - 80px));
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 22px 24px 20px;
-  border-radius: 12px;
-  background: var(--win);
-  box-shadow: 0 20px 50px var(--shadow-strong), 0 0 0 0.5px var(--line-strong);
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--menu);
+  box-shadow: var(--shadow-menu);
 }
-.sheet h2 { margin: 0; font-size: 15px; font-weight: 600; }
-.sheet .intro { margin: 4px 0 0; color: var(--text-2); }
-.field { display: flex; flex-direction: column; gap: 6px; }
-.field label { font-size: 12px; font-weight: 500; color: var(--text-2); }
-.field .row { display: flex; gap: 8px; }
-.field input, .field textarea {
-  min-width: 0;
-  flex: 1;
-  border-radius: 6px;
-  border: 1px solid var(--line-strong);
-  background: var(--field);
-  color: var(--text);
-}
-.field input { height: 30px; padding: 0 10px; font-family: var(--mono); font-size: 12px; }
-.field textarea { padding: 8px 10px; resize: none; }
-.field textarea::placeholder, .field input::placeholder { color: var(--text-3); }
-.sheet .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
-
-/* ── Projects ─────────────────────────────────────────────────────────────
- * The sidebar's hierarchy: a repository, and the work happening inside it.
- * Extends the session-row vocabulary rather than introducing a second one.
- */
-
-.project-block { display: flex; flex-direction: column; }
-
-.project-row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  border-radius: 6px;
-  margin: 1px 0;
-}
-.project-row:hover { background: color-mix(in srgb, var(--side-sel) 45%, transparent); }
-.project-row.selected { background: var(--side-sel); }
-
-.project-row .twisty {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 26px;
-  border: 0;
-  background: none;
-  color: var(--text-3);
-  cursor: pointer;
-  border-radius: 5px;
-}
-.project-row .twisty:hover { color: var(--text); }
-
-.project-row .project-name {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px 4px 2px;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.project-row .project-name .label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.005em;
-}
-.project-row .project-name .count {
-  flex: 0 0 auto;
-  min-width: 18px;
-  padding: 0 5px;
+.sheet h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.sheet input, .sheet textarea {
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: var(--chip);
-  color: var(--text-2);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 17px;
-  text-align: center;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 13px;
+  padding: 9px 11px;
+  outline: none;
+  width: 100%;
+  resize: none;
 }
-.project-row.selected .project-name .count { background: var(--win); }
+.sheet .row { display: flex; align-items: center; gap: 10px; }
+.sheet .actions { display: flex; justify-content: flex-end; gap: 10px; }
 
-/* Sessions sit under their project, indented past the twisty. */
-.project-children { display: flex; flex-direction: column; padding-left: 20px; }
-.project-children .session-row { margin: 0; }
-.group-label.nested { padding-top: 8px; padding-left: 8px; }
-
-/* ── Project Room ────────────────────────────────────────────────────────
- * Everything happening in one repository. Built from session state alone —
- * nothing here is inferred, and no model is called to render it.
- */
-
-.room { display: flex; flex-direction: column; gap: 4px; padding-bottom: 28px; }
-
-.room-label {
-  margin: 22px 0 6px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--text-3);
-}
-.room-label:first-child { margin-top: 4px; }
-
-.room-row {
+.notice {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  width: 100%;
-  padding: 11px 12px;
-  border: 0;
-  border-radius: 8px;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  max-width: 60ch;
 }
-.room-row:hover { background: var(--surface); }
-
-.room-row .room-row-top {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-}
-.room-row .name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
-  font-weight: 550;
-  letter-spacing: -0.008em;
-}
-.room-row .state { flex: 0 0 auto; font-size: 12px; color: var(--text-3); }
-.room-row .tick { display: inline-flex; color: var(--done); flex: 0 0 auto; }
-
-.room-row .room-row-note {
-  padding-left: 17px;
-  color: var(--text-2);
-  font-size: 13px;
-  text-wrap: pretty;
-}
-.room-row .room-row-meta {
-  padding-left: 17px;
-  color: var(--text-3);
+.notice strong { font-size: 13px; font-weight: 600; }
+.notice p { margin: 0; font-size: 12.5px; color: var(--ink-6); text-wrap: pretty; }
+.notice code {
+  font-family: var(--mono);
   font-size: 11.5px;
+  color: var(--ink-4);
 }
-.room-row.recent .name { font-weight: 500; color: var(--text-2); }
-
-.room-empty { margin: 8px 0; color: var(--text-2); text-wrap: pretty; }
-
-/* The project header's path: present, but clearly secondary. */
-.detail-header .subtitle .path { color: var(--text-3); }
-
-.placeholder .overview { color: var(--text); font-weight: 550; }

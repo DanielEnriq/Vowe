@@ -1,4 +1,5 @@
 import type { AgentSession } from '../types/session.js';
+import { conciseTitle } from './session-title.js';
 
 /**
  * Human-readable names for observed work.
@@ -30,6 +31,18 @@ const NOISE_PATTERNS: RegExp[] = [
 ];
 
 /**
+ * The same wrappers, unpaired.
+ *
+ * The patterns above remove a wrapper *and* its contents, which is right when
+ * both tags are present. A task that was truncated, or whose closing tag is
+ * malformed, leaves an orphan opening tag behind — and that orphan was being
+ * shown as a session's name. This strips the tags alone and keeps whatever the
+ * developer actually wrote between them.
+ */
+const ORPHAN_WRAPPER =
+  /<\/?\s*(?:pasted[_-]?content|paste|document|documents|attachment|attachments|system-reminder|local-command-[a-z-]+|command-[a-z]+|user[_-]?prompt|user-prompt-submit-hook|userStyle|file[_-]?contents?|context|instructions?)\b[^>]*>/gi;
+
+/**
  * A provider's last-resort label, e.g. `claude-code session 1a2b3c4d`.
  *
  * That is an internal identifier wearing a sentence, and showing it to the
@@ -37,10 +50,27 @@ const NOISE_PATTERNS: RegExp[] = [
  */
 const GENERATED_LABEL = /\bsession\s+[0-9a-f][0-9a-f-]{5,}$/i;
 
-const DEFAULT_TITLE_LIMIT = 80;
-const DEFAULT_ACTIVITY_LIMIT = 120;
+/*
+ * Ceilings on what reaches the screen, not marks on what got there.
+ *
+ * These bound a paste that ran to five thousand characters; they are not how
+ * the text is shortened to fit. That is the reader's job and it is done in
+ * layout, by fading the line out at the edge of its box — so nothing here
+ * appends an ellipsis, and the limits are generous enough that the cut is
+ * almost always well past the edge the fade happens at.
+ */
+const DEFAULT_TITLE_LIMIT = 160;
+const DEFAULT_ACTIVITY_LIMIT = 240;
 
-/** First meaningful line, wrappers removed, whitespace collapsed, truncated. */
+/**
+ * First meaningful line, wrappers removed, whitespace collapsed, bounded.
+ *
+ * The bound falls on a word boundary and leaves no mark. An earlier version
+ * ended the string with `…`, which put a second kind of truncation on screen a
+ * line away from the first: a name that dissolved at the edge of its column
+ * above an activity line that stopped with three dots in the middle of it.
+ * One truncation, and it is the one the layout performs.
+ */
 export function plainText(
   value: string | null | undefined,
   limit = DEFAULT_TITLE_LIMIT,
@@ -48,11 +78,17 @@ export function plainText(
   if (!value) return '';
   let out = value;
   for (const pattern of NOISE_PATTERNS) out = out.replace(pattern, ' ');
+  out = out.replace(ORPHAN_WRAPPER, ' ');
 
   const line = out.split('\n').find((candidate) => candidate.trim()) ?? '';
   const collapsed = line.replace(/\s+/g, ' ').trim();
   if (collapsed.length <= limit) return collapsed;
-  return `${collapsed.slice(0, limit - 1)}…`;
+
+  // Cut back to the last whole word, so the string the fade dissolves is
+  // words rather than a word broken in half.
+  const cut = collapsed.slice(0, limit);
+  const lastSpace = cut.lastIndexOf(' ');
+  return (lastSpace > limit * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd();
 }
 
 /**
@@ -63,15 +99,27 @@ export function plainText(
  * over, and the working directory is a better last resort than an opaque one.
  */
 export function sessionTitle(session: AgentSession): string {
+  // A title Vowe generated from the task beats anything derivable, because it
+  // was produced from the work rather than from the first line of it.
+  const generated = session.generatedTitle?.trim();
+  if (generated) return generated;
+
   const candidates = [
     session.semanticState?.task,
     session.task,
     session.displayLabel,
   ];
 
+  /*
+   * Everything below here is a *description* of the work being pressed into
+   * service as a name, so it is cut to the same length a name is allowed to
+   * be. Without this the title contract only governed the model, and a session
+   * the model had not named yet showed a full sentence down the sidebar.
+   */
   for (const candidate of candidates) {
     const text = plainText(candidate);
-    if (text && !GENERATED_LABEL.test(text)) return text;
+    if (!text || GENERATED_LABEL.test(text)) continue;
+    return conciseTitle(text) ?? text;
   }
 
   const directory = lastSegment(session.cwd);

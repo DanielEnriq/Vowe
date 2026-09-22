@@ -4,6 +4,7 @@ import type {
   ConversationDelivery,
   ConversationEntry,
   DeliveryProgress,
+  ProjectConversationEntry,
 } from '../types/conversation.js';
 import type {
   RunCompletion,
@@ -30,6 +31,10 @@ export interface WindowQuery {
  * An object rather than a bare session id, so this can gain a field — which
  * entry, which role — without breaking every listener.
  */
+export interface ProjectConversationChange {
+  projectId: string;
+}
+
 export interface ConversationChange {
   sessionId: string;
 }
@@ -66,6 +71,20 @@ export interface EventStore {
   getSession(sessionId: string): AgentSession | null;
 
   /**
+   * Give a session a readable name, once.
+   *
+   * Its own call rather than part of `upsertSession`, because the adapter that
+   * reports a session has no title to report and would otherwise clear this
+   * one on every discovery pass.
+   *
+   * **Write-once.** A session that already has a title keeps it: the column is
+   * the delimiter that says a session has been named, so the check belongs in
+   * the write and not in whoever happened to call it. `false` means there was
+   * already a name there — an ordinary outcome, never an error.
+   */
+  setGeneratedTitle(sessionId: string, title: string): Promise<boolean>;
+
+  /**
    * Assigns identity and ordering, then persists. Returns `null` when the
    * event was already stored (matched by its raw reference), which makes
    * restart-and-replay safe.
@@ -100,6 +119,32 @@ export interface EventStore {
     delivery?: Omit<ConversationDelivery, 'id' | 'entryId' | 'sessionId'>,
   ): Promise<ConversationEntry | null>;
   getConversation(sessionId: string, limit?: number): ConversationEntry[];
+
+  // ------------------------------------------------- project conversation
+
+  /**
+   * The durable thread for a project, kept apart from every session's.
+   *
+   * A project conversation is about the repository and the work across it; a
+   * session conversation is about one worker's run. Separate storage because
+   * they are separate threads, and because nothing that reads one should have
+   * to remember to exclude the other.
+   *
+   * `null` on a duplicate origin, exactly as the session form does.
+   */
+  appendProjectConversationEntry(
+    entry: ProjectConversationEntry,
+  ): Promise<ProjectConversationEntry | null>;
+  getProjectConversation(projectId: string, limit?: number): ProjectConversationEntry[];
+
+  /**
+   * Its own subscription, for the same reason it is its own table: a Project
+   * Room re-reading because some session's conversation moved would be
+   * reacting to work it is not showing.
+   */
+  onProjectConversationChanged(
+    listener: (change: ProjectConversationChange) => void,
+  ): () => void;
 
   // ------------------------------------------------- conversation delivery
 

@@ -1,6 +1,8 @@
+import type { ContextRef } from '../context/refs.js';
 import type {
   DelegatedQuestionRunner,
   DelegatedResult,
+  ProjectDelegatedResult,
 } from '../delegation/delegated-question-runner.js';
 import type { EventStore } from '../store/event-store.js';
 import type { ConversationEntry } from '../types/conversation.js';
@@ -48,10 +50,37 @@ export class CompanionService {
    * arrives with whatever id the UI held, and failing loudly on a stale one is
    * more useful than investigating nothing.
    */
-  async ask(sessionId: string, question: string): Promise<DelegatedResult> {
+  async ask(
+    sessionId: string,
+    question: string,
+    contextRefs?: ContextRef[],
+  ): Promise<DelegatedResult> {
     if (!this.store.getSession(sessionId)) throw new UnknownSessionError(sessionId);
     // No `liveConversation`: nothing has been said out loud. The investigation
     // prompt omits that section entirely when it is empty.
-    return this.delegated.answer({ sessionId, question });
+    return this.delegated.answer({
+      sessionId,
+      question,
+      ...(contextRefs?.length ? { contextRefs } : {}),
+    });
+  }
+
+  /**
+   * The same question, asked about a repository instead of one run.
+   *
+   * Here rather than on a second service because it is the same capability at
+   * a different scope, and because the facade is what the main process holds:
+   * one object that can answer a question, whichever room asked it.
+   */
+  async askProject(
+    projectId: string,
+    question: string,
+    contextRefs?: ContextRef[],
+  ): Promise<ProjectDelegatedResult> {
+    return this.delegated.answerProject({
+      projectId,
+      question,
+      ...(contextRefs?.length ? { contextRefs } : {}),
+    });
   }
 }

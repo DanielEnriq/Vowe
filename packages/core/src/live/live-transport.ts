@@ -16,6 +16,17 @@ export interface LiveTransport {
   readonly unavailableReason: string | null;
 
   /**
+   * The voices this provider will actually accept, for a picker to offer.
+   *
+   * Declared by the transport because only the transport knows. A settings
+   * screen that listed voices from a constant would eventually offer one the
+   * provider had dropped, and the failure would land on the developer mid-call.
+   * Empty means "no choice to offer" — which is also what an unavailable
+   * transport says.
+   */
+  readonly voices: readonly LiveVoice[];
+
+  /**
    * Exchange the renderer's SDP offer for an answer.
    *
    * This runs in the main process precisely so the credential never reaches the
@@ -39,6 +50,26 @@ export interface CreateLiveSessionOptions {
   sdpOffer: string;
   /** Vo's standing instructions. Immutable once the session starts. */
   instructions: string;
+  /**
+   * Which voice to speak in, when the developer has chosen one.
+   *
+   * Absent leaves the transport's own default in place. An id the provider
+   * does not recognise is the transport's problem to reject, not this
+   * interface's to validate.
+   */
+  voice?: string;
+}
+
+/**
+ * One voice, named.
+ *
+ * Deliberately just an id and a label. The approved design shows a register
+ * underneath each name — "Calm, low register" — and no provider publishes
+ * that, so writing one here would be characterising a voice nobody measured.
+ */
+export interface LiveVoice {
+  id: string;
+  label: string;
 }
 
 export interface CreatedLiveSession {
@@ -101,6 +132,8 @@ export class UnavailableLiveTransport implements LiveTransport {
   readonly name = 'unavailable';
   readonly available = false;
   readonly unavailableReason: string;
+  /** Nothing to choose between when nothing can speak. */
+  readonly voices: readonly LiveVoice[] = [];
 
   constructor(reason = 'No voice credential is configured.') {
     this.unavailableReason = reason;

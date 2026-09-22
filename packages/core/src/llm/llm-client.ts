@@ -57,6 +57,14 @@ export interface SessionQuestionInput {
   question: string;
   task: string | null;
   cwd: string | null;
+  /**
+   * How this developer asked Vowe to talk, composed from their temperament.
+   *
+   * Appended to the system prompt rather than the question, because it governs
+   * every answer rather than this one. Absent means nobody set a preference and
+   * the prompt stands as written — never a silently applied middle setting.
+   */
+  guidance?: string;
   semanticState: SemanticState | null;
   /** Observed evidence the answer must be grounded in, oldest first. */
   events: ObservedEvent[];

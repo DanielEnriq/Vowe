@@ -2,6 +2,7 @@ import type { ContextRef } from '../../context/refs.js';
 import type {
   ConversationDelivery,
   ConversationEntry,
+  ProjectConversationEntry,
   DeliveryModality,
   DeliveryStatus,
 } from '../../types/conversation.js';
@@ -116,6 +117,9 @@ export function toSession(row: Row): AgentSession {
     // Required keys that are nullable in the domain: always assigned.
     task: strOrNull(row['task']),
     displayLabel: str(row['display_label']),
+    ...(row['generated_title'] === null || row['generated_title'] === undefined
+      ? {}
+      : { generatedTitle: str(row['generated_title']) }),
     cwd: strOrNull(row['cwd']),
     projectId: strOrNull(row['project_id']),
     status: str(row['status']) as AgentSession['status'],
@@ -224,6 +228,42 @@ export function toConversationEntry(row: Row): ConversationEntry {
   }
   // All three or none: a provider identity is one fact in three columns, and
   // the schema only ever writes them together.
+  if (row['origin_provider'] !== null) {
+    entry.origin = {
+      provider: str(row['origin_provider']),
+      kind: str(row['origin_kind']),
+      id: str(row['origin_id']),
+    };
+  }
+  return entry;
+}
+
+export function toProjectConversationEntry(row: Row): ProjectConversationEntry {
+  const id = str(row['id']);
+  const entry: ProjectConversationEntry = {
+    id,
+    projectId: str(row['project_id']),
+    at: str(row['at']),
+    role: str(row['role']) as ProjectConversationEntry['role'],
+    text: str(row['text']),
+  };
+  if (row['refs_json'] !== null) {
+    entry.refs = parse<ContextRef[]>(row['refs_json'], 'project_conversation_entries', id);
+  }
+  if (row['provenance_json'] !== null) {
+    entry.provenance = parse<ProjectConversationEntry['provenance']>(
+      row['provenance_json'],
+      'project_conversation_entries',
+      id,
+    );
+  }
+  if (row['investigation_json'] !== null) {
+    entry.investigation = parse<ProjectConversationEntry['investigation']>(
+      row['investigation_json'],
+      'project_conversation_entries',
+      id,
+    );
+  }
   if (row['origin_provider'] !== null) {
     entry.origin = {
       provider: str(row['origin_provider']),

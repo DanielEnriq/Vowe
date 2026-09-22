@@ -1,5 +1,6 @@
 import {
   DEFAULT_PRESENCE_PROFILE,
+  NEUTRAL_LIGHT_RESPONSE,
   type PresenceMaterial,
   type PresenceMotion,
   type PresenceProfile,
@@ -52,7 +53,7 @@ export interface PresenceVisuals {
   irid: number;
   /** Lit colour, `#rrggbb`. Overridden by the profile accent. */
   colorA: string;
-  /** Shadow colour, `#rrggbb`. Always the material's. */
+  /** Shadow colour, `#rrggbb`. Overridden by the profile body accent. */
   colorB: string;
   /** Rotational drift multiplier. */
   spin: number;
@@ -108,7 +109,7 @@ const STATES: Record<PresenceState, StatePreset> = {
   observing:   { amp: 0.085, freq: 1.9, speed: 0.45, torsion: 0.010, jitter: 0.18, size: 1.00, bright: 0.95, rim: 1.00, halo: 0.10, pulse: 0.01, warm: 0.0 },
   joining:     { amp: 0.075, freq: 2.1, speed: 0.85, torsion: 0.005, jitter: 0.22, size: 1.02, bright: 0.90, rim: 1.05, halo: 0.18, pulse: 0.02, warm: 0.0 },
   listening:   { amp: 0.070, freq: 2.5, speed: 0.70, torsion: 0.000, jitter: 0.12, size: 1.12, bright: 1.05, rim: 1.15, halo: 0.55, pulse: 0.05, warm: 0.0 },
-  thinking:    { amp: 0.165, freq: 3.4, speed: 1.05, torsion: 0.075, jitter: 0.30, size: 0.92, bright: 0.95, rim: 1.10, halo: 0.12, pulse: 0.00, warm: 0.0 },
+  thinking:    { amp: 0.165, freq: 3.4, speed: 1.05, torsion: 0.075, jitter: 0.30, size: 0.92, bright: 0.95, rim: 1.10, halo: 0.12, pulse: 0.07, warm: 0.0 },
   speaking:    { amp: 0.125, freq: 2.0, speed: 0.95, torsion: 0.020, jitter: 0.16, size: 1.08, bright: 1.15, rim: 1.05, halo: 0.28, pulse: 0.09, warm: 0.0 },
   attention:   { amp: 0.105, freq: 5.6, speed: 1.45, torsion: 0.030, jitter: 0.45, size: 0.86, bright: 1.05, rim: 1.25, halo: 0.34, pulse: 0.03, warm: 0.7 },
   unavailable: { amp: 0.020, freq: 1.2, speed: 0.05, torsion: 0.000, jitter: 0.08, size: 0.88, bright: 0.34, rim: 0.40, halo: 0.00, pulse: 0.00, warm: 0.0 },
@@ -139,12 +140,23 @@ interface MaterialPreset {
   irid: number;
 }
 
-/** Only the four the profile offers. The design's other four are not shipped. */
+/**
+ * All eight the design offers, taken from its own swatch gradients.
+ *
+ * A material is a preset over one parameter set, not a renderer — which is why
+ * the design's full set ships while its extra *forms* do not. `irid` is what
+ * separates the two that would otherwise be close: iridescent travels hue
+ * across the surface, pearl only warms it.
+ */
 const MATERIALS: Record<PresenceMaterial, MaterialPreset> = {
-  silver:   { colorA: '#f3f7ff', colorB: '#6e7a87', gain: 1.05, opacity: 0.88, irid: 0.05 },
-  obsidian: { colorA: '#a3aab6', colorB: '#13151a', gain: 1.15, opacity: 0.95, irid: 0.0 },
-  matrix:   { colorA: '#b9ffd4', colorB: '#0d1712', gain: 1.2,  opacity: 0.92, irid: 0.0 },
-  plasma:   { colorA: '#d3e2ff', colorB: '#3a2a6d', gain: 1.15, opacity: 0.86, irid: 0.35 },
+  chrome:     { colorA: '#ffffff', colorB: '#464b52', gain: 1.1,  opacity: 0.9,  irid: 0.02 },
+  silver:     { colorA: '#f3f7ff', colorB: '#6e7a87', gain: 1.05, opacity: 0.88, irid: 0.05 },
+  obsidian:   { colorA: '#a3aab6', colorB: '#13151a', gain: 1.15, opacity: 0.95, irid: 0.0 },
+  frost:      { colorA: '#eef6ff', colorB: '#5c7080', gain: 0.95, opacity: 0.8,  irid: 0.1 },
+  iridescent: { colorA: '#ffd6f0', colorB: '#6f5fa8', gain: 1.1,  opacity: 0.86, irid: 0.75 },
+  matrix:     { colorA: '#b9ffd4', colorB: '#0d1712', gain: 1.2,  opacity: 0.92, irid: 0.0 },
+  plasma:     { colorA: '#d3e2ff', colorB: '#3a2a6d', gain: 1.15, opacity: 0.86, irid: 0.35 },
+  pearl:      { colorA: '#fff4e8', colorB: '#8d7f9c', gain: 1.0,  opacity: 0.9,  irid: 0.28 },
 };
 
 /** Temperament of the motion, not its meaning. State still decides that. */
@@ -152,13 +164,33 @@ const MOTIONS: Record<PresenceMotion, number> = {
   calm: 0.55,
   fluid: 1.0,
   reactive: 1.45,
+  energetic: 1.9,
 };
+
+/**
+ * What `lightResponse` does to shading, at the ends of its range.
+ *
+ * Narrow on purpose. The dial is meant to change how hard the surface reads,
+ * not to be able to extinguish the presence or blow it out — an appearance
+ * control that can make Vowe invisible is a way to lose it, not to own it.
+ */
+const LIGHT_FLOOR = 0.7;
+const LIGHT_CEILING = 1.3;
 
 interface SizePreset {
   /** Multiplies the point grid. Small presences stay dense, not sparse. */
   density: number;
   scale: number;
   maxFps: number;
+  /**
+   * How much of the state's ring this size draws.
+   *
+   * A ring reads as a halo at 26px and as a drawn circle at 300px, where it
+   * competes with the sphere it is supposed to surround rather than framing it.
+   * The large voice presence therefore draws none: the deformation is the
+   * signal there, and the object is strong enough without an outline.
+   */
+  halo: number;
 }
 
 /**
@@ -169,19 +201,20 @@ interface SizePreset {
  * same dense cloud rather than a handful of dots.
  */
 const SIZES: Record<PresenceSize, SizePreset> = {
-  signature: { density: 0.42, scale: 0.9, maxFps: 30 },
-  compact: { density: 0.5, scale: 0.95, maxFps: 30 },
-  project: { density: 1.0, scale: 1.0, maxFps: 60 },
-  voice: { density: 1.0, scale: 1.0, maxFps: 60 },
-  studio: { density: 1.0, scale: 1.0, maxFps: 60 },
+  signature: { density: 0.42, scale: 0.9, maxFps: 30, halo: 1 },
+  compact: { density: 0.5, scale: 0.95, maxFps: 30, halo: 1 },
+  project: { density: 1.0, scale: 1.0, maxFps: 60, halo: 1 },
+  voice: { density: 1.0, scale: 1.0, maxFps: 60, halo: 0 },
+  studio: { density: 1.0, scale: 1.0, maxFps: 60, halo: 1 },
 };
 
 export interface PresenceVisualOptions {
   /**
-   * Real, normalized speech energy, if the application has any.
+   * Real, normalized activity, if the application has any.
    *
-   * Undefined means nobody measured it. The presence then moves on its state
-   * alone rather than inventing a waveform.
+   * Speech energy during a call, and the rhythm of actual execution events
+   * while Vowe is thinking. Undefined means nobody measured it. The presence
+   * then moves on its state alone rather than inventing a waveform.
    */
   activity?: number | undefined;
   /** The developer asked the system for less movement. */
@@ -215,6 +248,7 @@ export function resolvePresenceVisuals(
   const motion = MOTIONS[profile.motion] ?? MOTIONS[DEFAULT_PRESENCE_PROFILE.motion];
   const dimensions = SIZES[size] ?? SIZES.project;
   const reduced = options.reducedMotion === true;
+  const light = lightGain(profile.lightResponse);
 
   return {
     amp: preset.amp * FORM.ampK,
@@ -223,9 +257,9 @@ export function resolvePresenceVisuals(
     torsion: preset.torsion * FORM.torsionK,
     jitter: preset.jitter * FORM.jitterK,
     size: preset.size * FORM.sizeK,
-    bright: preset.bright,
-    rim: preset.rim,
-    halo: preset.halo,
+    bright: preset.bright * light,
+    rim: preset.rim * light,
+    halo: preset.halo * dimensions.halo,
     pulse: preset.pulse * (reduced ? REDUCED_PULSE : 1),
     warm: preset.warm,
     lineBias: FORM.lineBias,
@@ -233,7 +267,7 @@ export function resolvePresenceVisuals(
     gain: material.gain,
     irid: material.irid,
     colorA: normalizeAccent(profile.accent) ?? material.colorA,
-    colorB: material.colorB,
+    colorB: normalizeAccent(profile.bodyAccent) ?? material.colorB,
     spin: (reduced ? REDUCED_SPIN : 1) * motion,
     density: dimensions.density,
     scale: dimensions.scale,
@@ -271,6 +305,21 @@ export function presencePosture(visuals: PresenceVisuals): PresencePosture {
   const { amp, freq, speed, torsion, jitter, size, bright, rim, halo, pulse, warm, lineBias, spin } =
     visuals;
   return { amp, freq, speed, torsion, jitter, size, bright, rim, halo, pulse, warm, lineBias, spin };
+}
+
+/**
+ * `0..1` onto a shading multiplier, with the neutral point at exactly `1`.
+ *
+ * An absent value and the neutral value must draw identically, or every
+ * profile written before this control existed would change appearance the
+ * first time it was read back.
+ */
+function lightGain(response: number | undefined): number {
+  if (typeof response !== 'number' || !Number.isFinite(response)) return 1;
+  const v = Math.min(1, Math.max(0, response));
+  return v <= NEUTRAL_LIGHT_RESPONSE
+    ? LIGHT_FLOOR + ((1 - LIGHT_FLOOR) * v) / NEUTRAL_LIGHT_RESPONSE
+    : 1 + ((LIGHT_CEILING - 1) * (v - NEUTRAL_LIGHT_RESPONSE)) / (1 - NEUTRAL_LIGHT_RESPONSE);
 }
 
 const ACCENT = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;

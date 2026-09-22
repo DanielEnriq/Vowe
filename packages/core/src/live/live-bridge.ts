@@ -18,6 +18,7 @@ import {
   type PlaybackReport,
 } from './live-conversation-recorder.js';
 import { LIVE_APPEND_TOKEN_LIMIT, VO_SYSTEM_PROMPT } from './vo-prompt.js';
+import { temperamentGuidance, type TemperamentProfile } from '../product/temperament.js';
 import type {
   LiveServerEvent,
   LiveSideband,
@@ -45,12 +46,39 @@ export interface LiveBridgeOptions {
   /** How much durable conversation to give a newly opened session. */
   hydrateTurns?: number;
   onError?: (scope: string, error: unknown) => void;
+  /**
+   * The developer's temperament, read when a call starts.
+   *
+   * Vo's standing instructions are immutable once a session begins, so this is
+   * read at `start` and holds for that call. Moving a dial mid-conversation
+   * takes effect on the next one, which is the honest behaviour: the provider
+   * cannot be told to change its register halfway through.
+   */
+  temperament?: () => TemperamentProfile | undefined;
+  /** The chosen voice, or `null`/`undefined` to leave the transport's default. */
+  voice?: () => string | null | undefined;
+}
+
+/**
+ * What is being said, as it is being said.
+ *
+ * Separate from the durable conversation on purpose: this is the provider's
+ * in-flight transcript of a call, which exists only while the backend is
+ * attached and is replaced by a real turn the moment one closes. The UI shows
+ * it as a caption; nothing reads it back, and nothing is stored from it.
+ */
+export interface LiveTranscriptDelta {
+  speaker: 'user' | 'vo';
+  /** The fragment accumulated so far for the speaker's current turn. */
+  text: string;
 }
 
 export type LiveBridgeEvents = {
   status: [LiveStatus];
   /** A delegated question and the answer Vowe gave. For the UI. */
   answered: [{ sessionId: string; question: string; spokenAnswer: string; fullAnswer: string }];
+  /** In-flight speech. Only ever emitted while a sideband is attached. */
+  transcript: [LiveTranscriptDelta];
 };
 
 export interface LiveStatus {
@@ -113,6 +141,8 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
   private readonly transcriptTurns: number;
   private readonly turnSilenceMs: number | undefined;
   private readonly hydrateTurns: number;
+  private readonly temperament: () => TemperamentProfile | undefined;
+  private readonly voice: () => string | null | undefined;
   private readonly onError: (scope: string, error: unknown) => void;
 
   private attachment: Attachment | null = null;
@@ -140,6 +170,8 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     this.transcriptTurns = options.transcriptTurns ?? 20;
     this.turnSilenceMs = options.turnSilenceMs;
     this.hydrateTurns = options.hydrateTurns ?? 12;
+    this.temperament = options.temperament ?? (() => undefined);
+    this.voice = options.voice ?? (() => null);
     this.onError = options.onError ?? (() => undefined);
     this.listen();
   }
@@ -156,8 +188,16 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     };
   }
 
+  /**
+   * Vo's standing instructions, with this developer's temperament appended.
+   *
+   * One builder used for both the live session and the conversation recorder,
+   * so what Vo was told and what was recorded as having told it cannot drift.
+   */
   get systemPrompt(): string {
-    return VO_SYSTEM_PROMPT;
+    const temperament = this.temperament();
+    if (!temperament) return VO_SYSTEM_PROMPT;
+    return `${VO_SYSTEM_PROMPT}\n\n${temperamentGuidance(temperament)}`;
   }
 
   /**
@@ -179,9 +219,12 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     }
     await this.stop();
 
+    const instructions = this.systemPrompt;
+    const voice = this.voice();
     const created = await this.transport.createSession({
       sdpOffer,
-      instructions: VO_SYSTEM_PROMPT,
+      instructions,
+      ...(voice ? { voice } : {}),
     });
 
     // Nothing has been played on this call yet, whatever the last one did.
@@ -198,7 +241,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
             sessionId,
             liveSessionId: created.liveSessionId,
             provider: this.transport.name,
-            instructions: VO_SYSTEM_PROMPT,
+            instructions,
             ...(created.model ? { model: created.model } : {}),
             ...(this.runs ? { runs: this.runs } : {}),
             ...(this.turnSilenceMs === undefined
@@ -331,6 +374,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     switch (event.type) {
       case 'transcript.user':
         this.userFragment += event.delta;
+        this.emit('transcript', { speaker: 'user', text: this.userFragment });
         this.attachment?.recorder?.userSaid(
           event.delta,
           event.startMs,
@@ -348,6 +392,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
           );
         }
         this.voFragment += event.delta;
+        this.emit('transcript', { speaker: 'vo', text: this.voFragment });
         this.attachment?.recorder?.voSaid(event.delta, event.startMs, event.endMs);
         return;
       case 'delegation.created':

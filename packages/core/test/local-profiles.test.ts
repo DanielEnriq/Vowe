@@ -11,9 +11,9 @@ import {
 import { PresenceProfileStore } from '../src/product/presence-profile-store.js';
 import {
   DEFAULT_USER_PROFILE,
-  UserProfileStore,
   normalizeUserProfile,
 } from '../src/product/user-profile.js';
+import { UserProfileStore } from '../src/product/user-profile-store.js';
 
 let root: string | null = null;
 

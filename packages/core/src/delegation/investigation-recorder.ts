@@ -21,6 +21,21 @@ import type {
  */
 export class InvestigationRecorder {
   private readonly checks: InvestigationCheck[] = [];
+  private readonly onCheck: (check: InvestigationCheck) => void;
+
+  /**
+   * `onCheck` fires the moment a lookup is recorded, which is the moment it
+   * actually happened.
+   *
+   * It exists so a waiting developer can watch the investigation proceed
+   * rather than watching nothing for half a minute. What it emits is the same
+   * check that will later be persisted in the receipt — the live line and the
+   * recorded line are one object, so the UI cannot show a step that turns out
+   * not to have been taken.
+   */
+  constructor(options: { onCheck?: (check: InvestigationCheck) => void } = {}) {
+    this.onCheck = options.onCheck ?? (() => undefined);
+  }
 
   /** A search, and everything it turned up. No hits is still a check. */
   searched(sources: ContextSource[] | undefined, hits: SearchHit[]): void {
@@ -85,6 +100,12 @@ export class InvestigationRecorder {
     const previous = this.checks[this.checks.length - 1];
     if (previous && sameCheck(previous, check)) return;
     this.checks.push(check);
+    // A listener must never be able to fail the investigation it is watching.
+    try {
+      this.onCheck(check);
+    } catch {
+      // Deliberately swallowed: this is a view concern, not the work.
+    }
   }
 }
 

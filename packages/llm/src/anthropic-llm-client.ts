@@ -4,6 +4,7 @@ import * as z from 'zod/v4';
 
 import type {
   DelegatedAnswer,
+  InvestigationStream,
   ModelTrace,
   ModelUsage,
   InvestigationInput,
@@ -26,10 +27,12 @@ import {
   renderQuestionPrompt,
 } from './prompts.js';
 import {
+  INVESTIGATE_PROJECT_SYSTEM,
   INVESTIGATE_SYSTEM,
   renderInvestigationPrompt,
 } from './observer-prompts.js';
 import {
+  RECORD_ANSWER,
   readTools,
   recordAnswerTool,
   recordObservationTool,
@@ -170,7 +173,7 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
     const request = {
       model: this.model,
       max_tokens: 8000,
-      system: ANSWER_SYSTEM,
+      system: withGuidance(ANSWER_SYSTEM, input.guidance),
       thinking: { type: 'adaptive' as const },
       output_config: { effort: 'medium' as const },
       messages: [{ role: 'user' as const, content: renderQuestionPrompt(input) }],
@@ -260,17 +263,17 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
     input: InvestigationInput,
     tools: ReadOnlyToolset,
     trace?: ModelTrace,
+    stream?: InvestigationStream,
   ): Promise<DelegatedAnswer> {
-    const capture: AnswerCapture = {
-      spokenAnswer: null,
-      fullAnswer: null,
-      refs: [],
-    };
+    const capture: AnswerCapture = { spokenAnswer: null, refs: [] };
 
     const runner = this.client.beta.messages.toolRunner({
       model: this.model,
       max_tokens: 16000,
-      system: INVESTIGATE_SYSTEM,
+      system: withGuidance(
+        'projectId' in input ? INVESTIGATE_PROJECT_SYSTEM : INVESTIGATE_SYSTEM,
+        input.guidance,
+      ),
       thinking: { type: 'adaptive' },
       // A delegated question has someone waiting on the answer out loud, but it
       // is also the call most likely to be wrong if rushed, so it gets one step
@@ -279,30 +282,125 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
       tools: [recordAnswerTool(capture), ...readTools(tools)],
       max_iterations: this.maxToolIterations,
       messages: [{ role: 'user', content: renderInvestigationPrompt(input) }],
+      // Every round arrives as a stream, so reasoning and the answer can be
+      // read as they are written. The loop is otherwise the same loop.
+      stream: true,
     });
     const usage: ModelUsage = {};
-    const final = await this.drain(runner, trace, usage);
+    const final = await this.drainInvestigation(runner, capture, trace, usage, stream);
 
     const refs = capture.refs
       .map((value) => parseRef(value))
       .filter((ref): ref is NonNullable<typeof ref> => ref !== null);
 
-    if (capture.spokenAnswer && capture.fullAnswer) {
-      trace?.output({ text: capture.fullAnswer, usage });
+    /*
+     * The written answer is the last thing the model said, always.
+     *
+     * Taken from the final message rather than from the deltas somebody
+     * happened to be watching: a renderer that missed a frame, or a window
+     * opened halfway through, must not change what gets persisted. The stream
+     * is a view of this text being written; this is the text.
+     */
+    const written = textOf(final);
+
+    if (capture.spokenAnswer && written) {
+      trace?.output({ text: written, usage });
+      return { spokenAnswer: capture.spokenAnswer, fullAnswer: written, refs };
+    }
+
+    /*
+     * Degradations, in order of how much survived.
+     *
+     * A spoken answer with no prose after it means the writing turn produced
+     * nothing — the spoken form is a true, if short, answer and is far better
+     * than failing. Prose with no terminal tool call is the older shape and is
+     * still an answer; its first sentence is the best available approximation
+     * of "what you would say out loud".
+     */
+    if (capture.spokenAnswer) {
+      trace?.output({ text: capture.spokenAnswer, usage });
       return {
         spokenAnswer: capture.spokenAnswer,
-        fullAnswer: capture.fullAnswer,
+        fullAnswer: capture.spokenAnswer,
         refs,
       };
     }
 
-    // Same reasoning as above: prose without the terminal tool is still an
-    // answer. The spoken form is the first sentence, which is the best
-    // available approximation of "what you would say out loud".
-    const text = textOf(final);
-    if (!text) throw new Error('The investigation returned no answer.');
-    trace?.output({ text, usage });
-    return { spokenAnswer: firstSentence(text), fullAnswer: text, refs };
+    if (!written) throw new Error('The investigation returned no answer.');
+    trace?.output({ text: written, usage });
+    return { spokenAnswer: firstSentence(written), fullAnswer: written, refs };
+  }
+
+  /**
+   * The investigation loop, in two phases, without leaving the loop.
+   *
+   * Phase one is the tool loop as it always was. The moment `record_answer`
+   * lands — the model saying it has looked enough — the next round is switched
+   * to `tool_choice: none`, so the model has nothing left to do but write the
+   * answer. That is the whole of the two-phase design: one runner, one message
+   * history, one traced execution, and a final turn that is prose rather than
+   * an opaque tool payload, which is what makes it streamable at all.
+   *
+   * Switching rather than starting a second request also keeps the evidence in
+   * front of the model exactly as it gathered it, keeps the prompt prefix
+   * cacheable, and keeps every round — including the writing one — inside the
+   * same `VoweRun` with its usage counted.
+   *
+   * The phase change is detected in the *message*, from the tool-use block
+   * itself, and deliberately not from `capture.spokenAnswer`. The runner
+   * executes a tool lazily, on its way to composing the next request, so the
+   * capture is still empty when this loop finishes handling the round that
+   * called it — and keying off it made every switch one round late. That cost
+   * two real things: the answer was written with the tools still allowed, and
+   * the whole of it streamed into the *thinking* lane, so a developer watching
+   * an answer arrive saw it appear as Vowe's working and then be replaced.
+   */
+  private async drainInvestigation(
+    runner: ReturnType<Anthropic['beta']['messages']['toolRunner']>,
+    capture: AnswerCapture,
+    trace: ModelTrace | undefined,
+    usage: ModelUsage,
+    stream: InvestigationStream | undefined,
+  ): Promise<Anthropic.Beta.BetaMessage> {
+    trace?.input(runner.params, { provider: 'anthropic', model: this.model });
+    // Before this, text is the model working through the problem; after it,
+    // text is the answer. The two go to different places on screen.
+    let writing = false;
+
+    for await (const round of runner) {
+      // Typed for either mode. A round without a stream is one this loop has
+      // nothing to watch, and its message is still collected below.
+      if (!('on' in round)) {
+        if ('content' in round) {
+          reportReasoning(trace, round.content);
+          addUsage(usage, round);
+        }
+        continue;
+      }
+
+      round.on('thinking', (delta) => report(stream?.reasoning, stream, delta));
+      round.on('text', (delta) =>
+        writing
+          ? report(stream?.answer, stream, delta)
+          : report(stream?.reasoning, stream, delta),
+      );
+
+      const message = await round.finalMessage();
+      reportReasoning(trace, message.content);
+      addUsage(usage, message);
+
+      if (!writing && declaresEnoughEvidence(message)) {
+        writing = true;
+        // Tools stay in the request so the cached prefix survives; the model
+        // simply may not call them. "Disabled" as the answer experiences it.
+        runner.setMessagesParams((params) => ({
+          ...params,
+          tool_choice: { type: 'none' as const },
+        }));
+      }
+    }
+
+    return runner.done();
   }
 
   /**
@@ -392,6 +490,52 @@ function addUsage(total: ModelUsage, message: UsageBearing): void {
 
 function readEffort(value: string | undefined): 'low' | 'medium' | 'high' | undefined {
   return value === 'low' || value === 'medium' || value === 'high' ? value : undefined;
+}
+
+/**
+ * Temperament reaches the model as system text, or not at all.
+ *
+ * Appended rather than interpolated so the shipped prompt stays readable on
+ * its own and a missing preference leaves it byte-identical.
+ */
+function withGuidance(system: string, guidance: string | undefined): string {
+  const extra = guidance?.trim();
+  return extra ? `${system}\n\n${extra}` : system;
+}
+
+/**
+ * A delta, delivered without letting a view break the work.
+ *
+ * Everything on this path is a courtesy: the answer is produced, traced and
+ * persisted whether or not anybody is watching it arrive. A listener that
+ * throws must therefore be swallowed here rather than surfacing as a failed
+ * investigation.
+ */
+function report(
+  method: ((delta: string) => void) | undefined,
+  owner: InvestigationStream | undefined,
+  delta: string,
+): void {
+  if (!method || !delta) return;
+  try {
+    method.call(owner, delta);
+  } catch {
+    // A view is never a participant in the work.
+  }
+}
+
+/**
+ * Did this round call the terminal tool?
+ *
+ * Read from the content the provider actually returned, which is true at the
+ * moment the round ends rather than at the moment the tool happens to run.
+ */
+function declaresEnoughEvidence(message: {
+  content: readonly { type: string; name?: string }[];
+}): boolean {
+  return message.content.some(
+    (block) => block.type === 'tool_use' && block.name === RECORD_ANSWER,
+  );
 }
 
 function textOf(message: { content: unknown[] }): string {

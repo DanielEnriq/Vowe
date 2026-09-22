@@ -11,6 +11,10 @@
     "./presence": {
       "types": "./dist/product/presence.d.ts",
       "default": "./dist/product/presence.js"
+    },
+    "./projections": {
+      "types": "./dist/product/projections.d.ts",
+      "default": "./dist/product/projections.js"
     }
   },
   "scripts": {

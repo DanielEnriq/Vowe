@@ -112,8 +112,13 @@ export class FakeLiveSideband implements LiveSideband {
 export class FakeLiveTransport implements LiveTransport {
   readonly name = 'fake';
   readonly unavailableReason: string | null;
+  readonly voices = [
+    { id: 'fake-one', label: 'One' },
+    { id: 'fake-two', label: 'Two' },
+  ];
   sideband: FakeLiveSideband | null = null;
   lastInstructions: string | null = null;
+  lastVoice: string | undefined;
 
   constructor(
     readonly available = true,
@@ -126,6 +131,7 @@ export class FakeLiveTransport implements LiveTransport {
   async createSession(options: CreateLiveSessionOptions): Promise<CreatedLiveSession> {
     if (!this.available) throw new Error(this.unavailableReason!);
     this.lastInstructions = options.instructions;
+    this.lastVoice = options.voice;
     return { liveSessionId: 'live_fake', sdpAnswer: `answer-for:${options.sdpOffer}` };
   }
 

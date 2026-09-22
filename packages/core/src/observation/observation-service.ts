@@ -1,6 +1,10 @@
 import { EventEmitter } from 'node:events';
 
 import type { CommunicationPolicy } from '../communication/communication-policy.js';
+import {
+  effectivePreference,
+  type TemperamentProfile,
+} from '../product/temperament.js';
 import type { ContextNavigator } from '../context/context-navigator.js';
 import type { DecisionRouter } from '../decision/decision-router.js';
 import type { VoweRunRecorder } from '../execution/run-recorder.js';
@@ -26,6 +30,14 @@ export interface ObservationServiceOptions {
   windowPolicy?: Partial<WindowPolicy>;
   /** Passed straight through to every runner this service owns. */
   runs?: VoweRunRecorder;
+  /**
+   * The developer's temperament, read at each decision.
+   *
+   * Read per candidate rather than held, because someone who moves the
+   * interruption dial means it about the next thing Vowe considers saying, not
+   * the next time the app starts.
+   */
+  temperament?: () => TemperamentProfile | undefined;
   onError?: (scope: string, error: unknown) => void;
 }
 
@@ -199,9 +211,18 @@ export class ObservationService extends EventEmitter<ObservationEvents> {
   }
 
   private async decide(update: SurfaceUpdate): Promise<void> {
-    const preference =
+    const temperament = this.options.temperament?.();
+    /**
+     * One preference, from two places. What the developer said about *this*
+     * session wins; the global personal instruction is what applies when they
+     * have not said anything about it.
+     */
+    const sessionPreference =
       this.runners.get(update.sessionId)?.communicationPreference ?? null;
-    const decision = await this.options.policy.evaluate(update, preference);
+    const preference = temperament
+      ? effectivePreference(temperament, sessionPreference)
+      : sessionPreference;
+    const decision = await this.options.policy.evaluate(update, preference, temperament);
     const stored = await this.options.store.recordCommunicationDecision(
       update.sessionId,
       update.id,

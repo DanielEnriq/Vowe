@@ -25,32 +25,59 @@
  */
 export type PresenceForm = 'point-cloud';
 
-export type PresenceMaterial = 'silver' | 'obsidian' | 'matrix' | 'plasma';
+export type PresenceMaterial =
+  | 'chrome'
+  | 'silver'
+  | 'obsidian'
+  | 'frost'
+  | 'iridescent'
+  | 'matrix'
+  | 'plasma'
+  | 'pearl';
 
-export type PresenceMotion = 'calm' | 'fluid' | 'reactive';
+export type PresenceMotion = 'calm' | 'fluid' | 'reactive' | 'energetic';
 
 export interface PresenceProfile {
   form: PresenceForm;
   material: PresenceMaterial;
   motion: PresenceMotion;
-  /** `#rgb` or `#rrggbb`. Tints the presence, never the application. */
+  /** `#rgb` or `#rrggbb`. Tints the lit colour, never the application. */
   accent?: string;
+  /** `#rgb` or `#rrggbb`. Tints the shadow colour the body reads as. */
+  bodyAccent?: string;
+  /**
+   * How hard the surface answers its light, `0..1`.
+   *
+   * A single dial over shading gain and rim response. Absent means the
+   * material's own figures stand, which is why `0.5` is the neutral point
+   * rather than `0`: a stored profile and an unset one must draw identically.
+   */
+  lightResponse?: number;
 }
 
 export const PRESENCE_FORMS: readonly PresenceForm[] = ['point-cloud'];
 
+/** Ordered as the approved design lays the swatches out. */
 export const PRESENCE_MATERIALS: readonly PresenceMaterial[] = [
+  'chrome',
   'silver',
   'obsidian',
+  'frost',
+  'iridescent',
   'matrix',
   'plasma',
+  'pearl',
 ];
 
 export const PRESENCE_MOTIONS: readonly PresenceMotion[] = [
   'calm',
   'fluid',
   'reactive',
+  'energetic',
 ];
+
+/** The value `lightResponse` is absent at. Draws exactly like the material. */
+export const NEUTRAL_LIGHT_RESPONSE = 0.5;
 
 export const DEFAULT_PRESENCE_PROFILE: PresenceProfile = {
   form: 'point-cloud',
@@ -86,6 +113,14 @@ export function normalizePresenceProfile(value: unknown): PresenceProfile {
 
   const accent = typeof source['accent'] === 'string' ? source['accent'].trim() : '';
   if (ACCENT.test(accent)) profile.accent = accent.toLowerCase();
+
+  const body = typeof source['bodyAccent'] === 'string' ? source['bodyAccent'].trim() : '';
+  if (ACCENT.test(body)) profile.bodyAccent = body.toLowerCase();
+
+  const light = source['lightResponse'];
+  if (typeof light === 'number' && Number.isFinite(light)) {
+    profile.lightResponse = Math.min(1, Math.max(0, light));
+  }
 
   return profile;
 }

@@ -6,6 +6,11 @@ import type {
   CommunicationDecision,
   SurfaceUpdate,
 } from '../observation/trace-window.js';
+import {
+  interruptionAppetite,
+  meetsSpeakFloor,
+  type TemperamentProfile,
+} from '../product/temperament.js';
 
 export interface CommunicationPolicyOptions {
   /** Optional; a heuristic router is a valid answer. */
@@ -69,14 +74,31 @@ export class CommunicationPolicy {
     });
   }
 
+  /**
+   * `temperament` is optional, and its absence is not a default.
+   *
+   * A caller that has no temperament to offer gets exactly the behaviour this
+   * class had before temperament existed. Nothing here invents a middle
+   * setting on the developer's behalf.
+   */
   async evaluate(
     candidate: SurfaceUpdate,
     preference: string | null,
+    temperament?: TemperamentProfile,
   ): Promise<CommunicationDecision> {
-    const fromRouter = await this.askRouter(candidate, preference);
+    const decision = await this.decide(candidate, preference, temperament);
+    return withSpeakFloor(decision, candidate, temperament);
+  }
+
+  private async decide(
+    candidate: SurfaceUpdate,
+    preference: string | null,
+    temperament: TemperamentProfile | undefined,
+  ): Promise<CommunicationDecision> {
+    const fromRouter = await this.askRouter(candidate, preference, temperament);
     if (fromRouter) return fromRouter;
 
-    const fromLlm = await this.askLlm(candidate, preference);
+    const fromLlm = await this.askLlm(candidate, preference, temperament);
     if (fromLlm) return fromLlm;
 
     return defaultDecision(candidate, preference);
@@ -94,6 +116,7 @@ export class CommunicationPolicy {
   private async askRouter(
     candidate: SurfaceUpdate,
     preference: string | null,
+    temperament: TemperamentProfile | undefined,
   ): Promise<CommunicationDecision | null> {
     if (!this.router?.available) return null;
     const run = this.beginRun(candidate, 'router');
@@ -108,6 +131,12 @@ export class CommunicationPolicy {
             development: candidate.message,
             whyItMattersNow: candidate.whyNow,
             urgencyAsJudgedByTheObserver: candidate.urgency,
+            // The developer's own words stay in `instructions`; this is the
+            // setting they moved, described. Keeping them apart is what lets a
+            // decision's `reason` quote the person and never the dial.
+            ...(temperament
+              ? { statedInterruptionAppetite: interruptionAppetite(temperament) }
+              : {}),
           },
         },
         run,
@@ -153,6 +182,7 @@ export class CommunicationPolicy {
   private async askLlm(
     candidate: SurfaceUpdate,
     preference: string | null,
+    temperament: TemperamentProfile | undefined,
   ): Promise<CommunicationDecision | null> {
     if (!this.llm) return null;
     const run = this.beginRun(candidate, 'llm');
@@ -165,6 +195,7 @@ export class CommunicationPolicy {
             preference
               ? `They said: "${preference}"`
               : 'They have not said how closely they want to be kept informed.',
+            ...(temperament ? [interruptionAppetite(temperament)] : []),
             '',
             `Something happened: ${candidate.message}`,
             `The observer thought it mattered because: ${candidate.whyNow}`,
@@ -203,6 +234,31 @@ export class CommunicationPolicy {
       return null;
     }
   }
+}
+
+/**
+ * The one place temperament overrules a decision, and only downwards.
+ *
+ * Quiet↔Proactive has to change what actually happens or it has no business
+ * being a control. So a candidate that was approved for speaking but sits
+ * below this developer's floor is held until they next speak rather than
+ * interrupting them. It is never promoted the other way: overruling a model
+ * that declined to speak, in order to speak, is the opposite of erring quiet.
+ */
+function withSpeakFloor(
+  decision: CommunicationDecision,
+  candidate: SurfaceUpdate,
+  temperament: TemperamentProfile | undefined,
+): CommunicationDecision {
+  if (!temperament) return decision;
+  if (decision.action !== 'speak_now') return decision;
+  if (meetsSpeakFloor(candidate.urgency, temperament)) return decision;
+
+  return {
+    ...decision,
+    action: 'queue',
+    reason: `${decision.reason} Held until you next speak rather than said now, because you asked to be interrupted less.`,
+  };
 }
 
 /**
