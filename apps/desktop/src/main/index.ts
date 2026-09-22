@@ -77,6 +77,8 @@ interface Services {
   knowledge: ProjectKnowledgeService;
   /** The Project Room's read model. Derived on every read, never stored. */
   brief: ProjectBriefService;
+  /** Every model call Vowe makes on its own behalf, recorded and announced. */
+  runs: VoweRunRecorder;
   /** Vowe's one identity, and the developer's. Global, not per session. */
   profile: UserProfileStore;
   presence: PresenceProfileStore;
@@ -333,6 +335,10 @@ async function createServices(): Promise<Services> {
   live.on('status', (status) => {
     window?.webContents.send(IPC.liveStatusChanged, status);
   });
+  // What Vowe is executing, published from the lane that already records it.
+  runs.on('activity', (activity) => {
+    window?.webContents.send(IPC.runActivityChanged, activity);
+  });
   live.on('answered', (answered) => {
     // A delegated answer is persisted as a conversation entry, so the session
     // view has something new to show.
@@ -357,6 +363,7 @@ async function createServices(): Promise<Services> {
   return {
     store,
     registry,
+    runs,
     projects,
     knowledge,
     brief,
@@ -482,6 +489,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.setPresenceProfile, async (_event, next: PresenceProfile) =>
     (await requireServices()).presence.set(next),
   );
+  ipcMain.handle(IPC.getRunActivity, async () => (await requireServices()).runs.activity);
 
   // Grounded by going and looking — the same investigator Vo delegates to, with
   // the same three read tools. Still deliberately has no adapter in reach.
@@ -611,9 +619,31 @@ function createWindow(): void {
   });
 }
 
+/**
+ * The presence preview, in a window of its own.
+ *
+ * Development only, opened by `pnpm --filter @vowe/desktop dev:presence`. It
+ * renders the real component across every state and size in the real Chromium
+ * this application ships with, which is the only place looking at it proves
+ * anything. It gets no preload: there is nothing for it to ask the backend.
+ */
+function createPresencePreviewWindow(): void {
+  const preview = new BrowserWindow({
+    width: 1180,
+    height: 900,
+    title: 'Vowe Presence — preview',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e20' : '#ffffff',
+  });
+
+  const devServer = process.env.ELECTRON_RENDERER_URL;
+  if (devServer) void preview.loadURL(`${devServer}/presence-preview.html`);
+  else void preview.loadFile(path.join(dirname, '../renderer/presence-preview.html'));
+}
+
 app.whenReady().then(async () => {
   registerIpc();
   createWindow();
+  if (process.env.VOWE_PRESENCE_PREVIEW === '1') createPresencePreviewWindow();
   servicesReady = createServices();
   try {
     services = await servicesReady;

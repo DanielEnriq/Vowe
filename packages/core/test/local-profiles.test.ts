@@ -6,9 +6,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_PRESENCE_PROFILE,
-  PresenceProfileStore,
   normalizePresenceProfile,
 } from '../src/product/presence-profile.js';
+import { PresenceProfileStore } from '../src/product/presence-profile-store.js';
 import {
   DEFAULT_USER_PROFILE,
   UserProfileStore,

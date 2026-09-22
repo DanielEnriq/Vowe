@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 
 import type { ModelTrace } from '../llm/model-trace.js';
 import type { EventStore } from '../store/event-store.js';
@@ -17,6 +18,25 @@ export interface VoweRunRecorderOptions {
    */
   onError?: (scope: string, error: unknown) => void;
 }
+
+/**
+ * What Vowe is executing right now.
+ *
+ * The recorder already sees every model call Vowe makes on its own behalf, so
+ * "is Vowe working?" is answered by the lane that records the work rather than
+ * by a second signal that could disagree with it. Kinds are carried because
+ * they are the difference between Vowe following a worker and Vowe answering a
+ * person, and a presence that confused the two would be wrong about both.
+ *
+ * Repeats are real: two investigations at once appear twice.
+ */
+export interface VoweRunActivity {
+  kinds: string[];
+}
+
+export type VoweRunRecorderEvents = {
+  activity: [VoweRunActivity];
+};
 
 /** What is known when a run begins. The rest is learned as it goes. */
 export type RunStart = Omit<VoweRun, 'id' | 'status' | 'startedAt' | 'completedAt'>;
@@ -68,11 +88,14 @@ export interface RunHandle extends ModelTrace {
  * right trade for a record of work: the fact that the work happened and never
  * finished is the part worth surviving.
  */
-export class VoweRunRecorder {
+export class VoweRunRecorder extends EventEmitter<VoweRunRecorderEvents> {
   private readonly store: EventStore;
   private readonly onError: (scope: string, error: unknown) => void;
+  /** Run id to kind, for runs that have begun and not yet ended. */
+  private readonly inFlight = new Map<string, string>();
 
   constructor(options: VoweRunRecorderOptions) {
+    super();
     this.store = options.store;
     this.onError = options.onError ?? (() => undefined);
   }
@@ -84,7 +107,25 @@ export class VoweRunRecorder {
       status: 'started',
       startedAt: new Date().toISOString(),
     };
-    return new BufferedRun(run, this.store, this.onError);
+    this.inFlight.set(run.id, run.kind);
+    this.announce();
+    return new BufferedRun(run, this.store, this.onError, () => {
+      if (this.inFlight.delete(run.id)) this.announce();
+    });
+  }
+
+  /** What is in flight, right now. Empty when Vowe is not executing anything. */
+  get activity(): VoweRunActivity {
+    return { kinds: [...this.inFlight.values()] };
+  }
+
+  private announce(): void {
+    // A listener that throws must not take down the work it was watching.
+    try {
+      this.emit('activity', this.activity);
+    } catch (error) {
+      this.onError('run:activity', error);
+    }
   }
 }
 
@@ -93,6 +134,8 @@ class BufferedRun implements RunHandle {
   private readonly store: EventStore;
   private readonly onError: (scope: string, error: unknown) => void;
   private readonly items: Omit<VoweTraceItem, 'runId' | 'ord'>[] = [];
+  /** Told the recorder the work is over, before the write that records it. */
+  private readonly onFinished: () => void;
   /** Writes stay in order without a lock: each awaits the one before it. */
   private writing: Promise<void>;
   private usage: ModelUsage | undefined;
@@ -104,10 +147,12 @@ class BufferedRun implements RunHandle {
     run: VoweRun,
     store: EventStore,
     onError: (scope: string, error: unknown) => void,
+    onFinished: () => void,
   ) {
     this.runId = run.id;
     this.store = store;
     this.onError = onError;
+    this.onFinished = onFinished;
     this.writing = store
       .appendRun(run)
       .catch((error) => this.onError('run:begin', error));
@@ -229,6 +274,9 @@ class BufferedRun implements RunHandle {
   ): Promise<void> {
     if (this.finished) return;
     this.finished = true;
+    // The execution is over here, not when its row lands: a presence waiting on
+    // the database to flush would keep thinking after the thinking stopped.
+    this.onFinished();
     const items = this.items.splice(0, this.items.length);
     const usage = result.usage ?? this.usage;
 

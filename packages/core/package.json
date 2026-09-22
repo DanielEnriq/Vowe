@@ -7,7 +7,11 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./refs": { "types": "./dist/context/refs.d.ts", "default": "./dist/context/refs.js" }
+    "./refs": { "types": "./dist/context/refs.d.ts", "default": "./dist/context/refs.js" },
+    "./presence": {
+      "types": "./dist/product/presence.d.ts",
+      "default": "./dist/product/presence.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

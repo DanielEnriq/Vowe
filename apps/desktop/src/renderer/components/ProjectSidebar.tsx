@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
 
 import type { AgentSession, Project } from '@vowe/core';
+import {
+  DEFAULT_PRESENCE_PROFILE,
+  type PresenceProfile,
+  type PresenceState,
+} from '@vowe/core/presence';
 import type { AppStatus } from '../../shared/ipc.js';
+import { VowePresence, usePresenceSignals } from '../presence/index.js';
 
 import {
   ChevronIcon,
@@ -28,6 +34,18 @@ interface Props {
 }
 
 const EXPANDED_KEY = 'vowe.sidebar.expanded';
+
+/** What the presence is doing, said plainly for anyone not reading the motion. */
+const PRESENCE_LABELS: Record<PresenceState, string> = {
+  idle: 'Here',
+  observing: 'Following the work',
+  joining: 'Joining',
+  listening: 'Listening',
+  thinking: 'Looking into it',
+  speaking: 'Speaking',
+  attention: 'Needs you',
+  unavailable: 'Cannot observe · no model',
+};
 
 /**
  * Projects first, the work inside them second.
@@ -84,10 +102,23 @@ export function ProjectSidebar({
   }, []);
 
   const watching = status?.providers.map(providerName).join(', ');
+  const profile = usePresenceProfile();
+  const { state } = usePresenceSignals({ status, sessions });
 
   return (
     <aside className="sidebar">
       <div className="sidebar-top titlebar-drag" />
+
+      {/* One Vowe for the whole application, drawn small. Not a session, not a
+          project, not a coding worker — the thing watching all three. */}
+      <div className="vowe-row">
+        <VowePresence state={state} profile={profile} size="signature" />
+        <span className="who">
+          <span className="name">Your Vowe</span>
+          <span className="doing">{PRESENCE_LABELS[state]}</span>
+        </span>
+      </div>
+
       <div className="sidebar-heading">
         <h1>Projects</h1>
         <button
@@ -243,6 +274,30 @@ function SessionRow({
       </span>
     </button>
   );
+}
+
+/**
+ * Vowe's appearance, read once.
+ *
+ * It is a global setting with no UI to change it yet, so there is nothing to
+ * subscribe to — when Presence Studio ships it will push, and this becomes a
+ * subscription rather than a second source of truth.
+ */
+function usePresenceProfile(): PresenceProfile {
+  const [profile, setProfile] = useState<PresenceProfile>(DEFAULT_PRESENCE_PROFILE);
+  useEffect(() => {
+    let cancelled = false;
+    void window.vowe
+      .getPresenceProfile()
+      .then((next) => {
+        if (!cancelled) setProfile(next);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return profile;
 }
 
 /* Expansion is a convenience, so it is stored where conveniences belong. */

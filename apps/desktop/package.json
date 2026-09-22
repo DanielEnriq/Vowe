@@ -6,6 +6,7 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:presence": "VOWE_PRESENCE_PREVIEW=1 electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -22,11 +23,13 @@
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
+    "@types/three": "^0.184.0",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^44.0.0",
     "electron-vite": "^5.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "three": "^0.184.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.0"
   }

@@ -1,0 +1,100 @@
+/* Development preview only. Never loaded by the application. */
+
+.preview {
+  padding: 28px 32px 64px;
+  color: var(--text);
+  background: var(--win);
+  min-height: 100vh;
+}
+.preview header h1 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.preview header p {
+  margin: 0 0 20px;
+  max-width: 60ch;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.preview .controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 22px;
+  align-items: flex-end;
+  padding: 12px 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+.preview .controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.preview .controls label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.preview h2 {
+  margin: 26px 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.preview .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 20px;
+}
+.preview .grid.sizes {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  align-items: end;
+}
+.preview .row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.preview .row.wrap {
+  flex-wrap: wrap;
+}
+.preview figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.preview figcaption {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.preview .note {
+  font-size: 12px;
+  color: var(--text-2);
+  max-width: 40ch;
+}
+
+.preview .sections {
+  display: flex;
+  gap: 8px;
+  padding: 14px 0 0;
+}
+.preview .sections button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  padding: 4px 10px;
+  font-size: 11.5px;
+}
+.preview .sections button.on {
+  background: var(--chip);
+  color: var(--text);
+}

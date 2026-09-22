@@ -204,6 +204,62 @@ button:disabled { cursor: not-allowed; }
   min-width: 0;
 }
 .sidebar-top { height: 52px; flex-shrink: 0; }
+
+/* --------------------------------------------------------------- presence */
+
+/* The canvas is transparent, so whatever is behind Vowe stays behind it. */
+.presence {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  line-height: 0;
+}
+.presence-canvas { position: relative; display: block; width: 100%; height: 100%; }
+/* Shown only when WebGL is unavailable: present, and honest about being still. */
+.presence-fallback {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 42% 36%,
+    rgba(235, 242, 255, 0.5),
+    rgba(120, 132, 145, 0.18) 45%,
+    transparent 70%
+  );
+}
+.presence-signature { width: 26px; height: 26px; }
+.presence-compact { width: 36px; height: 36px; }
+.presence-project { width: 176px; height: 176px; }
+.presence-voice { width: clamp(150px, 34vh, 300px); height: clamp(150px, 34vh, 300px); }
+.presence-studio { width: clamp(180px, 34vh, 420px); height: clamp(180px, 34vh, 420px); }
+
+/* "Your Vowe": one identity, above the work it is watching. */
+.vowe-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 18px 10px;
+  min-width: 0;
+}
+.vowe-row .who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.vowe-row .name { font-size: 12.5px; font-weight: 500; color: var(--text); }
+.vowe-row .doing {
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .sidebar-heading {
   display: flex;
   align-items: center;

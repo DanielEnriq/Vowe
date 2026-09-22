@@ -1,7 +1,3 @@
-import path from 'node:path';
-
-import { LocalSettingsFile } from './local-settings.js';
-
 /**
  * How Vowe looks, everywhere.
  *
@@ -10,8 +6,13 @@ import { LocalSettingsFile } from './local-settings.js';
  * because they are the same entity and looking different in each place would
  * say otherwise. Stored globally, never inside a session or a project.
  *
- * This is the settings contract only. The renderer that draws any of it is
- * Slice 3 — nothing here implements a form, a material or a motion.
+ * This is the settings contract only: nothing here implements a form, a
+ * material or a motion. What draws them is `presence-visuals.ts`, and what
+ * mounts that is the renderer's `VowePresence`.
+ *
+ * Nothing in this file touches the filesystem, so the renderer can import it
+ * directly through `@vowe/core/presence`. Where it is stored is
+ * `presence-profile-store.ts`, which is main-process code.
  */
 
 /**
@@ -87,32 +88,6 @@ export function normalizePresenceProfile(value: unknown): PresenceProfile {
   if (ACCENT.test(accent)) profile.accent = accent.toLowerCase();
 
   return profile;
-}
-
-/** `<storeRoot>/presence.json`, beside `profile.json`. */
-export class PresenceProfileStore {
-  private readonly file: LocalSettingsFile<PresenceProfile>;
-
-  constructor(options: {
-    /** The Vowe store root, e.g. `<userData>/vowe`. */
-    root: string;
-    onError?: (scope: string, error: unknown) => void;
-  }) {
-    this.file = new LocalSettingsFile<PresenceProfile>({
-      file: path.join(options.root, 'presence.json'),
-      normalize: normalizePresenceProfile,
-      ...(options.onError ? { onError: options.onError } : {}),
-    });
-  }
-
-  get(): Promise<PresenceProfile> {
-    return this.file.get();
-  }
-
-  /** Returns what was stored, which may differ from what was asked for. */
-  set(profile: PresenceProfile): Promise<PresenceProfile> {
-    return this.file.set(profile);
-  }
 }
 
 function oneOf<T extends string>(
