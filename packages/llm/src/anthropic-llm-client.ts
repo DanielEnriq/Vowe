@@ -26,6 +26,7 @@ import {
   renderQuestionPrompt,
 } from './prompts.js';
 import {
+  INVESTIGATE_PROJECT_SYSTEM,
   INVESTIGATE_SYSTEM,
   renderInvestigationPrompt,
 } from './observer-prompts.js';
@@ -170,7 +171,7 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
     const request = {
       model: this.model,
       max_tokens: 8000,
-      system: ANSWER_SYSTEM,
+      system: withGuidance(ANSWER_SYSTEM, input.guidance),
       thinking: { type: 'adaptive' as const },
       output_config: { effort: 'medium' as const },
       messages: [{ role: 'user' as const, content: renderQuestionPrompt(input) }],
@@ -270,7 +271,10 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
     const runner = this.client.beta.messages.toolRunner({
       model: this.model,
       max_tokens: 16000,
-      system: INVESTIGATE_SYSTEM,
+      system: withGuidance(
+        'projectId' in input ? INVESTIGATE_PROJECT_SYSTEM : INVESTIGATE_SYSTEM,
+        input.guidance,
+      ),
       thinking: { type: 'adaptive' },
       // A delegated question has someone waiting on the answer out loud, but it
       // is also the call most likely to be wrong if rushed, so it gets one step
@@ -392,6 +396,17 @@ function addUsage(total: ModelUsage, message: UsageBearing): void {
 
 function readEffort(value: string | undefined): 'low' | 'medium' | 'high' | undefined {
   return value === 'low' || value === 'medium' || value === 'high' ? value : undefined;
+}
+
+/**
+ * Temperament reaches the model as system text, or not at all.
+ *
+ * Appended rather than interpolated so the shipped prompt stays readable on
+ * its own and a missing preference leaves it byte-identical.
+ */
+function withGuidance(system: string, guidance: string | undefined): string {
+  const extra = guidance?.trim();
+  return extra ? `${system}\n\n${extra}` : system;
 }
 
 function textOf(message: { content: unknown[] }): string {

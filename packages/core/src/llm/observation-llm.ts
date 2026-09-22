@@ -112,16 +112,80 @@ export interface WindowObservation {
   refs?: string[];
 }
 
-export interface InvestigationInput {
+/**
+ * One session's roster line, for a project-scoped investigation.
+ *
+ * Enough to orient the model about what is going on across a repository
+ * without handing it any trace: it searches for the detail it needs, and every
+ * line here names the session so it knows where to look.
+ */
+export interface ProjectSessionLine {
   sessionId: string;
+  label: string;
+  status: string;
+  currentActivity: string | null;
+  branch: string | null;
+}
+
+interface InvestigationBase {
   question: string;
-  task: string | null;
-  cwd: string | null;
-  /** Recent L1 understanding, oldest first. */
-  recentNotes: WindowNote[];
+  /**
+   * How this developer asked Vowe to talk, composed from their temperament.
+   *
+   * Appended to the system prompt rather than the question, because it governs
+   * every answer rather than this one. Absent means nobody set a preference and
+   * the prompt stands as written — never a silently applied middle setting.
+   */
+  guidance?: string;
   /** What has been said out loud so far, oldest first. */
   liveConversation: { speaker: 'user' | 'vo'; text: string }[];
+  /**
+   * What the developer attached to the question, already opened.
+   *
+   * Opened before the model runs rather than described to it, so an attachment
+   * is material the answer was actually built on rather than a suggestion the
+   * model might have followed. Each one is also the first entry in the
+   * receipt, which is what makes "I attached this" and "it looked at this" the
+   * same claim.
+   */
+  attachments?: InvestigationAttachment[];
 }
+
+export interface InvestigationAttachment {
+  /** The ref's string form, so the model can re-open it for more depth. */
+  refId: string;
+  /** A short description of what it is. */
+  label: string;
+  /** The opened material, already bounded by the navigator. */
+  content: string;
+}
+
+/**
+ * A question about one session, or about a whole project.
+ *
+ * The same investigator answers both — the product rule is that intelligence
+ * does not fork — but what it is handed to start from genuinely differs. A
+ * session question begins from that session's task and interpreted windows; a
+ * project question begins from the repository and a roster of what is running
+ * in it, and reaches any individual session through search rather than through
+ * having been given all of them.
+ */
+export type InvestigationInput =
+  | (InvestigationBase & {
+      sessionId: string;
+      task: string | null;
+      cwd: string | null;
+      /** Recent L1 understanding, oldest first. */
+      recentNotes: WindowNote[];
+    })
+  | (InvestigationBase & {
+      projectId: string;
+      projectName: string;
+      /** The repository root, which is where a project's diff is taken. */
+      repoRoot: string | null;
+      /** What is running in this project, newest first. */
+      sessions: ProjectSessionLine[];
+    });
 
 /**
  * The two representations of an answer.

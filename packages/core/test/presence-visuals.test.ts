@@ -171,3 +171,137 @@ describe('Presence appearance — reduced motion', () => {
     expect(new Set(postures).size).toBe(PRESENCE_STATES.length);
   });
 });
+
+describe('Presence appearance — the full design control surface', () => {
+  it('draws all eight materials distinguishably, and never by colour alone', () => {
+    expect(PRESENCE_MATERIALS).toHaveLength(8);
+
+    const fingerprints = PRESENCE_MATERIALS.map((material) => {
+      const { colorA, colorB, gain, opacity, irid } = resolvePresenceVisuals(
+        'idle',
+        { ...PROFILE, material },
+        'studio',
+      );
+      return JSON.stringify({ colorA, colorB, gain, opacity, irid });
+    });
+    expect(new Set(fingerprints).size).toBe(PRESENCE_MATERIALS.length);
+
+    // Two materials may share a hue family; they may not share everything but
+    // hue, or changing material would be a recolour rather than a material.
+    const lit = PRESENCE_MATERIALS.map(
+      (material) => resolvePresenceVisuals('idle', { ...PROFILE, material }, 'studio').colorA,
+    );
+    expect(new Set(lit).size).toBe(PRESENCE_MATERIALS.length);
+  });
+
+  it('separates the four motion modes monotonically', () => {
+    expect(PRESENCE_MOTIONS).toEqual(['calm', 'fluid', 'reactive', 'energetic']);
+
+    const speeds = PRESENCE_MOTIONS.map(
+      (motion) => resolvePresenceVisuals('observing', { ...PROFILE, motion }, 'project').speed,
+    );
+    for (let i = 1; i < speeds.length; i += 1) {
+      expect(speeds[i]!, PRESENCE_MOTIONS[i]).toBeGreaterThan(speeds[i - 1]!);
+    }
+  });
+
+  it('tints the body with bodyAccent and leaves the lit colour alone', () => {
+    const base = resolvePresenceVisuals('idle', PROFILE, 'studio');
+    const tinted = resolvePresenceVisuals('idle', { ...PROFILE, bodyAccent: '#3a2a6d' }, 'studio');
+
+    expect(tinted.colorB).toBe('#3a2a6d');
+    expect(tinted.colorA).toBe(base.colorA);
+  });
+
+  it('expands a short body accent and ignores a malformed one', () => {
+    expect(resolvePresenceVisuals('idle', { ...PROFILE, bodyAccent: '#abc' }, 'studio').colorB).toBe(
+      '#aabbcc',
+    );
+    const material = resolvePresenceVisuals('idle', PROFILE, 'studio').colorB;
+    expect(
+      resolvePresenceVisuals('idle', { ...PROFILE, bodyAccent: 'violet' }, 'studio').colorB,
+    ).toBe(material);
+  });
+
+  /**
+   * The whole reason the neutral point is 0.5 rather than 0: a profile stored
+   * before this control existed must draw exactly like one that sets it to the
+   * middle, or reading a profile back would silently change how Vowe looks.
+   */
+  it('draws identically whether lightResponse is absent or neutral', () => {
+    const absent = resolvePresenceVisuals('speaking', PROFILE, 'voice');
+    const neutral = resolvePresenceVisuals('speaking', { ...PROFILE, lightResponse: 0.5 }, 'voice');
+    expect(neutral).toEqual(absent);
+  });
+
+  it('moves shading with lightResponse, monotonically and within bounds', () => {
+    const at = (lightResponse: number) =>
+      resolvePresenceVisuals('speaking', { ...PROFILE, lightResponse }, 'voice');
+
+    const soft = at(0);
+    const mid = at(0.5);
+    const strong = at(1);
+
+    expect(soft.bright).toBeLessThan(mid.bright);
+    expect(mid.bright).toBeLessThan(strong.bright);
+    expect(soft.rim).toBeLessThan(mid.rim);
+    expect(mid.rim).toBeLessThan(strong.rim);
+
+    // Bounded: the dial cannot extinguish the presence or blow it out.
+    expect(soft.bright / mid.bright).toBeCloseTo(0.7, 5);
+    expect(strong.bright / mid.bright).toBeCloseTo(1.3, 5);
+  });
+
+  it('clamps an out-of-range lightResponse rather than distorting the surface', () => {
+    const low = resolvePresenceVisuals('idle', { ...PROFILE, lightResponse: -4 }, 'studio');
+    const high = resolvePresenceVisuals('idle', { ...PROFILE, lightResponse: 9 }, 'studio');
+    expect(low.bright).toBeCloseTo(resolvePresenceVisuals('idle', { ...PROFILE, lightResponse: 0 }, 'studio').bright, 10);
+    expect(high.bright).toBeCloseTo(resolvePresenceVisuals('idle', { ...PROFILE, lightResponse: 1 }, 'studio').bright, 10);
+  });
+
+  it('keeps every state apart at every material, so appearance never costs meaning', () => {
+    for (const material of PRESENCE_MATERIALS) {
+      const postures = PRESENCE_STATES.map((state) =>
+        JSON.stringify(presencePosture(resolvePresenceVisuals(state, { ...PROFILE, material }, 'project'))),
+      );
+      expect(new Set(postures).size, material).toBe(PRESENCE_STATES.length);
+    }
+  });
+});
+
+describe('Presence profile — the widened schema', () => {
+  it('keeps the new appearance fields through normalization', () => {
+    const profile = normalizePresenceProfile({
+      form: 'point-cloud',
+      material: 'iridescent',
+      motion: 'energetic',
+      accent: '#DCE8FF',
+      bodyAccent: '#ABC',
+      lightResponse: 0.8,
+    });
+    expect(profile).toEqual({
+      form: 'point-cloud',
+      material: 'iridescent',
+      motion: 'energetic',
+      accent: '#dce8ff',
+      bodyAccent: '#abc',
+      lightResponse: 0.8,
+    });
+  });
+
+  it('drops the new fields rather than storing nonsense', () => {
+    const profile = normalizePresenceProfile({
+      material: 'pearl',
+      bodyAccent: 'rebeccapurple',
+      lightResponse: 'strong',
+    });
+    expect(profile.bodyAccent).toBeUndefined();
+    expect(profile.lightResponse).toBeUndefined();
+    expect(profile.material).toBe('pearl');
+  });
+
+  it('clamps a stored lightResponse into range', () => {
+    expect(normalizePresenceProfile({ lightResponse: 12 }).lightResponse).toBe(1);
+    expect(normalizePresenceProfile({ lightResponse: -3 }).lightResponse).toBe(0);
+  });
+});

@@ -408,13 +408,29 @@ function nullObserver(store: SqliteEventStore): import('@vowe/core').Observation
       };
     },
     async investigate(input) {
+      // A project question has no session to describe, so it reports the
+      // roster it was given rather than pretending to have looked at a trace.
+      const observed =
+        'projectId' in input
+          ? input.sessions.length
+            ? input.sessions
+                .map(
+                  (session) =>
+                    `- ${session.label} (${session.status})${
+                      session.currentActivity ? `: ${session.currentActivity}` : ''
+                    }`,
+                )
+                .join('\n')
+            : 'No sessions have run in this project yet.'
+          : describeObservedState(
+              store.getSession(input.sessionId)?.semanticState ?? null,
+              store.getEvents(input.sessionId, { limit: 80 }),
+            );
+
       return {
         spokenAnswer:
           'No model is configured, so I can only report what I observed directly.',
-        fullAnswer: `No model is configured, so I could not investigate the question. Here is what I have observed:\n\n${describeObservedState(
-          store.getSession(input.sessionId)?.semanticState ?? null,
-          store.getEvents(input.sessionId, { limit: 80 }),
-        )}`,
+        fullAnswer: `No model is configured, so I could not investigate the question. Here is what I have observed:\n\n${observed}`,
         refs: [],
       };
     },

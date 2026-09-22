@@ -17,7 +17,30 @@
  * here would drag `node:fs` into that bundle.
  */
 
-export type ContextSource = 'windows' | 'trace' | 'transcript' | 'repo';
+/**
+ * Where a search may look.
+ *
+ * `observations` is the project-scoped counterpart of `windows`: what Vowe
+ * understood across every session in a project, rather than within one. Raw
+ * trace is deliberately absent from it — a project question is answered from
+ * interpretation and the repository, and the trace is reached by descending
+ * into a particular session from a particular citation.
+ */
+export type ContextSource =
+  | 'windows'
+  | 'trace'
+  | 'transcript'
+  | 'repo'
+  | 'observations';
+
+/**
+ * Marks a `diff:` ref as naming a project rather than a session.
+ *
+ * Reserved: no provider is called `project`, so `diff:project:…` can never
+ * collide with a real session id, and an old ref keeps parsing unchanged.
+ */
+const PROJECT_MARKER = 'project:';
+const DIFF_PROJECT = `diff:${PROJECT_MARKER}`;
 
 export type ContextRef =
   /** An interpreted window: its L1 note plus the L0 range beneath it. */
@@ -30,8 +53,16 @@ export type ContextRef =
   | { kind: 'transcript'; sessionId: string; eventId: string }
   /** A location in the working tree. */
   | { kind: 'repo'; path: string; line?: number }
-  /** The current diff, optionally narrowed to one path. */
+  /** The current diff of a session's tree, optionally narrowed to one path. */
   | { kind: 'diff'; sessionId: string; path?: string }
+  /**
+   * The current diff of a project's repository.
+   *
+   * A separate variant rather than a nullable session, because the two are
+   * addressed differently on the wire: a project id and a session id are both
+   * `<something>:<something>`, so only a reserved marker can tell them apart.
+   */
+  | { kind: 'diff'; projectId: string; path?: string }
   /** A node in a project's code graph: orientation, not truth. */
   | { kind: 'symbol'; projectId: string; nodeId: string }
   /** Something Vowe worked out about this project and kept. */
@@ -54,6 +85,11 @@ export function formatRef(ref: ContextRef): string {
     case 'repo':
       return ref.line === undefined ? `repo:${ref.path}` : `repo:${ref.path}#${ref.line}`;
     case 'diff':
+      if ('projectId' in ref) {
+        return ref.path
+          ? `${DIFF_PROJECT}${ref.projectId}#${ref.path}`
+          : `${DIFF_PROJECT}${ref.projectId}`;
+      }
       // `#` separates the path, not `:`. A session id contains a colon of its
       // own, so `diff:a:b` cannot be told apart from a session id with a path.
       return ref.path ? `diff:${ref.sessionId}#${ref.path}` : `diff:${ref.sessionId}`;
@@ -109,6 +145,15 @@ export function parseRef(value: string | ContextRef): ContextRef | null {
       return Number.isFinite(line) ? { kind: 'repo', path, line } : { kind: 'repo', path };
     }
     case 'diff': {
+      if (rest.startsWith(PROJECT_MARKER)) {
+        const body = rest.slice(PROJECT_MARKER.length);
+        const marked = body.indexOf('#');
+        if (marked === -1) return body ? { kind: 'diff', projectId: body } : null;
+        const projectId = body.slice(0, marked);
+        const path = body.slice(marked + 1);
+        if (!projectId) return null;
+        return path ? { kind: 'diff', projectId, path } : { kind: 'diff', projectId };
+      }
       const hash = rest.indexOf('#');
       if (hash === -1) return rest ? { kind: 'diff', sessionId: rest } : null;
       const sessionId = rest.slice(0, hash);

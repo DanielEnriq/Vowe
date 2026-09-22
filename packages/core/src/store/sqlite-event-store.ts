@@ -7,6 +7,7 @@ import type { AgentSession, SemanticState } from '../types/session.js';
 import type {
   ConversationDelivery,
   ConversationEntry,
+  ProjectConversationEntry,
   DeliveryProgress,
 } from '../types/conversation.js';
 import type {
@@ -25,6 +26,7 @@ import type { Project } from '../projects/project.js';
 import type {
   ConversationChange,
   EventQuery,
+  ProjectConversationChange,
   EventStore,
   WindowQuery,
 } from './event-store.js';
@@ -70,6 +72,9 @@ export class SqliteEventStore implements EventStore {
   private readonly migrations: readonly Migration[] | undefined;
   private readonly conversationListeners = new Set<
     (change: ConversationChange) => void
+  >();
+  private readonly projectConversationListeners = new Set<
+    (change: ProjectConversationChange) => void
   >();
   private readonly cache = new Map<string, StatementSync>();
   private db: DatabaseSync | null = null;
@@ -436,6 +441,78 @@ export class SqliteEventStore implements EventStore {
       { sessionId },
       limit,
     ).map(rows.toConversationEntry);
+  }
+
+  // ----------------------------------------------------- project conversation
+
+  async appendProjectConversationEntry(
+    entry: ProjectConversationEntry,
+  ): Promise<ProjectConversationEntry | null> {
+    const stored = this.transaction(() => {
+      const inserted = this.get(
+        `INSERT INTO project_conversation_entries (
+           id, project_id, ord, at, role, text, refs_json, provenance_json,
+           investigation_json, origin_provider, origin_kind, origin_id)
+         SELECT :id, :projectId,
+                COALESCE((SELECT MAX(ord) FROM project_conversation_entries
+                           WHERE project_id = :projectId), 0) + 1,
+                :at, :role, :text, :refs, :provenance, :investigation,
+                :originProvider, :originKind, :originId
+         -- Required: SQLite cannot parse ON CONFLICT after a bare SELECT.
+         WHERE true
+         -- Partial index, so its predicate belongs in the conflict target too.
+         ON CONFLICT (project_id, origin_provider, origin_kind, origin_id)
+           WHERE origin_provider IS NOT NULL
+           DO NOTHING
+         RETURNING *`,
+        {
+          id: entry.id,
+          projectId: entry.projectId,
+          at: entry.at,
+          role: entry.role,
+          text: entry.text,
+          refs: rows.json(entry.refs),
+          provenance: rows.json(entry.provenance),
+          investigation: rows.json(entry.investigation),
+          originProvider: rows.text(entry.origin?.provider),
+          originKind: rows.text(entry.origin?.kind),
+          originId: rows.text(entry.origin?.id),
+        },
+      );
+      return inserted ? rows.toProjectConversationEntry(inserted) : null;
+    });
+
+    if (!stored) return null;
+    this.notifyProjectConversation({ projectId: entry.projectId });
+    return stored;
+  }
+
+  getProjectConversation(projectId: string, limit?: number): ProjectConversationEntry[] {
+    return this.tail(
+      'SELECT * FROM project_conversation_entries WHERE project_id = :projectId',
+      'ord',
+      { projectId },
+      limit,
+    ).map(rows.toProjectConversationEntry);
+  }
+
+  onProjectConversationChanged(
+    listener: (change: ProjectConversationChange) => void,
+  ): () => void {
+    this.projectConversationListeners.add(listener);
+    return () => {
+      this.projectConversationListeners.delete(listener);
+    };
+  }
+
+  private notifyProjectConversation(change: ProjectConversationChange): void {
+    for (const listener of this.projectConversationListeners) {
+      try {
+        listener(change);
+      } catch (error) {
+        this.onError('project-conversation-listener', error);
+      }
+    }
   }
 
   // --------------------------------------------------------------- delivery

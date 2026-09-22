@@ -138,10 +138,11 @@ export class ArtifactResolver {
   private async resolveDiff(
     ref: Extract<ContextRef, { kind: 'diff' }>,
   ): Promise<WorkbenchArtifact> {
-    const diff = await this.navigator.getDiff({
-      sessionId: ref.sessionId,
-      ...(ref.path ? { path: ref.path } : {}),
-    });
+    const diff = await this.navigator.getDiff(
+      'projectId' in ref
+        ? { projectId: ref.projectId, ...(ref.path ? { path: ref.path } : {}) }
+        : { sessionId: ref.sessionId, ...(ref.path ? { path: ref.path } : {}) },
+    );
     const title = ref.path ?? 'Working diff';
 
     if (diff.unavailable) {

@@ -265,6 +265,52 @@ CREATE INDEX vowe_runs_session ON vowe_runs (session_id, started_at);
 CREATE INDEX vowe_runs_output_entry ON vowe_runs (output_entry_id);
 `;
 
+/**
+ * A conversation that belongs to a project rather than to a session.
+ *
+ * A separate table, deliberately, rather than making `session_id` nullable on
+ * `conversation_entries`. Three reasons, in order of weight:
+ *
+ *  1. Existing session history is left exactly where it is. Widening the
+ *     session table would mean rebuilding it — it is referenced by
+ *     `conversation_deliveries` — to gain nullability that every session row
+ *     would then have to be trusted not to use.
+ *  2. The two really are different things. A session conversation is about one
+ *     worker's run and can be interrupted mid-sentence by voice; a project
+ *     conversation is about a repository, is typed, and has no delivery.
+ *  3. Nothing here can be mistaken for the other by a query that forgot to
+ *     filter.
+ *
+ * No deliveries table and no delivery column: project answers are read, not
+ * spoken, because project-level voice does not exist. When it does, it brings
+ * its own migration rather than having been guessed at here.
+ */
+const PROJECT_CONVERSATION = `
+CREATE TABLE project_conversation_entries (
+  id                 TEXT PRIMARY KEY,
+  project_id         TEXT NOT NULL,
+  ord                INTEGER NOT NULL, -- insertion order; two entries share a timestamp routinely
+  at                 TEXT NOT NULL,
+  role               TEXT NOT NULL,
+  text               TEXT NOT NULL,
+  refs_json          TEXT,             -- NULL => key ABSENT
+  provenance_json    TEXT,             -- NULL => key ABSENT
+  investigation_json TEXT,             -- NULL => key ABSENT
+  origin_provider    TEXT,             -- NULL => Vowe wrote it
+  origin_kind        TEXT,             -- NULL => Vowe wrote it
+  origin_id          TEXT              -- NULL => Vowe wrote it
+) STRICT;
+
+-- getProjectConversation, including its "last N" form.
+CREATE UNIQUE INDEX project_conversation_entries_project_ord
+  ON project_conversation_entries (project_id, ord);
+
+-- The same exactly-once guarantee the session table has, for the same reason.
+CREATE UNIQUE INDEX project_conversation_entries_origin
+  ON project_conversation_entries (project_id, origin_provider, origin_kind, origin_id)
+  WHERE origin_provider IS NOT NULL;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -280,6 +326,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 3,
     name: '003_vowe_execution_history',
     up: (db) => db.exec(VOWE_EXECUTION_HISTORY),
+  },
+  {
+    version: 4,
+    name: '004_project_conversation',
+    up: (db) => db.exec(PROJECT_CONVERSATION),
   },
 ];
 

@@ -127,6 +127,31 @@ export function reachedWorker(role: ConversationRole): boolean {
 }
 
 /** How an entry reached a person. */
+/**
+ * A turn in a conversation about a project rather than about one session.
+ *
+ * Same shape as a session turn minus the two things that only make sense
+ * inside a session: there is no `sessionId`, and there is no delivery, because
+ * a project conversation is typed and read rather than spoken. When project
+ * voice exists it brings its own record rather than having been anticipated
+ * here.
+ *
+ * Kept a separate type rather than a `ConversationEntry` with a nullable
+ * session so that no query can confuse the two and no reader has to remember
+ * to filter.
+ */
+export interface ProjectConversationEntry {
+  id: string;
+  projectId: string;
+  at: string;
+  role: ConversationRole;
+  text: string;
+  refs?: ContextRef[];
+  provenance?: { eventIds: string[]; semanticUpdatedAt?: string };
+  investigation?: InvestigationReceipt;
+  origin?: ConversationOrigin;
+}
+
 export type DeliveryModality = 'text' | 'voice';
 
 /**

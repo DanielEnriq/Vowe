@@ -9,12 +9,23 @@ import type { TraceWindow, WindowNote } from '../observation/trace-window.js';
 import { getGitDiff, gitGrep, type DiffResult } from './git-diff.js';
 import { formatRef, parseRef, type ContextRef, type ContextSource } from './refs.js';
 
-export interface SearchContextInput {
-  sessionId: string;
+interface SearchContextBase {
   query: string;
   sources?: ContextSource[];
   limit?: number;
 }
+
+/**
+ * A search is scoped to one session or to one project, never to neither.
+ *
+ * A union rather than two optional fields so that "which am I looking at?" is
+ * answered by the type rather than by a runtime check. Session scope is
+ * unchanged; project scope is what the Project Room asks, and it can see the
+ * repository and what Vowe understood across the project's sessions.
+ */
+export type SearchContextInput =
+  | (SearchContextBase & { sessionId: string })
+  | (SearchContextBase & { projectId: string });
 
 export interface SearchHit {
   ref: ContextRef;
@@ -66,12 +77,22 @@ export interface SourceSlice {
   truncated: boolean;
 }
 
-export interface GetDiffInput {
-  sessionId: string;
+interface GetDiffBase {
   path?: string;
   /** A ref to take the path from, when the caller has one but not a filename. */
   around?: string | ContextRef;
 }
+
+/**
+ * The current diff of a session's working tree, or of a project's repository.
+ *
+ * Project scope resolves to the repository root rather than any one session's
+ * working directory, so "what has changed here?" means the same thing in the
+ * Project Room as it does in a session that happens to sit in a worktree.
+ */
+export type GetDiffInput =
+  | (GetDiffBase & { sessionId: string })
+  | (GetDiffBase & { projectId: string });
 
 export interface ContextNavigatorOptions {
   store: EventStore;
@@ -96,6 +117,18 @@ export interface ContextNavigatorOptions {
 }
 
 const DEFAULT_LIMIT = 12;
+
+/** What a project-scoped search may look at. Raw trace is not on the list. */
+const PROJECT_SOURCES = new Set<ContextSource>(['repo', 'observations']);
+
+/**
+ * How many of a project's sessions a single search will read.
+ *
+ * Newest first. A project with two hundred finished sessions must not turn one
+ * question into two hundred scans, and the sessions nobody has touched in
+ * weeks are not what "what is happening here?" is asking about.
+ */
+const MAX_PROJECT_SESSIONS = 12;
 const MAX_SNIPPET_BYTES = 600;
 const MAX_OPEN_BYTES = 12_000;
 
@@ -147,11 +180,16 @@ export class ContextNavigator {
 
   async searchContext(input: SearchContextInput): Promise<SearchHit[]> {
     const limit = input.limit ?? this.defaultLimit;
-    const sources = input.sources?.length
-      ? input.sources
-      : (['windows', 'trace', 'transcript'] as ContextSource[]);
     const terms = tokenize(input.query);
     if (!terms.length) return [];
+
+    const projectScoped = 'projectId' in input;
+    const sources = input.sources?.length
+      ? input.sources.filter((source) => (projectScoped ? PROJECT_SOURCES.has(source) : true))
+      : projectScoped
+        ? (['repo', 'observations'] as ContextSource[])
+        : (['windows', 'trace', 'transcript'] as ContextSource[]);
+    if (!sources.length) return [];
 
     const hits: SearchHit[] = [];
     // Allocate the budget across the requested sources rather than letting one
@@ -161,21 +199,135 @@ export class ContextNavigator {
     for (const source of sources) {
       switch (source) {
         case 'windows':
-          hits.push(...this.searchWindows(input.sessionId, terms, perSource));
+          if ('sessionId' in input) {
+            hits.push(...this.searchWindows(input.sessionId, terms, perSource));
+          }
           break;
         case 'trace':
-          hits.push(...this.searchTrace(input.sessionId, terms, perSource, false));
+          if ('sessionId' in input) {
+            hits.push(...this.searchTrace(input.sessionId, terms, perSource, false));
+          }
           break;
         case 'transcript':
-          hits.push(...this.searchTrace(input.sessionId, terms, perSource, true));
+          if ('sessionId' in input) {
+            hits.push(...this.searchTrace(input.sessionId, terms, perSource, true));
+          }
           break;
         case 'repo':
-          hits.push(...(await this.searchRepo(input.sessionId, input.query, perSource)));
+          hits.push(
+            ...(await this.searchRepo(
+              'projectId' in input
+                ? { projectId: input.projectId }
+                : { sessionId: input.sessionId },
+              input.query,
+              perSource,
+            )),
+          );
+          break;
+        case 'observations':
+          hits.push(
+            ...this.searchObservations(
+              'projectId' in input
+                ? input.projectId
+                : (this.resolveProject(input.sessionId) ?? null),
+              terms,
+              perSource,
+            ),
+          );
           break;
       }
     }
 
     return hits.slice(0, limit);
+  }
+
+  /**
+   * What Vowe understood, across every session in a project.
+   *
+   * The project-scoped counterpart of `searchWindows`. It reads interpretation
+   * — window notes and each session's current understanding — and never raw
+   * trace: a project question is answered from what Vowe made of the work, and
+   * the work itself is reached by descending into one of these citations.
+   *
+   * Every hit carries a ref that names its own session, which is what makes
+   * that descent possible without the project search ever having concatenated
+   * the sessions together.
+   */
+  private searchObservations(
+    projectId: string | null,
+    terms: string[],
+    limit: number,
+  ): SearchHit[] {
+    if (!projectId) return [];
+
+    const sessions = this.store
+      .listSessions()
+      .filter((session) => session.projectId === projectId)
+      .sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1))
+      .slice(0, MAX_PROJECT_SESSIONS);
+    if (!sessions.length) return [];
+
+    // Every session gets a share. A project answer that only ever quoted the
+    // busiest session would be a session answer wearing a project's name.
+    const perSession = Math.max(1, Math.ceil(limit / sessions.length));
+    const hits: SearchHit[] = [];
+
+    for (const session of sessions) {
+      for (const hit of this.searchWindows(session.id, terms, perSession)) {
+        hits.push({
+          ...hit,
+          source: 'observations',
+          label: `${session.displayLabel} · ${hit.label}`,
+        });
+      }
+
+      const current = this.currentUnderstanding(session.id, terms);
+      if (current) hits.push(current);
+    }
+
+    return hits.slice(0, limit);
+  }
+
+  /**
+   * A session's present understanding, addressed by the trace it came from.
+   *
+   * `SemanticState` has no ref kind of its own, and inventing one would be a
+   * second way to address something that is already addressable. Instead the
+   * hit points at the range of trace the interpretation was actually built
+   * from, which is both true and the thing a reader would want to open. A
+   * state with no provenance yields no hit rather than a fabricated range.
+   */
+  private currentUnderstanding(sessionId: string, terms: string[]): SearchHit | null {
+    const session = this.store.getSession(sessionId);
+    const state = session?.semanticState;
+    if (!state) return null;
+
+    const haystack = [state.currentActivity, state.phase, ...state.recentProgress]
+      .filter(Boolean)
+      .join('\n');
+    if (scoreOf(haystack, terms) <= 0) return null;
+
+    const eventIds = state.provenance?.eventIds ?? [];
+    if (!eventIds.length) return null;
+    const events = this.store.getEventsByIds(sessionId, eventIds);
+    if (!events.length) return null;
+
+    const seqs = events.map((event) => event.seq);
+    const ref: ContextRef = {
+      kind: 'trace',
+      sessionId,
+      startSeq: Math.min(...seqs),
+      endSeq: Math.max(...seqs),
+    };
+
+    return {
+      ref,
+      refId: formatRef(ref),
+      source: 'observations',
+      label: `${session!.displayLabel} · now`,
+      snippet: this.snippet(haystack),
+      at: state.updatedAt,
+    };
   }
 
   private searchWindows(
@@ -256,12 +408,13 @@ export class ContextNavigator {
    * disk right now.
    */
   private async searchRepo(
-    sessionId: string,
+    scope: { sessionId: string } | { projectId: string },
     query: string,
     limit: number,
   ): Promise<SearchHit[]> {
     const hits: SearchHit[] = [];
-    const projectId = this.resolveProject(sessionId);
+    const projectId =
+      'projectId' in scope ? scope.projectId : this.resolveProject(scope.sessionId);
 
     if (projectId && this.knowledge?.available) {
       const known = await this.knowledge.search({
@@ -292,17 +445,29 @@ export class ContextNavigator {
       }
     }
 
-    hits.push(...(await this.grepHits(sessionId, query, limit - hits.length)));
+    hits.push(...(await this.grepHits(this.cwdFor(scope), query, limit - hits.length)));
     return hits;
   }
 
+  /**
+   * Which working tree a scope means.
+   *
+   * A session has its own directory, which may be a worktree; a project means
+   * the repository root. One helper so search and diff can never disagree
+   * about where "here" is.
+   */
+  private cwdFor(scope: { sessionId: string } | { projectId: string }): string | null {
+    return 'projectId' in scope
+      ? (this.store.getProject(scope.projectId)?.repoRoot ?? null)
+      : this.resolveCwd(scope.sessionId);
+  }
+
   private async grepHits(
-    sessionId: string,
+    cwd: string | null,
     query: string,
     limit: number,
   ): Promise<SearchHit[]> {
     if (limit <= 0) return [];
-    const cwd = this.resolveCwd(sessionId);
     const found = await gitGrep(cwd, query, limit);
     return found.map((hit) => {
       // `git grep` prints repository-relative paths, but a ref travels through
@@ -353,7 +518,11 @@ export class ContextNavigator {
       case 'lesson':
         return this.openLesson(ref);
       case 'diff': {
-        const diff = await this.getDiff({ sessionId: ref.sessionId, path: ref.path });
+        const diff = await this.getDiff(
+          'projectId' in ref
+            ? { projectId: ref.projectId, ...(ref.path ? { path: ref.path } : {}) }
+            : { sessionId: ref.sessionId, ...(ref.path ? { path: ref.path } : {}) },
+        );
         return this.result(ref, renderDiff(diff), []);
       }
     }
@@ -645,7 +814,9 @@ export class ContextNavigator {
       path = this.pathFromRef(input.around) ?? undefined;
     }
     const options: Parameters<typeof getGitDiff>[0] = {
-      cwd: this.resolveCwd(input.sessionId),
+      cwd: this.cwdFor(
+        'projectId' in input ? { projectId: input.projectId } : { sessionId: input.sessionId },
+      ),
     };
     if (path) options.path = path;
     return getGitDiff(options);

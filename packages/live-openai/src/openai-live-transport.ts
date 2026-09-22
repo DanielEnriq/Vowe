@@ -10,6 +10,7 @@ import type {
   LiveServerEvent,
   LiveSideband,
   LiveTransport,
+  LiveVoice,
   Unsubscribe,
 } from '@vowe/core';
 
@@ -25,6 +26,27 @@ export interface OpenAiLiveTransportOptions {
 
 const DEFAULT_MODEL = 'gpt-live-1';
 const DEFAULT_VOICE = 'marin';
+
+/**
+ * The voices this provider documents for its live models.
+ *
+ * Vendor knowledge, and therefore in the vendor package. Listed rather than
+ * discovered because the API exposes no enumeration endpoint; if the provider
+ * retires one, sending it fails loudly at join time with the provider's own
+ * message, which is better than a picker that silently offers nothing.
+ */
+const VOICES: readonly LiveVoice[] = [
+  { id: 'marin', label: 'Marin' },
+  { id: 'cedar', label: 'Cedar' },
+  { id: 'alloy', label: 'Alloy' },
+  { id: 'ash', label: 'Ash' },
+  { id: 'ballad', label: 'Ballad' },
+  { id: 'coral', label: 'Coral' },
+  { id: 'echo', label: 'Echo' },
+  { id: 'sage', label: 'Sage' },
+  { id: 'shimmer', label: 'Shimmer' },
+  { id: 'verse', label: 'Verse' },
+];
 
 /**
  * The live voice provider, behind `LiveTransport`.
@@ -48,10 +70,23 @@ export class OpenAiLiveTransport implements LiveTransport {
   readonly name = 'openai-live';
   readonly available: boolean;
   readonly unavailableReason: string | null;
+  readonly voices: readonly LiveVoice[] = VOICES;
 
   private readonly client: OpenAI | null;
   private readonly model: string;
   private readonly voice: string;
+
+  /**
+   * The developer's choice, when it is one this provider actually offers.
+   *
+   * An unrecognised id falls back to the configured default rather than being
+   * forwarded: a stale stored preference should not cost someone their call.
+   */
+  private voiceFor(requested: string | undefined): string {
+    const id = requested?.trim();
+    if (!id) return this.voice;
+    return VOICES.some((voice) => voice.id === id) ? id : this.voice;
+  }
   private readonly onError: (scope: string, error: unknown) => void;
 
   constructor(options: OpenAiLiveTransportOptions = {}) {
@@ -82,7 +117,7 @@ export class OpenAiLiveTransport implements LiveTransport {
       session: {
         model: this.model,
         instructions: options.instructions,
-        audio: { output: { voice: this.voice } },
+        audio: { output: { voice: this.voiceFor(options.voice) } },
         // The assistant hands technical questions to Vowe rather than
         // answering them itself. See DelegatedQuestionRunner.
         delegation: { type: 'client' },
