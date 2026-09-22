@@ -2,11 +2,15 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 import type {
   ContextRef,
+  LiveTranscriptDelta,
   ConversationChange,
   LiveStatus,
   NormalizedEvent,
   PresenceProfile,
+  ProjectConversationChange,
+  TemperamentProfile,
   UserProfile,
+  VoicePreference,
   VoweRunActivity,
 } from '@vowe/core';
 import { IPC, type VoweApi } from '../shared/ipc.js';
@@ -24,16 +28,24 @@ const api: VoweApi = {
     ipcRenderer.invoke(IPC.getConversation, sessionId),
   refreshInterpretation: (sessionId) =>
     ipcRenderer.invoke(IPC.refreshInterpretation, sessionId),
-  askCompanion: (sessionId, question) =>
-    ipcRenderer.invoke(IPC.ask, sessionId, question),
+  askCompanion: (sessionId, question, contextRefs) =>
+    ipcRenderer.invoke(IPC.ask, sessionId, question, contextRefs),
+  getDeliveries: (sessionId) => ipcRenderer.invoke(IPC.getDeliveries, sessionId),
   sendInstruction: (sessionId, text) =>
     ipcRenderer.invoke(IPC.sendInstruction, sessionId, text),
   launchSession: (cwd, prompt) => ipcRenderer.invoke(IPC.launch, cwd, prompt),
   chooseFolder: () => ipcRenderer.invoke(IPC.chooseFolder),
+  chooseFile: () => ipcRenderer.invoke(IPC.chooseFile),
   getProjectKnowledge: (projectId) =>
     ipcRenderer.invoke(IPC.getProjectKnowledge, projectId),
   getProjectBrief: (projectId) =>
     ipcRenderer.invoke(IPC.getProjectBrief, projectId),
+  askProject: (projectId, question, contextRefs) =>
+    ipcRenderer.invoke(IPC.askProject, projectId, question, contextRefs),
+  getProjectConversation: (projectId) =>
+    ipcRenderer.invoke(IPC.getProjectConversation, projectId),
+  listProjectMemories: (projectId) =>
+    ipcRenderer.invoke(IPC.listProjectMemories, projectId),
 
   getUserProfile: () => ipcRenderer.invoke(IPC.getUserProfile),
   setUserProfile: (profile: UserProfile) =>
@@ -41,6 +53,19 @@ const api: VoweApi = {
   getPresenceProfile: () => ipcRenderer.invoke(IPC.getPresenceProfile),
   setPresenceProfile: (profile: PresenceProfile) =>
     ipcRenderer.invoke(IPC.setPresenceProfile, profile),
+  getTemperament: () => ipcRenderer.invoke(IPC.getTemperament),
+  setTemperament: (profile: TemperamentProfile) =>
+    ipcRenderer.invoke(IPC.setTemperament, profile),
+  getVoicePreference: () => ipcRenderer.invoke(IPC.getVoicePreference),
+  setVoicePreference: (preference: VoicePreference) =>
+    ipcRenderer.invoke(IPC.setVoicePreference, preference),
+  listVoices: () => ipcRenderer.invoke(IPC.listVoices),
+
+  getAttentionCursor: (sessionId) =>
+    ipcRenderer.invoke(IPC.getAttentionCursor, sessionId),
+  markSessionViewed: (sessionId, seq) =>
+    ipcRenderer.invoke(IPC.markSessionViewed, sessionId, seq),
+
   getRunActivity: () => ipcRenderer.invoke(IPC.getRunActivity),
 
   startObserving: (sessionId) =>
@@ -90,6 +115,16 @@ const api: VoweApi = {
     const handler = (_: unknown, status: LiveStatus) => listener(status);
     ipcRenderer.on(IPC.liveStatusChanged, handler);
     return () => ipcRenderer.off(IPC.liveStatusChanged, handler);
+  },
+  onProjectConversationChanged: (listener) => {
+    const handler = (_: unknown, change: ProjectConversationChange) => listener(change);
+    ipcRenderer.on(IPC.projectConversationChanged, handler);
+    return () => ipcRenderer.off(IPC.projectConversationChanged, handler);
+  },
+  onLiveTranscript: (listener) => {
+    const handler = (_: unknown, delta: LiveTranscriptDelta) => listener(delta);
+    ipcRenderer.on(IPC.liveTranscript, handler);
+    return () => ipcRenderer.off(IPC.liveTranscript, handler);
   },
   onRunActivity: (listener) => {
     const handler = (_: unknown, activity: VoweRunActivity) => listener(activity);

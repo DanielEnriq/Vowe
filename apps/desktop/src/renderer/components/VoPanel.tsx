@@ -231,16 +231,7 @@ export function useVo(sessionId: string): Vo {
   return { phase, status, muted, error, join, end, toggleMute, audio };
 }
 
-interface BarProps {
-  vo: Vo;
-  /** Vo says "getting up to speed" from the same source the panel reads. */
-  catchingUp: boolean;
-}
 
-/**
- * The strip under the window's title bar while Vo is on the call. It carries
- * the controls that must always be one click away: mute, and end.
- */
 /** True for the one provider event this side acts on. Anything else is not. */
 function closesSession(data: unknown): boolean {
   if (typeof data !== 'string') return false;
@@ -249,40 +240,4 @@ function closesSession(data: unknown): boolean {
   } catch {
     return false;
   }
-}
-
-export function VoBar({ vo, catchingUp }: BarProps): ReactElement | null {
-  const live = vo.phase === 'live';
-  const sidebandMissing =
-    vo.status?.connected === true && vo.status.sidebandAttached === false;
-
-  if (vo.phase === 'idle') {
-    return <audio ref={vo.audio} autoPlay />;
-  }
-
-  return (
-    <div className={`vo-bar${vo.phase === 'error' ? ' error-bar' : ''}`}>
-      <span className={`dot small ${live ? 'working' : 'starting'}`} />
-      <span className="label">
-        {vo.phase === 'joining' && 'Vo is joining…'}
-        {live && (catchingUp ? 'Vo is live · getting up to speed…' : 'Vo is live')}
-        {vo.phase === 'error' && (vo.error ?? 'Vo could not join')}
-      </span>
-      {live && sidebandMissing && (
-        <span className="warn-chip">Observer updates can’t reach this call</span>
-      )}
-      <span className="spacer" />
-      {live && (
-        <button className="btn tiny" onClick={vo.toggleMute}>
-          {vo.muted ? 'Unmute' : 'Mute'}
-        </button>
-      )}
-      {vo.phase !== 'joining' && (
-        <button className="btn tiny" onClick={() => void vo.end()}>
-          {vo.phase === 'error' ? 'Dismiss' : 'End'}
-        </button>
-      )}
-      <audio ref={vo.audio} autoPlay />
-    </div>
-  );
 }

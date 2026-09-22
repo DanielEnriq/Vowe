@@ -59,10 +59,26 @@ export interface LiveBridgeOptions {
   voice?: () => string | null | undefined;
 }
 
+/**
+ * What is being said, as it is being said.
+ *
+ * Separate from the durable conversation on purpose: this is the provider's
+ * in-flight transcript of a call, which exists only while the backend is
+ * attached and is replaced by a real turn the moment one closes. The UI shows
+ * it as a caption; nothing reads it back, and nothing is stored from it.
+ */
+export interface LiveTranscriptDelta {
+  speaker: 'user' | 'vo';
+  /** The fragment accumulated so far for the speaker's current turn. */
+  text: string;
+}
+
 export type LiveBridgeEvents = {
   status: [LiveStatus];
   /** A delegated question and the answer Vowe gave. For the UI. */
   answered: [{ sessionId: string; question: string; spokenAnswer: string; fullAnswer: string }];
+  /** In-flight speech. Only ever emitted while a sideband is attached. */
+  transcript: [LiveTranscriptDelta];
 };
 
 export interface LiveStatus {
@@ -358,6 +374,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     switch (event.type) {
       case 'transcript.user':
         this.userFragment += event.delta;
+        this.emit('transcript', { speaker: 'user', text: this.userFragment });
         this.attachment?.recorder?.userSaid(
           event.delta,
           event.startMs,
@@ -375,6 +392,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
           );
         }
         this.voFragment += event.delta;
+        this.emit('transcript', { speaker: 'vo', text: this.voFragment });
         this.attachment?.recorder?.voSaid(event.delta, event.startMs, event.endMs);
         return;
       case 'delegation.created':

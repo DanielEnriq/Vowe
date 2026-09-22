@@ -2,16 +2,25 @@ import type {
   AgentSession,
   ContextRef,
   ConversationChange,
+  ConversationDelivery,
   ConversationEntry,
   InstructionResult,
   LiveStatus,
   NormalizedEvent,
   ObservationStatus,
   PlaybackReport,
+  LiveTranscriptDelta,
+  LiveVoice,
   PresenceProfile,
   Project,
   ProjectBrief,
+  ProjectConversationChange,
+  ProjectConversationEntry,
+  ProjectMemoryRecord,
   RepoIndexState,
+  SessionAttentionCursor,
+  TemperamentProfile,
+  VoicePreference,
   SurfaceUpdate,
   TraceWindow,
   UserProfile,
@@ -51,7 +60,21 @@ export interface VoweApi {
    * The same investigator Vo delegates to — asking by typing and asking out
    * loud reach one engine. Never reaches the coding agent.
    */
-  askCompanion(sessionId: string, question: string): Promise<AskResult>;
+  askCompanion(
+    sessionId: string,
+    question: string,
+    contextRefs?: ContextRef[],
+  ): Promise<AskResult>;
+
+  /**
+   * What was actually conveyed, for every turn in a session.
+   *
+   * Separate from the conversation because they are separate facts: an entry
+   * holds the complete turn, a delivery records an attempt to communicate it.
+   * The UI needs both to tell the truth about a reply that was cut off — the
+   * text it shows is the entry's, and how much of it was heard is here.
+   */
+  getDeliveries(sessionId: string): Promise<ConversationDelivery[]>;
 
   /** Delivered to the coding agent through the provider adapter. */
   sendInstruction(sessionId: string, text: string): Promise<InstructionResult>;
@@ -96,6 +119,8 @@ export interface VoweApi {
   reportLivePlayback(report: PlaybackReport): void;
   /** Native folder picker for choosing where a new session runs. */
   chooseFolder(): Promise<string | null>;
+  /** Native file picker, for attaching a file to a question. */
+  chooseFile(): Promise<string | null>;
 
   // ----------------------------------------------------- project knowledge
 
@@ -117,6 +142,31 @@ export interface VoweApi {
    */
   getProjectBrief(projectId: string): Promise<ProjectBrief>;
 
+  /**
+   * Ask about the repository and the work going on in it.
+   *
+   * The same investigator as `askCompanion`, at a wider scope — not a second
+   * engine and not a project agent. It can see the repository, what Vowe has
+   * learned about it and what Vowe understood about each session; it cannot
+   * see raw trace, which is reached by opening one of the answer's citations.
+   */
+  askProject(
+    projectId: string,
+    question: string,
+    contextRefs?: ContextRef[],
+  ): Promise<ProjectAskResult>;
+
+  /** The project's own durable thread, kept apart from every session's. */
+  getProjectConversation(projectId: string): Promise<ProjectConversationEntry[]>;
+
+  /**
+   * What Vowe has worked out about this project and kept.
+   *
+   * A read, not a search: the developer is looking at what is there rather
+   * than asking a question, so nothing is scored and nothing is admitted.
+   */
+  listProjectMemories(projectId: string): Promise<ProjectMemoryRecord[]>;
+
   // ------------------------------------------------------------- identity
 
   /**
@@ -132,6 +182,38 @@ export interface VoweApi {
   /** One appearance for one Vowe, shared by every place it is drawn. */
   getPresenceProfile(): Promise<PresenceProfile>;
   setPresenceProfile(profile: PresenceProfile): Promise<PresenceProfile>;
+
+  /**
+   * How Vowe behaves, kept deliberately apart from how it looks.
+   *
+   * Changing a material must never change how much Vowe interrupts, so
+   * temperament is a separate document with a separate call. Every dial here
+   * reaches real runtime behaviour: interruption moves the communication
+   * policy, the other two compose into the prompts Vowe runs.
+   */
+  getTemperament(): Promise<TemperamentProfile>;
+  setTemperament(profile: TemperamentProfile): Promise<TemperamentProfile>;
+
+  /**
+   * Which voice Vo speaks in, and which ones there are to choose from.
+   *
+   * The list comes from the transport rather than a constant, so a picker can
+   * never offer a voice the provider would refuse mid-call.
+   */
+  getVoicePreference(): Promise<VoicePreference>;
+  setVoicePreference(preference: VoicePreference): Promise<VoicePreference>;
+  listVoices(): Promise<LiveVoice[]>;
+
+  // --------------------------------------------------------- attention
+
+  /**
+   * Where the developer's understanding of a session got to.
+   *
+   * One mark per session, which is all "while you were away" needs: what
+   * changed since is derived from it rather than stored.
+   */
+  getAttentionCursor(sessionId: string): Promise<SessionAttentionCursor | null>;
+  markSessionViewed(sessionId: string, seq: number): Promise<void>;
 
   /**
    * What Vowe itself is executing right now.
@@ -160,6 +242,14 @@ export interface VoweApi {
   onObservationChanged(listener: (sessionId: string) => void): () => void;
   onProjectKnowledgeChanged(listener: (projectId: string) => void): () => void;
   onLiveStatus(listener: (status: LiveStatus) => void): () => void;
+  /**
+   * What is being said on the call right now.
+   *
+   * The provider's own in-flight transcript, forwarded for the caption on the
+   * voice stage. It arrives only while the backend is attached to the call —
+   * when it is not, the stage says so rather than showing silence.
+   */
+  onLiveTranscript(listener: (delta: LiveTranscriptDelta) => void): () => void;
   /** Vowe started or finished executing something. */
   onRunActivity(listener: (activity: VoweRunActivity) => void): () => void;
   /**
@@ -168,6 +258,23 @@ export interface VoweApi {
    * not the entry: the renderer re-reads, so there is one source of truth.
    */
   onConversationChanged(listener: (change: ConversationChange) => void): () => void;
+  /** A project's own thread has changed. Its own event, for its own table. */
+  onProjectConversationChanged(
+    listener: (change: ProjectConversationChange) => void,
+  ): () => void;
+}
+
+/**
+ * A completed project investigation.
+ *
+ * Same shape as `AskResult` and deliberately a different type: the entry
+ * belongs to the project thread, not to a session, and nothing that renders
+ * one should be able to pass it where the other is expected.
+ */
+export interface ProjectAskResult {
+  entry: ProjectConversationEntry;
+  refs: ContextRef[];
+  failed: boolean;
 }
 
 /** Everything the observation panel needs, in one round trip. */
@@ -247,12 +354,26 @@ export const IPC = {
   getPresenceProfile: 'vowe:presence:get',
   setPresenceProfile: 'vowe:presence:set',
   openArtifact: 'vowe:artifact:open',
+  getDeliveries: 'vowe:session:deliveries',
+  askProject: 'vowe:project:ask',
+  getProjectConversation: 'vowe:project:conversation',
+  listProjectMemories: 'vowe:project:memories',
+  getTemperament: 'vowe:temperament:get',
+  setTemperament: 'vowe:temperament:set',
+  getVoicePreference: 'vowe:voice:get',
+  setVoicePreference: 'vowe:voice:set',
+  listVoices: 'vowe:voice:list',
+  getAttentionCursor: 'vowe:attention:get',
+  markSessionViewed: 'vowe:attention:mark',
+  chooseFile: 'vowe:dialog:choose-file',
   getRunActivity: 'vowe:runs:activity',
   sessionsChanged: 'vowe:sessions:changed',
   sessionEvent: 'vowe:session:event',
   observationChanged: 'vowe:observe:changed',
   projectKnowledgeChanged: 'vowe:knowledge:changed',
   liveStatusChanged: 'vowe:live:status-changed',
+  liveTranscript: 'vowe:live:transcript',
   conversationChanged: 'vowe:session:conversation-changed',
   runActivityChanged: 'vowe:runs:activity-changed',
+  projectConversationChanged: 'vowe:project:conversation-changed',
 } as const;

@@ -12,6 +12,7 @@ export * from './voice-preference.js';
 export * from './voice-preference-store.js';
 export * from './local-settings.js';
 export * from './user-profile.js';
+export * from './user-profile-store.js';
 export * from './presence-profile.js';
 export * from './presence-profile-store.js';
 export * from './presence-state.js';

@@ -11,6 +11,7 @@ const envFile = loadLocalEnv();
 
 import {
   ArtifactResolver,
+  AttentionCursorStore,
   CommunicationPolicy,
   CompanionService,
   ContextNavigator,
@@ -30,12 +31,17 @@ import {
   ProjectMemoryStore,
   ProjectService,
   SessionRegistry,
+  TemperamentStore,
   UserProfileStore,
   UnavailableLiveTransport,
+  VoicePreferenceStore,
   VoweRunRecorder,
   type DecisionRouter,
   type LiveTransport,
+  type LiveVoice,
   type SemanticInterpreter,
+  type TemperamentProfile,
+  type VoicePreference,
 } from '@vowe/core';
 import { ClaudeCodeAdapter, PROVIDER } from '@vowe/adapter-claude-code';
 import { createGraphifyKnowledge } from '@vowe/knowledge-graphify';
@@ -43,7 +49,13 @@ import { AnthropicLlmClient } from '@vowe/llm';
 import { JevDecisionRouter } from '@vowe/decision-jev';
 import { OpenAiLiveTransport } from '@vowe/live-openai';
 
-import { IPC, type AppStatus, type AskResult, type ObservationView } from '../shared/ipc.js';
+import {
+  IPC,
+  type AppStatus,
+  type AskResult,
+  type ObservationView,
+  type ProjectAskResult,
+} from '../shared/ipc.js';
 import type {
   ContextRef,
   PlaybackReport,
@@ -82,6 +94,18 @@ interface Services {
   /** Vowe's one identity, and the developer's. Global, not per session. */
   profile: UserProfileStore;
   presence: PresenceProfileStore;
+  /** How Vowe behaves. Separate from how it looks, and separately stored. */
+  temperament: TemperamentStore;
+  voice: VoicePreferenceStore;
+  /** Where the developer's understanding of each session got to. */
+  cursors: AttentionCursorStore;
+  /** Reading these is what keeps the synchronous core readers accurate. */
+  readTemperament: () => TemperamentProfile;
+  applyTemperament: (next: TemperamentProfile) => void;
+  readVoicePreference: () => VoicePreference;
+  applyVoicePreference: (next: VoicePreference) => void;
+  /** The voices the configured transport will actually accept. */
+  voices: readonly LiveVoice[];
   companion: CompanionService;
   /** Resolves a ContextRef into something the renderer can display. */
   workbench: ArtifactResolver;
@@ -231,6 +255,29 @@ async function createServices(): Promise<Services> {
     root: storeRoot,
     onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
   });
+  const temperamentStore = new TemperamentStore({
+    root: storeRoot,
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+  });
+  const voiceStore = new VoicePreferenceStore({
+    root: storeRoot,
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+  });
+  const cursors = new AttentionCursorStore({
+    root: storeRoot,
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+  });
+
+  /**
+   * Temperament and voice, cached for the synchronous readers in core.
+   *
+   * The policy and the investigator ask for these mid-decision and mid-answer,
+   * where there is nothing sensible to await. They are two small documents
+   * read once at startup and rewritten only when the developer changes them,
+   * so a cached copy is the accurate one rather than a stale one.
+   */
+  let temperament = await temperamentStore.get();
+  let voicePreference = await voiceStore.get();
 
   // ------------------------------------------------------ observation harness
 
@@ -277,6 +324,7 @@ async function createServices(): Promise<Services> {
     }),
     router,
     runs,
+    temperament: () => temperament,
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
   });
 
@@ -289,6 +337,7 @@ async function createServices(): Promise<Services> {
     navigator,
     investigator: llm ?? nullObserver(store),
     runs,
+    temperament: () => temperament,
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
     // After the answer is delivered, never during. Most answers are not kept.
     // Text and voice share this hook; nothing about admission asks which it was.
@@ -316,6 +365,8 @@ async function createServices(): Promise<Services> {
     // evaporates when the call ends.
     store,
     runs,
+    temperament: () => temperament,
+    voice: () => voicePreference.voice,
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
   });
 
@@ -326,6 +377,12 @@ async function createServices(): Promise<Services> {
     window?.webContents.send(IPC.conversationChanged, change);
   });
 
+  // Its own event, for its own table: a Project Room re-reading because some
+  // session's conversation moved would be reacting to work it is not showing.
+  store.onProjectConversationChanged((change) => {
+    window?.webContents.send(IPC.projectConversationChanged, change);
+  });
+
   observation.on('note', (note) => {
     window?.webContents.send(IPC.observationChanged, note.sessionId);
   });
@@ -334,6 +391,11 @@ async function createServices(): Promise<Services> {
   });
   live.on('status', (status) => {
     window?.webContents.send(IPC.liveStatusChanged, status);
+  });
+  // Forwarded, never stored: the durable record of a call is the conversation,
+  // which is written when a turn closes.
+  live.on('transcript', (delta) => {
+    window?.webContents.send(IPC.liveTranscript, delta);
   });
   // What Vowe is executing, published from the lane that already records it.
   runs.on('activity', (activity) => {
@@ -369,6 +431,18 @@ async function createServices(): Promise<Services> {
     brief,
     profile,
     presence,
+    temperament: temperamentStore,
+    voice: voiceStore,
+    cursors,
+    readTemperament: () => temperament,
+    applyTemperament: (next) => {
+      temperament = next;
+    },
+    readVoicePreference: () => voicePreference,
+    applyVoicePreference: (next) => {
+      voicePreference = next;
+    },
+    voices: liveTransport.voices,
     companion,
     workbench,
     delegated,
@@ -507,6 +581,46 @@ function registerIpc(): void {
   );
   ipcMain.handle(IPC.getRunActivity, async () => (await requireServices()).runs.activity);
 
+  // Written through the store, then applied to the cached copy the synchronous
+  // readers in core use — in that order, so a failed write never takes effect.
+  ipcMain.handle(IPC.getTemperament, async () =>
+    (await requireServices()).temperament.get(),
+  );
+  ipcMain.handle(
+    IPC.setTemperament,
+    async (_event, next: TemperamentProfile): Promise<TemperamentProfile> => {
+      const services = await requireServices();
+      const stored = await services.temperament.set(next);
+      services.applyTemperament(stored);
+      return stored;
+    },
+  );
+  ipcMain.handle(IPC.getVoicePreference, async () =>
+    (await requireServices()).voice.get(),
+  );
+  ipcMain.handle(
+    IPC.setVoicePreference,
+    async (_event, next: VoicePreference): Promise<VoicePreference> => {
+      const services = await requireServices();
+      const stored = await services.voice.set(next);
+      services.applyVoicePreference(stored);
+      return stored;
+    },
+  );
+  // From the transport, never from a constant: a picker must not be able to
+  // offer a voice the provider would refuse once someone is already on a call.
+  ipcMain.handle(IPC.listVoices, async () => [...(await requireServices()).voices]);
+
+  ipcMain.handle(IPC.getAttentionCursor, async (_event, sessionId: string) =>
+    (await requireServices()).cursors.get(sessionId),
+  );
+  ipcMain.handle(
+    IPC.markSessionViewed,
+    async (_event, sessionId: string, seq: number): Promise<void> => {
+      await (await requireServices()).cursors.mark(sessionId, { seq });
+    },
+  );
+
   // Grounded by going and looking — the same investigator Vo delegates to, with
   // the same three read tools. Still deliberately has no adapter in reach.
   //
@@ -515,10 +629,48 @@ function registerIpc(): void {
   // unavailable to the typed UI is cheaper than a convention about not using it.
   ipcMain.handle(
     IPC.ask,
-    async (_event, sessionId: string, question: string): Promise<AskResult> => {
-      const result = await (await requireServices()).companion.ask(sessionId, question);
+    async (
+      _event,
+      sessionId: string,
+      question: string,
+      contextRefs?: ContextRef[],
+    ): Promise<AskResult> => {
+      const result = await (
+        await requireServices()
+      ).companion.ask(sessionId, question, contextRefs);
       return { entry: result.entry, refs: result.refs, failed: result.failed };
     },
+  );
+
+  // The same investigator, asked about a repository. `spokenAnswer` is dropped
+  // here for the same reason it is dropped above.
+  ipcMain.handle(
+    IPC.askProject,
+    async (
+      _event,
+      projectId: string,
+      question: string,
+      contextRefs?: ContextRef[],
+    ): Promise<ProjectAskResult> => {
+      const result = await (
+        await requireServices()
+      ).companion.askProject(projectId, question, contextRefs);
+      return { entry: result.entry, refs: result.refs, failed: result.failed };
+    },
+  );
+
+  ipcMain.handle(IPC.getProjectConversation, async (_event, projectId: string) =>
+    (await requireServices()).store.getProjectConversation(projectId),
+  );
+
+  ipcMain.handle(IPC.listProjectMemories, async (_event, projectId: string) =>
+    (await requireServices()).knowledge.listMemories(projectId),
+  );
+
+  // What was actually conveyed, beside what was said. The renderer needs both
+  // to be honest about a reply that was cut off.
+  ipcMain.handle(IPC.getDeliveries, async (_event, sessionId: string) =>
+    (await requireServices()).store.getDeliveriesForSession(sessionId),
   );
 
   // The generic artifact open. `ContextNavigator` itself stays off the bridge:
@@ -597,6 +749,16 @@ function registerIpc(): void {
     const options: Electron.OpenDialogOptions = {
       properties: ['openDirectory', 'createDirectory'],
     };
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+
+  // For attaching a file to a question. The renderer never reads it: it hands
+  // back a path, which becomes a `repo:` ref the investigator opens for itself.
+  ipcMain.handle(IPC.chooseFile, async () => {
+    const options: Electron.OpenDialogOptions = { properties: ['openFile'] };
     const result = window
       ? await dialog.showOpenDialog(window, options)
       : await dialog.showOpenDialog(options);
