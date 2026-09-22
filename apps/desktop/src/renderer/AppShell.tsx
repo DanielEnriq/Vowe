@@ -1,10 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement,
+} from 'react';
 
 import type { UserProfile } from '@vowe/core';
 import { DEFAULT_USER_PROFILE } from '@vowe/core/projections';
 
 import { NewSessionSheet } from './components/NewSessionSheet.js';
-import { ComposeIcon, PanelIcon } from './shell/icons.js';
+import { PanelToggle } from './shell/PanelToggle.js';
 import {
   useAppStatus,
   usePresenceProfile,
@@ -18,6 +26,13 @@ import { ProjectRoom } from './project/ProjectRoom.js';
 import { ProjectSidebar } from './sidebar/ProjectSidebar.js';
 import { SessionRoom } from './session/SessionRoom.js';
 import { PresenceStudio } from './studio/PresenceStudio.js';
+import {
+  prune,
+  readExpanded,
+  toggleExpanded,
+  withExpanded,
+  writeExpanded,
+} from './state/disclosure.js';
 import { projectOf, reconcileRoute, type Route } from './state/navigation.js';
 
 /** Below this, the pane cannot hold a reading measure beside the workbench. */
@@ -42,8 +57,10 @@ export function AppShell(): ReactElement {
   const [route, setRoute] = useState<Route>({ kind: 'none' });
   const [sheetOpen, setSheetOpen] = useState(false);
   const [user, setUser] = useState<UserProfile>(DEFAULT_USER_PROFILE);
+  const [expanded, setExpanded] = useState<string[]>(readExpanded);
 
   const { sidebarOpen, sidebarWidth, toggleSidebar, startResize, resizing } = useSidebar();
+  const fullscreen = useFullscreen();
   const paneWidth = usePaneWidth(sidebarOpen ? sidebarWidth : 0);
 
   const { state: presenceState } = usePresenceSignals({ status, sessions });
@@ -62,6 +79,46 @@ export function AppShell(): ReactElement {
     if (live !== route) setRoute(live);
   }, [live, route]);
 
+  /**
+   * Open somewhere rather than nowhere.
+   *
+   * Landing on "pick a repository" makes the first thing Vowe shows a piece of
+   * furniture. The most recently active project is almost always the one being
+   * worked in, and every other room is one click away.
+   */
+  useEffect(() => {
+    if (live.kind !== 'none' || projects.length === 0) return;
+    const newest = mostRecentProject(projects, sessions);
+    if (newest) setRoute({ kind: 'project', projectId: newest });
+  }, [live.kind, projects, sessions]);
+
+  /*
+   * Disclosure follows selection, and never the other way around.
+   *
+   * Opening a session reveals the project it is in, because a selected row
+   * inside a folded project would be invisible. Nothing here ever *collapses*
+   * anything: what the developer opened stays open until they close it.
+   */
+  const routeProject = projectOf(live, { projects, sessions });
+  useEffect(() => {
+    if (!routeProject) return;
+    setExpanded((current) => withExpanded(current, routeProject));
+  }, [routeProject]);
+
+  // Repositories that have gone are dropped rather than remembered forever.
+  const projectKey = projects.map((project) => project.id).join(',');
+  useEffect(() => {
+    const ids = projectKey ? projectKey.split(',') : [];
+    setExpanded((current) => {
+      const kept = prune(current, ids);
+      return kept.length === current.length ? current : kept;
+    });
+  }, [projectKey]);
+
+  useEffect(() => {
+    writeExpanded(expanded);
+  }, [expanded]);
+
   const session =
     live.kind === 'session' ? sessions.find((item) => item.id === live.sessionId) ?? null : null;
   const project =
@@ -69,59 +126,79 @@ export function AppShell(): ReactElement {
   const brief = useProjectBrief(project?.id ?? null);
 
   return (
-    <div className="app">
-      <div className="titlebar">
-        <button
-          className="icon-button"
-          type="button"
-          aria-label="Toggle projects panel"
-          title="Toggle projects panel"
-          onClick={toggleSidebar}
-        >
-          <PanelIcon />
-        </button>
-        <button
-          className="icon-button"
-          type="button"
-          aria-label="New task"
-          title="New task"
-          onClick={() => setSheetOpen(true)}
-        >
-          <ComposeIcon />
-        </button>
-      </div>
+    <div className={`app${fullscreen ? ' fullscreen' : ''}`}>
+      {/* Only the drag strip lives up here; the toggles below own the panels. */}
+      <div className="titlebar" aria-hidden />
+      {/*
+        Overlay chrome, in both states.
 
-      <div className="body">
+        Fixed to the window rather than laid out by the shell, which is what
+        lets the column beneath it collapse to nothing without the control
+        moving a pixel. See `PanelToggle`.
+      */}
+      <PanelToggle
+        side="left"
+        open={sidebarOpen}
+        label={sidebarOpen ? 'Hide projects panel' : 'Show projects panel'}
+        onToggle={toggleSidebar}
+      />
+
+      {/*
+        The shell's columns, stated once.
+
+        A closed panel is a zero-width column and not a laid-out box slid out
+        of view: `--left-column` is the panel's width or `0px`, and the centre
+        is `minmax(0, 1fr)`, so the room genuinely grows into whatever the
+        panel gives back. Nothing else in this row reserves width — the toggle
+        is fixed and the resize handle is absolute.
+      */}
+      <div
+        className={`body${resizing ? ' resizing' : ''}`}
+        style={
+          {
+            '--left-column': `${sidebarOpen ? sidebarWidth : 0}px`,
+            // What the panel measures whether or not it is showing, so its
+            // contents do not reflow to nothing on the way out.
+            '--panel-width': `${sidebarWidth}px`,
+          } as CSSProperties
+        }
+      >
         <aside
-          className={`sidebar${sidebarOpen ? '' : ' closed'}${resizing ? ' resizing' : ''}`}
-          style={{
-            flexBasis: sidebarWidth,
-            width: sidebarWidth,
-            marginLeft: sidebarOpen ? 0 : -(sidebarWidth + 1),
-          }}
+          className={`sidebar${sidebarOpen ? '' : ' closed'}`}
           aria-hidden={!sidebarOpen}
         >
           <ProjectSidebar
             projects={projects}
             sessions={sessions}
             route={live}
-            expandedProjectId={projectOf(live, { projects, sessions })}
+            expandedProjectIds={expanded}
+            onToggleExpanded={(projectId) =>
+              setExpanded((current) => toggleExpanded(current, projectId))
+            }
             presence={presence}
             presenceState={presenceState}
             onNavigate={setRoute}
+            onNewTask={() => setSheetOpen(true)}
           />
         </aside>
 
+        {/*
+          The edge, without a line on it.
+
+          There is no divider to draw: a panel that can be resized does not
+          need a rule announcing that it can, and the surface reads as one
+          surface without it. What remains is the affordance — a few
+          transparent pixels straddling the boundary, positioned over it
+          rather than between the columns, so the handle costs no width.
+        */}
         {sidebarOpen && (
           <button
-            className={`resizer${resizing ? ' active' : ''}`}
+            className={`resize-handle left${resizing ? ' active' : ''}`}
             type="button"
             aria-label="Resize projects panel"
             title="Drag to resize · drag to the left edge to close"
             onMouseDown={startResize}
-          >
-            <span />
-          </button>
+          />
         )}
 
         {session ? (
@@ -136,7 +213,7 @@ export function AppShell(): ReactElement {
                 ? (status.voiceUnavailableReason ?? 'Voice is unavailable.')
                 : null
             }
-            sidebarOpen={sidebarOpen}
+            sidebarOpen={sidebarOpen || fullscreen}
             narrow={paneWidth < NARROW_PANE}
           />
         ) : project ? (
@@ -146,7 +223,7 @@ export function AppShell(): ReactElement {
             brief={brief}
             presence={presence}
             presenceState={presenceState}
-            sidebarOpen={sidebarOpen}
+            sidebarOpen={sidebarOpen || fullscreen}
             onOpenSession={(sessionId) => setRoute({ kind: 'session', sessionId })}
           />
         ) : live.kind === 'studio' ? (
@@ -159,7 +236,7 @@ export function AppShell(): ReactElement {
                 ? (status.voiceUnavailableReason ?? 'Voice is unavailable.')
                 : null
             }
-            sidebarOpen={sidebarOpen}
+            sidebarOpen={sidebarOpen || fullscreen}
             onProfileChange={(next) => void savePresence(next)}
             onTemperamentChange={(next) => void saveTemperament(next)}
             onVoiceChange={(next) => void saveVoice(next)}
@@ -234,10 +311,45 @@ function Nowhere({
   );
 }
 
+/** The project whose work moved most recently, which is where someone was. */
+function mostRecentProject(
+  projects: readonly { id: string }[],
+  sessions: readonly { projectId: string | null; lastActivityAt: string }[],
+): string | null {
+  let best: { id: string; at: string } | null = null;
+  for (const session of sessions) {
+    if (!session.projectId) continue;
+    if (!projects.some((project) => project.id === session.projectId)) continue;
+    if (!best || session.lastActivityAt > best.at) {
+      best = { id: session.projectId, at: session.lastActivityAt };
+    }
+  }
+  return best?.id ?? projects[0]?.id ?? null;
+}
+
 /**
- * The panel keeps its width and slides out under a negative margin, which is
- * also what reclaims the space. The toggle lives in the title bar so that
- * collapsing never moves it.
+ * Real window state, not a CSS guess.
+ *
+ * In fullscreen the traffic lights are gone, and the space reserved to clear
+ * them becomes a dead band at the top of the sidebar. Only the main process
+ * knows which state the window is in.
+ */
+function useFullscreen(): boolean {
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    void window.vowe.isFullscreen().then(setFullscreen).catch(() => undefined);
+    return window.vowe.onFullscreenChanged(setFullscreen);
+  }, []);
+  return fullscreen;
+}
+
+/**
+ * How wide the panel is, and whether it is there at all.
+ *
+ * The width is a number the shell turns into a grid column; closed is a column
+ * of zero rather than a box pushed out of view under a negative margin, which
+ * is the difference between the room growing and the room staying put beside
+ * an empty gutter.
  */
 function useSidebar() {
   const [open, setOpen] = useState(true);

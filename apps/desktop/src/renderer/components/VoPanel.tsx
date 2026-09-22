@@ -25,6 +25,8 @@ interface PlaybackWatch {
   stop(): void;
   /** True while audio is actually coming out. */
   readonly playing: boolean;
+  /** The last measured level, `0..1`. Real energy, not an envelope. */
+  readonly level: number;
 }
 
 /**
@@ -34,9 +36,20 @@ interface PlaybackWatch {
  * and how long it was audible, and says nothing about why it stopped. What an
  * interruption is gets decided in the main process, where the conversation is.
  */
+/**
+ * Speech energy, scaled for something to look at.
+ *
+ * The measurement is real RMS; this only maps its useful range onto `0..1`,
+ * because ordinary speech sits around a tenth of full scale and a presence fed
+ * the raw figure would barely move. Nothing is smoothed, filled in or invented
+ * — silence measures zero and draws as zero.
+ */
+const LEVEL_GAIN = 5;
+
 function watchPlayback(
   stream: MediaStream,
   report: (report: PlaybackReport) => void,
+  onLevel: (level: number) => void = () => undefined,
 ): PlaybackWatch {
   const context = new AudioContext();
   const analyser = context.createAnalyser();
@@ -47,12 +60,15 @@ function watchPlayback(
   let playing = false;
   let startedAt = 0;
   let lastAudible = 0;
+  let measured = 0;
 
   const tick = window.setInterval(() => {
     analyser.getFloatTimeDomainData(samples);
     let total = 0;
     for (const sample of samples) total += sample * sample;
     const level = Math.sqrt(total / samples.length);
+    measured = Math.min(1, level * LEVEL_GAIN);
+    onLevel(measured);
     const now = performance.now();
 
     if (level > SPEECH_THRESHOLD) {
@@ -80,6 +96,9 @@ function watchPlayback(
     get playing() {
       return playing;
     },
+    get level() {
+      return measured;
+    },
     stop() {
       window.clearInterval(tick);
       void context.close().catch(() => undefined);
@@ -98,6 +117,16 @@ export interface Vo {
   end: () => Promise<void>;
   toggleMute: () => void;
   audio: RefObject<HTMLAudioElement | null>;
+  /**
+   * What is actually audible right now, `0..1`, or undefined when nothing is
+   * being measured.
+   *
+   * Vowe's own playback while it is speaking, the microphone while it is
+   * listening — both measured where the audio physically is, which is here.
+   * Undefined rather than zero when there is nothing to measure, so the
+   * presence moves on its state alone instead of being told there is silence.
+   */
+  level: number | undefined;
 }
 
 /**
@@ -118,6 +147,8 @@ export function useVo(sessionId: string): Vo {
   const microphone = useRef<MediaStream | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
   const playback = useRef<PlaybackWatch | null>(null);
+  const listening = useRef<{ stop(): void } | null>(null);
+  const [level, setLevel] = useState<number | undefined>(undefined);
 
   const teardown = useCallback(() => {
     // Audio that is still playing when the call goes away was not finished —
@@ -128,6 +159,9 @@ export function useVo(sessionId: string): Vo {
     }
     playback.current?.stop();
     playback.current = null;
+    listening.current?.stop();
+    listening.current = null;
+    setLevel(undefined);
     connection.current?.close();
     connection.current = null;
     for (const track of microphone.current?.getTracks() ?? []) track.stop();
@@ -156,8 +190,12 @@ export function useVo(sessionId: string): Vo {
         if (audio.current) audio.current.srcObject = stream;
         playback.current?.stop();
         playback.current = stream
-          ? watchPlayback(stream, (report) =>
-              window.vowe.reportLivePlayback(report),
+          ? watchPlayback(
+              stream,
+              (report) => window.vowe.reportLivePlayback(report),
+              // Vowe speaking outranks the room: while there is playback, this
+              // is what the presence is moving to.
+              (measured) => setLevel(measured),
             )
           : null;
       };
@@ -191,6 +229,11 @@ export function useVo(sessionId: string): Vo {
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       microphone.current = stream;
+      // The microphone, measured the same way, so `listening` is the developer's
+      // own voice rather than a state pulsing to nothing.
+      listening.current = watchMicrophone(stream, (measured) =>
+        setLevel((current) => (playback.current?.playing ? current : measured)),
+      );
       for (const track of stream.getTracks()) peer.addTrack(track, stream);
 
       const offer = await peer.createOffer();
@@ -228,7 +271,40 @@ export function useVo(sessionId: string): Vo {
     setMuted(next);
   }, [muted]);
 
-  return { phase, status, muted, error, join, end, toggleMute, audio };
+  return { phase, status, muted, error, join, end, toggleMute, audio, level };
+}
+
+/**
+ * The same measurement, on the way in.
+ *
+ * Its own small watcher rather than a second use of `watchPlayback`: nothing
+ * about the microphone is reported to the main process, and a function that
+ * both measured and reported would make it far too easy to start writing the
+ * developer's own audio into the record.
+ */
+function watchMicrophone(
+  stream: MediaStream,
+  onLevel: (level: number) => void,
+): { stop(): void } {
+  const context = new AudioContext();
+  const analyser = context.createAnalyser();
+  analyser.fftSize = 512;
+  context.createMediaStreamSource(stream).connect(analyser);
+  const samples = new Float32Array(analyser.fftSize);
+
+  const tick = window.setInterval(() => {
+    analyser.getFloatTimeDomainData(samples);
+    let total = 0;
+    for (const sample of samples) total += sample * sample;
+    onLevel(Math.min(1, Math.sqrt(total / samples.length) * LEVEL_GAIN));
+  }, 50);
+
+  return {
+    stop() {
+      window.clearInterval(tick);
+      void context.close().catch(() => undefined);
+    },
+  };
 }
 
 

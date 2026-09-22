@@ -305,3 +305,31 @@ describe('Presence profile — the widened schema', () => {
     expect(normalizePresenceProfile({ lightResponse: -3 }).lightResponse).toBe(0);
   });
 });
+
+describe('Presence visuals — reacting to real work', () => {
+  /**
+   * The point of the thinking state having a pulse at all: an activity signal
+   * derived from real execution events must be able to reach the surface.
+   * Without this it is a parameter the renderer computes and nothing consumes.
+   */
+  it('lets activity reach the surface while Vowe is thinking', () => {
+    const visuals = resolvePresenceVisuals('thinking', DEFAULT_PRESENCE_PROFILE, 'project');
+    expect(visuals.pulse).toBeGreaterThan(0);
+  });
+
+  /**
+   * The large voice presence is the sphere and nothing else. The ring reads as
+   * a halo at signature size and as a drawn circle at 300px, where it framed
+   * the orb against the edge of its own canvas.
+   */
+  it('draws no ring at voice size, in any state', () => {
+    for (const state of PRESENCE_STATES) {
+      const voice = resolvePresenceVisuals(state, DEFAULT_PRESENCE_PROFILE, 'voice');
+      expect(voice.halo).toBe(0);
+    }
+    // Every other size keeps it: this is framing, not a change of appearance.
+    expect(
+      resolvePresenceVisuals('listening', DEFAULT_PRESENCE_PROFILE, 'signature').halo,
+    ).toBeGreaterThan(0);
+  });
+});

@@ -158,7 +158,7 @@ describe('ArtifactResolver — a ref, as something a person can look at', () => 
     const artifact = await resolver.resolve({ kind: 'diff', sessionId: TEST_SESSION });
 
     expect(artifact.kind).toBe('diff');
-    expect(artifact.title).toBe('Working diff');
+    expect(artifact.title).toBe('Current diff');
     if (artifact.content.type !== 'diff') throw new Error('expected diff content');
     expect(artifact.content.stat).toContain('registry.ts');
     expect(artifact.content.patch).toContain('const changed = true;');
@@ -190,8 +190,11 @@ describe('ArtifactResolver — a ref, as something a person can look at', () => 
     const artifact = await resolver.resolve(ref);
 
     expect(artifact.kind).toBe('worker_activity');
-    expect(artifact.title).toBe(`[${event.seq}] ${event.kind}`);
-    expect(artifact.subtitle).toBe(event.summary);
+    // Named for what it is. The provider's kind and sequence are provenance,
+    // and stay reachable underneath rather than leading.
+    expect(artifact.title).toBe('Worker step');
+    expect(artifact.subtitle).toContain(event.summary);
+    expect(artifact.subtitle).toContain(`[${event.seq}] ${event.kind}`);
     expect(artifact.focus?.eventIds).toEqual([event.id]);
     if (artifact.content.type !== 'narrative') throw new Error('expected narrative');
     expect(artifact.content.text).toContain(event.summary);
@@ -229,8 +232,9 @@ describe('ArtifactResolver — a ref, as something a person can look at', () => 
     });
 
     expect(artifact.kind).toBe('worker_activity');
-    expect(artifact.title).toBe('Window 4');
-    expect(artifact.subtitle).toBe('Working through the reconnect path');
+    // What the stretch of work was, with the index as its address.
+    expect(artifact.title).toBe('Working through the reconnect path');
+    expect(artifact.subtitle).toBe('Window 4');
     expect(artifact.content.type).toBe('narrative');
 
     const missing = await resolver.resolve({
@@ -252,7 +256,8 @@ describe('ArtifactResolver — a ref, as something a person can look at', () => 
     });
 
     expect(artifact.kind).toBe('worker_activity');
-    expect(artifact.title).toBe('Trace 2–4');
+    expect(artifact.title).toBe('Worker activity');
+    expect(artifact.subtitle).toBe('Trace 2–4');
     if (artifact.content.type !== 'narrative') throw new Error('expected narrative');
     expect(artifact.content.text).toContain('[2]');
     expect(artifact.content.text).toContain('[4]');

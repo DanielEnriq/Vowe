@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 import type {
   ContextRef,
+  InvestigationProgress,
   LiveTranscriptDelta,
   ConversationChange,
   LiveStatus,
@@ -65,6 +66,7 @@ const api: VoweApi = {
     ipcRenderer.invoke(IPC.getAttentionCursor, sessionId),
   markSessionViewed: (sessionId, seq) =>
     ipcRenderer.invoke(IPC.markSessionViewed, sessionId, seq),
+  sessionOpened: (sessionId) => ipcRenderer.invoke(IPC.sessionOpened, sessionId),
 
   getRunActivity: () => ipcRenderer.invoke(IPC.getRunActivity),
 
@@ -79,6 +81,8 @@ const api: VoweApi = {
   // The SDP offer goes out and the answer comes back; the API key never
   // crosses this boundary in either direction.
   openArtifact: (ref: ContextRef) => ipcRenderer.invoke(IPC.openArtifact, ref),
+  getInvestigationSteps: (entryId: string) =>
+    ipcRenderer.invoke(IPC.getInvestigationSteps, entryId),
 
   startLive: (sessionId, sdpOffer) =>
     ipcRenderer.invoke(IPC.startLive, sessionId, sdpOffer),
@@ -125,6 +129,17 @@ const api: VoweApi = {
     const handler = (_: unknown, delta: LiveTranscriptDelta) => listener(delta);
     ipcRenderer.on(IPC.liveTranscript, handler);
     return () => ipcRenderer.off(IPC.liveTranscript, handler);
+  },
+  isFullscreen: () => ipcRenderer.invoke(IPC.isFullscreen),
+  onFullscreenChanged: (listener) => {
+    const handler = (_: unknown, fullscreen: boolean) => listener(fullscreen);
+    ipcRenderer.on(IPC.fullscreenChanged, handler);
+    return () => ipcRenderer.off(IPC.fullscreenChanged, handler);
+  },
+  onInvestigationProgress: (listener) => {
+    const handler = (_: unknown, progress: InvestigationProgress) => listener(progress);
+    ipcRenderer.on(IPC.investigationProgress, handler);
+    return () => ipcRenderer.off(IPC.investigationProgress, handler);
   },
   onRunActivity: (listener) => {
     const handler = (_: unknown, activity: VoweRunActivity) => listener(activity);

@@ -233,3 +233,71 @@ export function SettingsIcon(): ReactElement {
     </svg>
   );
 }
+
+/**
+ * Which way a panel goes, said by the glyph.
+ *
+ * The panel outline with an arrow through it, because these controls now live
+ * beside the thing they collapse rather than at a fixed coordinate: at the
+ * sidebar's own header the useful question is "does this go away to the left
+ * or come back from it", which a plain panel outline does not answer.
+ */
+export function CollapsePanelIcon({ side }: { side: 'left' | 'right' }): ReactElement {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 16 16"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...stroke}
+    >
+      <rect x="2" y="3" width="12" height="10" rx="2" />
+      {side === 'left' ? (
+        <>
+          <path d="M6 3v10" />
+          <path d="M11.5 8h-3M9.8 6.5 8.3 8l1.5 1.5" />
+        </>
+      ) : (
+        <>
+          <path d="M10 3v10" />
+          <path d="M4.5 8h3M6.2 6.5 7.7 8 6.2 9.5" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+/**
+ * Which way a closed panel comes back from.
+ *
+ * The mirror of the above, and a separate icon rather than a rotation so the
+ * arrowhead stays on the correct side of the stroke at this size.
+ */
+export function ExpandPanelIcon({ side }: { side: 'left' | 'right' }): ReactElement {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 16 16"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...stroke}
+    >
+      <rect x="2" y="3" width="12" height="10" rx="2" />
+      {side === 'left' ? (
+        <>
+          <path d="M6 3v10" />
+          <path d="M8.5 8h3M9.8 6.5 11.3 8l-1.5 1.5" />
+        </>
+      ) : (
+        <>
+          <path d="M10 3v10" />
+          <path d="M7.5 8h-3M6.2 6.5 4.7 8l1.5 1.5" />
+        </>
+      )}
+    </svg>
+  );
+}

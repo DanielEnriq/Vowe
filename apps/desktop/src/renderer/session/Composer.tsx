@@ -4,10 +4,12 @@ import type { AgentSession, ContextRef } from '@vowe/core';
 import { formatRef } from '@vowe/core/refs';
 
 import {
+  composerKeyAction,
   resolveDestination,
   shouldOfferWorker,
   type Destination,
 } from '../state/composer.js';
+import { Fading } from '../shell/Fading.js';
 import { ChevronDownIcon, CloseIcon, DiffIcon, FileIcon, PlusIcon, SendIcon } from '../shell/icons.js';
 
 export interface Attachment {
@@ -120,10 +122,11 @@ export function Composer({
             element.style.height = `${Math.min(150, element.scrollHeight)}px`;
           }}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              send();
-            }
+            // Newline is the textarea's own behaviour, so only sending needs
+            // the default suppressed.
+            if (composerKeyAction(event) !== 'send') return;
+            event.preventDefault();
+            send();
           }}
         />
 
@@ -155,7 +158,7 @@ export function Composer({
           */}
           {viewing && !attachments.some((item) => formatRef(item.ref) === formatRef(viewing.ref)) && (
             <span className="viewing">
-              <span>Viewing {viewing.label}</span>
+              <Fading>Viewing {viewing.label}</Fading>
               <button type="button" onClick={() => attach(viewing)}>
                 Add
               </button>
@@ -163,7 +166,7 @@ export function Composer({
           )}
 
           <span style={{ flex: 1 }} />
-          <span className="shortcut">⌘↩</span>
+          <span className="shortcut">↩</span>
           <button
             className={`send${toWorker ? ' to-worker' : ''}`}
             type="button"

@@ -44,7 +44,11 @@ describe('Worker milestones — what reaches the conversation', () => {
     expect(milestones).toEqual([]);
   });
 
-  it('admits the five things that change what the developer understands', () => {
+  /**
+   * A start that has already finished is not news. The finish absorbs it, so
+   * what reaches the conversation is the outcome rather than the ceremony.
+   */
+  it('admits the things that change what the developer understands', () => {
     const milestones = workerMilestones([
       event('session_started', 'Task: fix the reconnect bug'),
       event('test_started', 'Running tests: pnpm test'),
@@ -54,10 +58,46 @@ describe('Worker milestones — what reaches the conversation', () => {
     ]);
     expect(milestones.map((m) => m.kind)).toEqual([
       'session_started',
-      'tests_started',
       'tests_finished',
       'awaiting_human',
       'session_finished',
+    ]);
+  });
+
+  it('keeps a test run that has not finished, because that is live information', () => {
+    const milestones = workerMilestones([event('test_started', 'Running tests: pnpm test')]);
+    expect(milestones.map((m) => m.kind)).toEqual(['tests_started']);
+  });
+
+  /**
+   * The noise this exists to remove: a worker that runs its suite after every
+   * edit used to produce a wall of identical lines.
+   */
+  it('says a repeated suite run once, keeping every event it stands for', () => {
+    const events: NormalizedEvent[] = [];
+    for (let round = 0; round < 4; round += 1) {
+      events.push(event('test_started', 'Running tests: pnpm test'));
+      events.push(
+        event('test_finished', 'Tests passed or completed', { failed: false, output: '49 passed' }),
+      );
+    }
+
+    const milestones = workerMilestones(events);
+    expect(milestones.map((m) => m.text)).toEqual(['test suite passed 49 / 49']);
+    // Nothing is lost: all eight events remain reachable from the one line.
+    expect(milestones[0]?.eventIds).toHaveLength(8);
+  });
+
+  it('still separates a failure from the passes before it', () => {
+    const milestones = workerMilestones([
+      event('test_started', 'Running tests'),
+      event('test_finished', 'Tests passed', { failed: false, output: '49 passed' }),
+      event('test_started', 'Running tests'),
+      event('test_finished', 'Tests failed', { failed: true, output: '48 passed, 1 failed' }),
+    ]);
+    expect(milestones.map((m) => m.text)).toEqual([
+      'test suite passed 49 / 49',
+      'test suite failed · 48 passed, 1 failed',
     ]);
   });
 

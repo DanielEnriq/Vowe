@@ -66,34 +66,46 @@ export function recordObservationTool(capture: ObservationCapture) {
 
 export interface AnswerCapture {
   spokenAnswer: string | null;
-  fullAnswer: string | null;
   refs: string[];
 }
 
-/** The investigator's terminal tool. Two forms of one answer; see the prompt. */
+/**
+ * The investigator's terminal tool, by name.
+ *
+ * Exported because the investigation loop has to recognise the call in a
+ * message's own content rather than waiting for the tool to have run. See
+ * `drainInvestigation`.
+ */
+export const RECORD_ANSWER = 'record_answer';
+
+/**
+ * The investigator's terminal tool: "I have looked enough."
+ *
+ * It deliberately does **not** carry the written answer. A tool call is one
+ * opaque JSON payload that exists only once it is complete, so an answer
+ * generated inside it cannot be read until all of it has been written — which
+ * is exactly the frozen gap this tool used to produce. What the model reports
+ * here is the short spoken form, which voice needs immediately, and the
+ * evidence it stands on. The written answer is generated afterwards, with the
+ * tools taken away, as text that can be streamed as it is composed.
+ */
 export function recordAnswerTool(capture: AnswerCapture) {
   return betaZodTool({
-    name: 'record_answer',
+    name: RECORD_ANSWER,
     description:
-      'Report your answer. Call this exactly once, when you have finished looking.',
+      'Report that you have enough evidence to answer. Call this exactly once, when you have finished looking. You will then be asked to write the full answer.',
     inputSchema: z.object({
       spokenAnswer: z
         .string()
         .describe(
           'What a colleague would say out loud: one or two sentences, leading with the answer itself.',
         ),
-      fullAnswer: z
-        .string()
-        .describe(
-          'The grounded technical account, for reading: specific files, tests, errors, changes, and where the evidence came from.',
-        ),
       refs: RefsField,
     }),
     run: async (input) => {
       capture.spokenAnswer = input.spokenAnswer;
-      capture.fullAnswer = input.fullAnswer;
       capture.refs = input.refs ?? [];
-      return 'Recorded.';
+      return 'Recorded. Now write the full answer.';
     },
   });
 }

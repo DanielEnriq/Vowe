@@ -1,8 +1,15 @@
 import { useState, type ReactElement } from 'react';
 
-import { useProjectThread } from '../hooks/useVoweData.js';
+import type { PresenceProfile } from '@vowe/core';
+
+import { useProjectInvestigation, useProjectThread } from '../hooks/useVoweData.js';
+import { useActivityImpulse } from '../presence/index.js';
+import { composerKeyAction } from '../state/composer.js';
 import { SendIcon } from '../shell/icons.js';
-import { Receipt } from '../session/Receipt.js';
+import { LiveInvestigation } from '../session/LiveInvestigation.js';
+import { MessageBody } from '../session/MessageBody.js';
+import { SettledInvestigation } from '../session/SettledInvestigation.js';
+import { VoweMark } from '../session/VoweMark.js';
 
 /**
  * Asking about the repository rather than about one run.
@@ -11,9 +18,23 @@ import { Receipt } from '../session/Receipt.js';
  * sees the repository, what Vowe has learned about it and what Vowe understood
  * across its sessions, rather than one session's trace. Answers land in the
  * project's own durable thread, which is why they survive being closed.
+ *
+ * A real input rather than a link that reveals one. The capability is live, and
+ * a line of text reading "Ask about this repository" made the most useful thing
+ * in an idle room look like a caption — one click away from the thing it was
+ * describing, for no reason other than that it had been built later.
  */
-export function ProjectAsk({ projectId }: { projectId: string }): ReactElement {
+export function ProjectAsk({
+  projectId,
+  presence,
+}: {
+  projectId: string;
+  presence: PresenceProfile;
+}): ReactElement {
   const { entries } = useProjectThread(projectId);
+  const entryIds = entries.map((entry) => entry.id);
+  const investigation = useProjectInvestigation(projectId, entryIds);
+  const activity = useActivityImpulse(investigation.beat, investigation.active);
   const [draft, setDraft] = useState('');
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,62 +55,58 @@ export function ProjectAsk({ projectId }: { projectId: string }): ReactElement {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 680, marginTop: 4 }}>
+    <div className="project-ask">
       {entries.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div className="project-thread">
           {entries.map((entry) => (
-            <div key={entry.id} className={`turn${entry.role === 'user_question' ? ' user' : ''}`}>
-              <span className="speaker">{entry.role === 'user_question' ? 'You' : 'Vowe'}</span>
-              {entry.investigation && entry.investigation.checks.length > 0 && (
-                <Receipt receipt={entry.investigation} />
+            <div
+              key={entry.id}
+              className={`turn${entry.role === 'user_question' ? ' user' : ''}`}
+            >
+              {entry.role === 'user_question' ? (
+                <span className="speaker">You</span>
+              ) : (
+                <div className="signature-line">
+                  <VoweMark profile={presence} />
+                  <span className="speaker">Vowe</span>
+                </div>
               )}
-              <p>{entry.text}</p>
+              {entry.role !== 'user_question' && entry.investigation && (
+                <SettledInvestigation entryId={entry.id} receipt={entry.investigation} />
+              )}
+              <MessageBody text={entry.text} />
             </div>
           ))}
         </div>
       )}
 
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-end',
-          gap: 10,
-          padding: '10px 10px 10px 14px',
-          border: '1px solid var(--border-2)',
-          borderRadius: 12,
-          background: 'var(--field)',
-        }}
-      >
+      {(asking || investigation.active || investigation.answer.length > 0) && (
+        <LiveInvestigation live={investigation} presence={presence} activity={activity} />
+      )}
+
+      <div className="ask-field">
         <textarea
-          rows={2}
+          rows={1}
           value={draft}
-          placeholder="Ask about this repository…"
-          aria-label="Ask about this repository"
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              void send();
-            }
+          placeholder="Ask Vowe about this project…"
+          aria-label="Ask Vowe about this project"
+          onChange={(event) => {
+            setDraft(event.target.value);
+            const element = event.target;
+            element.style.height = 'auto';
+            element.style.height = `${Math.min(120, element.scrollHeight)}px`;
           }}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            border: 0,
-            outline: 'none',
-            resize: 'none',
-            background: 'transparent',
-            fontSize: 14,
-            lineHeight: 1.55,
-            color: 'var(--ink)',
-            padding: '2px 0',
+          onKeyDown={(event) => {
+            if (composerKeyAction(event) !== 'send') return;
+            event.preventDefault();
+            void send();
           }}
         />
         <button
           className="send"
           type="button"
-          aria-label="Ask"
-          title="Ask"
+          aria-label="Ask Vowe"
+          title="Ask Vowe"
           disabled={!draft.trim() || asking}
           onClick={() => void send()}
         >
@@ -97,7 +114,6 @@ export function ProjectAsk({ projectId }: { projectId: string }): ReactElement {
         </button>
       </div>
 
-      {asking && <span className="fine">Looking into it…</span>}
       {error && <span className="fine">{error}</span>}
     </div>
   );

@@ -13,6 +13,25 @@
 :root {
   color-scheme: dark;
 
+  /*
+   * Top chrome geometry, in one place.
+   *
+   * The window has two chrome slots — one per panel — and everything that has
+   * to line up with them is derived from these four numbers rather than
+   * re-guessed per surface. A slot is a fixed box at a fixed inset; the
+   * reserve is the room a header must leave so its own content clears one.
+   *
+   * `--chrome-top` is the only value that differs between windowed and
+   * fullscreen, and it differs for exactly one real reason: macOS puts traffic
+   * lights in that space in a window and does not in fullscreen. Every other
+   * measurement follows from it, so there is no second set of offsets to keep
+   * in step.
+   */
+  --chrome-slot: 26px;
+  --chrome-gutter: 14px;
+  --chrome-top: 46px;
+  --chrome-reserve: calc(var(--chrome-gutter) * 2 + var(--chrome-slot));
+
   /* Layers, back to front. */
   --app: #08090a;
   --rail: #0b0c0e;
@@ -65,8 +84,18 @@
 
   /* Geometry the design specifies rather than implies. */
   --sidebar: 252px;
-  --measure: 880px;
-  --measure-narrow: 720px;
+  /* How far the text dissolves for. One distance, so every fade matches. */
+  --fade: 2.4em;
+  /*
+   * The reading measure, and the width the room is allowed to become.
+   *
+   * Wider than it was, because the shell now genuinely gives the centre back
+   * the width a closed panel was holding: at the old 880px a developer who
+   * shut both panels got two empty gutters instead of a wider column, which
+   * read as the phantom columns the layout was accused of.
+   */
+  --measure: 1100px;
+  --measure-narrow: 860px;
   --shadow-menu: 0 18px 40px rgba(0, 0, 0, 0.55);
 }
 
@@ -92,14 +121,32 @@ button { font: inherit; color: inherit; cursor: pointer; }
 textarea, input { font: inherit; color: inherit; }
 ::selection { background: rgba(180, 196, 255, 0.22); }
 
+/*
+ * A scrollbar sits a shade above whatever it is on, and no more.
+ *
+ * A white wash is the mechanism rather than a colour choice: the same alpha
+ * over `--rail`, `--pane` and `--surface` lands a few levels above each of
+ * them, so the thumb is *just* lighter than its own background everywhere
+ * without a rule per panel. The alpha is what was wrong — at `0.09` it was
+ * roughly twenty levels up, which made the brightest vertical line in the
+ * window a piece of furniture beside the text it was scrolling.
+ *
+ * It still has to be findable once you reach for it, so it comes up under the
+ * pointer. That is the only time it should be the thing you notice.
+ */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.03);
   border-radius: 6px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.08);
+  background-clip: content-box;
+}
 ::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* Focus is never removed, only shaped: this UI must be usable from a keyboard. */
 :focus-visible {
@@ -132,21 +179,136 @@ textarea, input { font: inherit; color: inherit; }
   overflow: hidden;
   background: var(--app);
 }
+/* No traffic lights to clear, so the chrome row sits where the window edge is. */
+.app.fullscreen { --chrome-top: 14px; }
 
-/* Window controls are the real ones. The strip only has to clear them. */
+/*
+ * The drag strip, and nothing else.
+ *
+ * The window's controls are the real macOS ones; this only gives the top of
+ * the window somewhere to be dragged by. No application control lives here —
+ * one that did would vanish into the menu bar's hover region in fullscreen.
+ */
 .titlebar {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 5;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 16px 0 92px;
+  right: 0;
+  z-index: 1;
+  height: 28px;
   -webkit-app-region: drag;
 }
-.titlebar button { -webkit-app-region: no-drag; }
+
+/*
+ * The panel controls: overlay chrome, at one coordinate, in both states.
+ *
+ * `position: fixed` is the whole point. These are not laid out by the shell,
+ * so the column under them can be the panel's width or nothing at all and the
+ * control does not move by a pixel — the panel animates underneath it. It also
+ * means neither of them can reserve a strip of width, which is what a rail
+ * mounted in the row would have done.
+ *
+ * The coordinate is the window's, from the chrome variables: a stable inset
+ * that clears the traffic lights in a window and sits high in fullscreen where
+ * there are none. Same x, same y, same hit box, open or closed.
+ */
+.panel-toggle {
+  position: fixed;
+  top: var(--chrome-top);
+  z-index: 6;
+  width: var(--chrome-slot);
+  height: var(--chrome-slot);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-7);
+  -webkit-app-region: no-drag;
+  /* Only the appearance moves. Position is not animated because it never changes. */
+  transition: color 180ms ease, background 180ms ease;
+}
+.panel-toggle.left { left: var(--chrome-gutter); }
+.panel-toggle.right { right: var(--chrome-gutter); }
+.panel-toggle:hover { background: var(--selected); color: var(--ink); }
+.panel-toggle.open { color: var(--ink-5); }
+
+/* Something arrived that has not been looked at. A dot, never a count. */
+.panel-toggle .unseen {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent, #7aa2ff);
+}
+
+/*
+ * Text that runs out of room, dissolved rather than cut short.
+ *
+ * `text-overflow: ellipsis` spends three characters saying that something was
+ * removed, in the middle of the phrase it removed it from. The mask shows the
+ * same fact instead: the text fades into the surface it is set on, which is
+ * what is actually happening to it.
+ *
+ * **One treatment, everywhere.** This was briefly on titles alone, which put
+ * two different truncations one line apart in the same sidebar row — a name
+ * that faded above an activity line that trailed three dots. Every rule in
+ * this file that used to end in an ellipsis now ends here instead, and the
+ * fade is the same distance and the same curve in all of them.
+ *
+ * The class that turns the mask on is set by `Fading` from a real
+ * measurement, because "is this overflowing?" is the one question CSS cannot
+ * answer — an unconditional mask would fade the tail of every short string
+ * too. Nothing is removed from the document: the whole string is still the
+ * element's text and its tooltip.
+ */
+.fading {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+}
+.fading.is-faded {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+}
+
+/*
+ * The same shadow, for a block held to a couple of lines.
+ *
+ * `-webkit-line-clamp` draws its own ellipsis and cannot be talked out of it,
+ * so the height is set here instead — and the fade still creeps in from the
+ * right, on the last line, rather than dimming that line across its width. A
+ * block that faded downwards would have been a second kind of truncation in a
+ * file whose whole point is that there is one.
+ *
+ * Two mask layers: the last line's band carries the same right-hand gradient
+ * every other faded element has, and the lines above it are fully opaque. They
+ * union, so nothing above the last line is touched.
+ */
+.fading-block {
+  --fade-line: calc(1em * var(--fade-leading, 1.5));
+  min-width: 0;
+  overflow: hidden;
+  max-height: calc(var(--fade-lines, 2) * var(--fade-line));
+}
+.fading-block.is-faded {
+  -webkit-mask-image:
+    linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%),
+    linear-gradient(#000, #000);
+  -webkit-mask-size: 100% var(--fade-line), 100% calc(100% - var(--fade-line));
+  -webkit-mask-position: left bottom, left top;
+  -webkit-mask-repeat: no-repeat;
+  mask-image:
+    linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%),
+    linear-gradient(#000, #000);
+  mask-size: 100% var(--fade-line), 100% calc(100% - var(--fade-line));
+  mask-position: left bottom, left top;
+  mask-repeat: no-repeat;
+}
 
 .icon-button {
   width: 24px;
@@ -162,7 +324,32 @@ textarea, input { font: inherit; color: inherit; }
 }
 .icon-button:hover { background: var(--selected); color: var(--ink); }
 
-.body { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+/*
+ * The shell's columns.
+ *
+ * `--left-column` is the panel's width when it is there and `0px` when it is
+ * not, so a closed panel is a column of nothing rather than a box slid out of
+ * view — the centre is `minmax(0, 1fr)` and takes the width back. Panel
+ * toggles are fixed and the resize handle is absolute, so this row has exactly
+ * the two tracks it says it has and nothing reserves a third.
+ */
+.body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--left-column, 0px) minmax(0, 1fr);
+  /*
+   * One row, as tall as the window and no taller. A grid's implicit row is
+   * sized to its content, which made the room as tall as the conversation and
+   * left the conversation nothing to scroll.
+   */
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+  transition: grid-template-columns 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+/* A dragged edge follows the pointer; it does not ease behind it. */
+.body.resizing { transition: none; }
 
 .pane {
   flex: 1;
@@ -174,22 +361,47 @@ textarea, input { font: inherit; color: inherit; }
 
 /* ---------------------------------------------------------------- sidebar */
 
+/*
+ * The panel fills whatever column it was given, and clips.
+ *
+ * No border on the edge: the divider is gone on purpose — a panel that can be
+ * dragged does not need a rule announcing it, and the two surfaces read as one
+ * window without it. `overflow: hidden` is what lets the column go to zero
+ * without the contents spilling into the room.
+ */
 .sidebar {
-  flex: 0 0 var(--sidebar);
-  width: var(--sidebar);
+  min-width: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   background: var(--rail);
-  border-right: 1px solid var(--hairline);
-  transition: margin-left 280ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 200ms ease;
+  transition: opacity 200ms ease;
 }
-.sidebar.resizing { transition: none; }
 .sidebar.closed { opacity: 0; pointer-events: none; }
+.sidebar > * { min-width: var(--panel-width, var(--sidebar)); }
 
+/*
+ * Clears the traffic lights in a window; in fullscreen there are none to
+ * clear, and reserving the space anyway leaves a dead band at the top.
+ */
 .sidebar-title {
   display: flex;
   align-items: center;
-  padding: 52px 12px 8px 16px;
+  gap: 2px;
+  /*
+   * The panel's own header shares the chrome row: same top edge, same height,
+   * with its content starting where the slot ends. That is what makes the
+   * toggle read as belonging to this panel when it is open, without the
+   * toggle having to live inside it and travel with it.
+   */
+  min-height: var(--chrome-slot);
+  /*
+   * The left inset is the panel's clearance for the window's own toggle, which
+   * is fixed above this row in both states. Reserving it here is padding
+   * inside the panel and not a column in the shell.
+   */
+  padding: var(--chrome-top) 8px 8px var(--chrome-reserve);
+  -webkit-app-region: no-drag;
 }
 
 .eyebrow {
@@ -212,42 +424,80 @@ textarea, input { font: inherit; color: inherit; }
   gap: 1px;
 }
 
-.resizer {
-  flex: 0 0 7px;
-  margin-left: -4px;
+/*
+ * The resize affordance, with nothing drawn.
+ *
+ * Absolutely positioned over the boundary rather than laid out between the
+ * columns, so it costs no width and the grid keeps the two tracks it declares.
+ * A few transparent pixels straddling the edge is the whole control: the
+ * surface stays clean and the panel is still draggable, which is what "assume
+ * it can be resized" means.
+ */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
   z-index: 4;
   cursor: col-resize;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   background: transparent;
   border: 0;
   padding: 0;
 }
-.resizer:hover { background: var(--hover); }
-.resizer span { width: 1px; height: 42px; border-radius: 1px; background: var(--border-2); }
-.resizer.active span { background: rgba(143, 176, 232, 0.85); }
+.resize-handle.left { left: calc(var(--left-column, 0px) - 4px); }
+.resize-handle.right { right: calc(var(--right-column, 0px) - 4px); }
+/* Only while it is being dragged, and only as a hint that it is. */
+.resize-handle.active { background: rgba(143, 176, 232, 0.12); }
 
 .project-row {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
   width: 100%;
   border: 0;
   border-radius: 6px;
   background: transparent;
-  padding: 6px 8px;
   text-align: left;
 }
 .project-row:hover { background: var(--hover); }
 .project-row.selected { background: var(--selected); }
-.project-row .name {
+
+/*
+ * Two controls in one row, because these are two different acts: showing a
+ * project's sessions, and opening the project.
+ */
+/* The project's own icon is the disclosure control. */
+.project-row .disclose {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-7);
+}
+.project-row .disclose:hover:not(:disabled) { color: var(--ink); background: var(--hover-strong); }
+/* Open reads brighter; a project with nothing in it has nothing to disclose. */
+.project-row .disclose.expanded { color: var(--ink-3); }
+.project-row .disclose:disabled { opacity: 0.4; }
+.project-row .open {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  padding: 6px 8px 6px 6px;
+  text-align: left;
+  color: inherit;
+}
+.project-row .name {
+  flex: 1;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: -0.005em;
@@ -290,10 +540,6 @@ textarea, input { font: inherit; color: inherit; }
 }
 .session-row .label {
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 12.5px;
   font-weight: 500;
   color: var(--ink-2);
@@ -310,7 +556,6 @@ textarea, input { font: inherit; color: inherit; }
   font-size: 11px;
   color: var(--ink-6);
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -345,7 +590,6 @@ textarea, input { font: inherit; color: inherit; }
   font-family: var(--mono);
   letter-spacing: 0.04em;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -376,7 +620,6 @@ textarea, input { font: inherit; color: inherit; }
   font-size: 12.5px;
   color: var(--ink-2);
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -387,11 +630,12 @@ textarea, input { font: inherit; color: inherit; }
   display: flex;
   align-items: flex-start;
   gap: 16px;
-  padding: 22px 40px 0;
+  padding: 22px var(--chrome-reserve) 0 40px;
 }
 .pane-header.clear-titlebar { padding-top: 56px; }
 .pane-header h1 {
   margin: 0;
+  flex: 0 1 auto;
   font-size: 19px;
   font-weight: 600;
   letter-spacing: -0.018em;
@@ -404,7 +648,13 @@ textarea, input { font: inherit; color: inherit; }
 /* ----------------------------------------------------------- project room */
 
 .room { padding: 0 40px 8px; }
-.room-inner { width: 100%; max-width: 1160px; display: flex; flex-direction: column; }
+/*
+ * The room grows with the window. The ceiling is generous rather than tight
+ * because the shell now hands back the width a closed panel was holding, and
+ * capping it at a fixed measure is how that width turned into an empty column
+ * on the right instead of into content.
+ */
+.room-inner { width: 100%; max-width: 1400px; display: flex; flex-direction: column; }
 
 .synthesis {
   display: grid;
@@ -431,6 +681,7 @@ textarea, input { font: inherit; color: inherit; }
   line-height: 1.55;
   color: var(--ink-4);
   text-wrap: pretty;
+  --fade-leading: 1.55;
 }
 .synthesis .actions {
   display: flex;
@@ -482,6 +733,23 @@ textarea, input { font: inherit; color: inherit; }
 }
 .section h2.attention { color: var(--attention); }
 .quiet-line { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+/* An ordinary quiet state should not occupy a card's worth of room. */
+.quiet-line.spare { padding: 14px 0 2px; }
+
+/*
+ * A quiet project, still saying what has been happening in it. Restrained on
+ * purpose: one lead, one name, one line of what it was doing.
+ */
+.quiet-orientation {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  margin-top: 4px;
+}
+.quiet-orientation .lead { font-size: 13px; color: var(--ink-6); }
+.quiet-orientation .link-button { font-size: 14px; color: var(--ink-2); padding: 0; }
+.quiet-orientation .what { font-size: 12.5px; color: var(--ink-7); }
 .quiet-line span:last-child { font-size: 13px; color: var(--ink-6); }
 
 .attention-card {
@@ -555,23 +823,28 @@ textarea, input { font: inherit; color: inherit; }
   gap: 10px;
   min-width: 0;
 }
-.work-row .name span {
+/*
+ * Only the label grows.
+ *
+ * This was `.work-row .name span`, which also matched the status dot beside
+ * it — `flex: 1` beat the dot's fixed basis and stretched a 7px circle into a
+ * full-width coloured bar. A status is a dot; it is not a progress bar, and
+ * there is no progress here to measure.
+ */
+.work-row .name .label {
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 13.5px;
   font-weight: 550;
   letter-spacing: -0.008em;
 }
 .work-row .state { font-size: 11.5px; color: var(--ink-5); white-space: nowrap; }
 .work-row .state.waiting { color: var(--attention); }
+/* Two lines of current activity is context; six is the task pasted again. */
 .work-row .note {
   padding-left: 17px;
   color: #9a9ca3;
   font-size: 12.5px;
-  text-wrap: pretty;
+  line-height: 1.5;
 }
 .work-row .where {
   font-family: var(--mono);
@@ -581,14 +854,48 @@ textarea, input { font: inherit; color: inherit; }
   white-space: nowrap;
 }
 
-.columns {
+/*
+ * What has happened here, and what Vowe has learned from it.
+ *
+ * Two columns when there are two, one when there is one — `auto-fit` decides,
+ * so a repository with no memory yet does not get a half-width heading over
+ * nothing.
+ *
+ * No nested scroll area. The list used to sit in a 232px box with a scrollbar
+ * of its own inside a room that was mostly empty, which is a smaller window
+ * volunteered for no reason. It shows a few rows and then the rest on request;
+ * expanded, the page scrolls, because the page is the thing that scrolls.
+ */
+.outcomes {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   column-gap: 56px;
   row-gap: 26px;
   padding: 26px 0 34px;
 }
+/* Work in flight is the story; history is a tail under it. */
+.outcomes.secondary { padding: 18px 0 28px; opacity: 0.86; }
 .column { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.column .rows { display: flex; flex-direction: column; gap: 2px; }
+.column .link-button { align-self: flex-start; font-size: 12.5px; }
+
+/* What Vowe worked out and kept, named by the question it answers. */
+.learned { display: flex; flex-direction: column; gap: 7px; }
+.learned .item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 9px;
+}
+.learned .bullet { color: var(--ink-10); }
+.learned .what {
+  min-width: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+.learned .when { font-size: 11px; color: var(--ink-9); white-space: nowrap; }
 .column h2 {
   margin: 0;
   font-family: var(--mono);
@@ -622,15 +929,11 @@ textarea, input { font: inherit; color: inherit; }
 }
 .recent-row:hover { background: rgba(255, 255, 255, 0.028); }
 .recent-row .name { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.recent-row .name span {
+.recent-row .name .label {
   flex: 1;
-  min-width: 0;
   font-size: 13.5px;
   font-weight: 500;
   color: var(--ink-4);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .recent-row .when { font-size: 11.5px; color: var(--ink-8); white-space: nowrap; }
 .recent-row .where {
@@ -641,6 +944,45 @@ textarea, input { font: inherit; color: inherit; }
   color: var(--ink-8);
 }
 .check { display: inline-flex; color: var(--ink-10); flex: 0 0 auto; }
+
+/*
+ * Asking about the repository, as an input rather than as a link to one.
+ *
+ * Sized to the hero's reading measure so it belongs to the orientation above
+ * it: this is the thing to do once you have read what happened.
+ */
+.project-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 660px;
+  margin-top: 2px;
+}
+.project-thread { display: flex; flex-direction: column; gap: 18px; }
+.ask-field {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid var(--border-2);
+  border-radius: 12px;
+  background: var(--field);
+}
+.ask-field textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 24px;
+  max-height: 120px;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+  padding: 3px 0;
+}
 
 .empty { font-size: 13px; color: var(--ink-6); text-wrap: pretty; }
 .empty-block {
@@ -662,45 +1004,91 @@ textarea, input { font: inherit; color: inherit; }
 
 /* ----------------------------------------------------------- session room */
 
-.session-room { flex: 1; min-width: 0; display: flex; background: var(--pane); }
-.conversation-column {
-  flex: 1 1 auto;
+/*
+ * The room's own two columns, on the shell's model.
+ *
+ * `--right-column` is the desk's width or `0px`, so closing the desk gives the
+ * conversation the width back instead of leaving a gutter where the panel was.
+ * The desk's toggle is fixed chrome and its resize handle is absolute, so this
+ * row also has exactly the tracks it declares.
+ */
+.session-room {
+  position: relative;
   min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--right-column, 0px);
+  /* Bounded for the same reason as `.body`: the conversation scrolls, not the room. */
+  grid-template-rows: minmax(0, 1fr);
+  background: var(--pane);
+  transition: grid-template-columns 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+/* Too narrow to hold both, so the desk is the room and there is no second track. */
+.session-room.desk-takes-pane {
+  grid-template-columns: minmax(0, 1fr);
+  transition: none;
+}
+.conversation-column {
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
-.conversation-column.hidden { display: none; }
 
+/*
+ * A fixed height, whatever is open.
+ *
+ * Opening the sidebar or the workbench changes how much width this has; it
+ * must not change how tall it is. Nothing here wraps — the metadata row is
+ * `nowrap` and every child sets `min-width: 0` so it truncates instead of
+ * pushing a second line and moving the divider down.
+ */
+/*
+ * Room for the rail on the right. The control is fixed to the window, so the
+ * header keeps clear of it rather than the other way round — which is what
+ * lets a long title ellipsize instead of running underneath it.
+ */
 .session-header {
   flex: 0 0 auto;
+  height: 68px;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 14px;
-  padding: 20px 28px 16px;
+  padding: 0 var(--chrome-reserve) 0 28px;
   border-bottom: 1px solid var(--hairline);
+  overflow: hidden;
 }
-.session-header.clear-titlebar { padding-top: 54px; }
-.session-header .identity { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.session-header .line {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
+/*
+ * With the projects panel away the window's toggle sits over this row instead
+ * of over the panel, so the row makes the same clearance on its left that the
+ * panel's own header does. Without it the toggle lands on the voice presence.
+ */
+.session-header.clear-titlebar {
+  height: 88px;
+  padding-top: 22px;
+  padding-left: var(--chrome-reserve);
+  align-items: center;
+}
+.session-header .identity {
+  flex: 1;
   min-width: 0;
-  flex-wrap: wrap;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
 }
+/* Shrinks and fades; the metadata beside it keeps its size. */
 .session-header h1 {
   margin: 0;
-  flex: 0 0 auto;
-  white-space: nowrap;
+  flex: 0 1 auto;
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.016em;
 }
+/* Where and whether, on one line under the title. Context, not activity. */
 .session-header .where {
-  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--mono);
   font-size: 10.5px;
@@ -708,15 +1096,13 @@ textarea, input { font: inherit; color: inherit; }
   color: var(--ink-8);
 }
 .session-header .state {
-  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   white-space: nowrap;
-  font-size: 11.5px;
-  color: var(--ink-5);
+  color: var(--ink-6);
 }
-.session-header .worker { font-size: 12.5px; color: var(--ink-6); text-wrap: pretty; }
+.session-header .talk { flex: 0 0 auto; }
 
 .talk {
   position: relative;
@@ -732,51 +1118,55 @@ textarea, input { font: inherit; color: inherit; }
 .talk:hover { color: var(--ink); }
 .talk .hint { font-size: 11.5px; white-space: nowrap; }
 
-.desk-button {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 26px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--ink-6);
-  font-size: 11.5px;
-}
-.desk-button:hover { color: var(--ink); background: var(--hover-strong); }
-.desk-button .count { font-family: var(--mono); font-size: 10.5px; }
-.desk-button .new {
-  position: absolute;
-  top: 2px;
-  right: 4px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--ask);
-}
-
+/*
+ * The column starts at the top and grows downwards, like a document.
+ *
+ * `align-items: flex-start` rather than the default stretch: a measure
+ * stretched to the height of the scroller puts its content wherever its own
+ * layout decides, and any bottom-anchored rule inside it would press the live
+ * turn against the composer. Here the turns simply follow the question.
+ */
 .conversation {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 30px 40px 0;
   display: flex;
+  align-items: flex-start;
   justify-content: center;
 }
+/*
+ * The column finishes before the composer begins.
+ *
+ * A generous tail rather than a few pixels: at the scroll bottom the last turn
+ * should have finished, not be pressed against the input. It is padding on the
+ * measure rather than a margin on the dock so the space scrolls with the
+ * conversation and the final turn is never left under the composer.
+ */
 .conversation-measure {
   width: 100%;
   max-width: var(--measure);
-  padding-bottom: 26px;
+  padding-bottom: 24px;
   display: flex;
   flex-direction: column;
   gap: 30px;
 }
 .conversation-measure.with-workbench { max-width: var(--measure-narrow); }
 
-.turn { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
-.turn.user { align-items: flex-end; gap: 5px; }
+/*
+ * Two kinds of thing in one column, and they should not look alike.
+ *
+ * Vowe's turn is a document: left aligned, the full reading measure, no
+ * container, identified by the mark and byline. The developer's turn is an
+ * object they handed over: right aligned, on a surface, and `fit-content` so a
+ * short prompt is a short box rather than a wide one with a ragged right edge.
+ * The eye reads which is which before it reads either.
+ *
+ * Deliberately not symmetric bubbles. Both sides in containers makes the
+ * analysis look like a reply in a chat client, which is the one thing the
+ * editorial treatment exists to avoid.
+ */
+.turn { display: flex; flex-direction: column; gap: 9px; min-width: 0; align-items: stretch; }
 .turn .speaker {
   font-family: var(--mono);
   font-size: 9.5px;
@@ -785,6 +1175,11 @@ textarea, input { font: inherit; color: inherit; }
   color: var(--ink-9);
 }
 .turn .signature-line { display: flex; align-items: center; gap: 7px; margin-bottom: -2px; }
+.turn .signature-line .doing {
+  font-size: 12.5px;
+  color: var(--ink-7);
+  animation: vowe-pulse 1.9s ease-in-out infinite;
+}
 .turn p {
   margin: 0;
   font-size: 15.5px;
@@ -792,16 +1187,131 @@ textarea, input { font: inherit; color: inherit; }
   color: var(--ink-strong);
   text-wrap: pretty;
 }
-.turn.user p {
-  max-width: 78%;
-  text-align: right;
-  line-height: 1.6;
-  color: var(--ink-2);
-}
 .turn p.secondary { color: var(--ink-3); }
 
-/* A point-field mark that belongs to this Vowe, not an avatar per message. */
-.signature { width: 13px; height: 13px; flex: 0 0 13px; border-radius: 50%; }
+/*
+ * The developer's turn.
+ *
+ * `align-items: flex-end` puts the label and the surface on one right edge,
+ * which is the alignment that makes the pair read as one object rather than as
+ * a caption near a box. `fit-content` with a ceiling keeps a one-line prompt on
+ * one line — the previous `78%` of the measure gave every message the same wide
+ * box whatever was in it.
+ */
+.turn.user { align-items: flex-end; gap: 5px; }
+/*
+ * Deliberate rather than decorative: a fill barely above the page, a radius
+ * that says "card" rather than "chat pill", and no border or shadow — the fill
+ * is edge enough, and nothing here is floating above anything.
+ */
+.turn.user .message-body {
+  width: fit-content;
+  max-width: 62%;
+  padding: 8px 13px 9px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.032);
+}
+.turn.user .message-body p,
+.turn.user .message-body .markdown {
+  /* Inside the surface the text is ordinary prose, set left like any other. */
+  text-align: left;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/*
+ * Vowe's mark in the conversation: the orb's own numbers, drawn in CSS.
+ *
+ * Every custom property here is set by `VoweMark` from
+ * `resolvePresenceVisuals` — the same table the WebGL presence reads. The two
+ * layers are the two things the orb does: the shell breathes (`amp`, at the
+ * state's own `speed`) and the point field drifts around it (`spin`, sheared
+ * by `torsion`). The ring is the design's `halo`, which is `0` at idle, so a
+ * settled byline has no ring rather than a dimmer one.
+ *
+ * Two elements rather than one because the two motions have different periods
+ * and both are transforms. Still CSS all the way down: a thread with fifty
+ * turns costs fifty spans rather than fifty GPU contexts.
+ */
+.vowe-mark {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--mark-body, transparent);
+  box-shadow: 0 0 var(--mark-halo-size, 0) 0 var(--mark-halo, transparent);
+  filter: brightness(var(--mark-bright, 1));
+}
+.vowe-mark .field {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  /*
+   * The point grid: `--mark-grid` is the orb's own column spacing at this size
+   * and `--mark-row` its row spacing, so the dots sit on the same lattice the
+   * sprites do rather than on a square one invented here.
+   */
+  background-image: radial-gradient(
+    circle at center,
+    var(--mark-dot, transparent) var(--mark-dot-size, 0.7px),
+    transparent calc(var(--mark-dot-size, 0.7px) + 0.35px)
+  );
+  background-size: var(--mark-grid, 3px) var(--mark-row, 3px);
+  transform: skewX(var(--mark-torsion, 0deg));
+  /*
+   * The field is a sphere seen from outside, not a stamped disc: the points
+   * are strongest where the light is and fall away towards the limb. Without
+   * this the lattice ends in a hard circular cut and the mark reads as a
+   * textured coin rather than as the point cloud it is a portrait of.
+   */
+  -webkit-mask-image: radial-gradient(
+    circle at 42% 36%,
+    #000 42%,
+    rgba(0, 0, 0, 0.55) 78%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    circle at 42% 36%,
+    #000 42%,
+    rgba(0, 0, 0, 0.55) 78%,
+    transparent 100%
+  );
+}
+
+/* The busy states move; a settled byline is still. */
+.vowe-mark.is-thinking,
+.vowe-mark.is-answering {
+  animation: vowe-mark-breathe var(--mark-period, 1.6s) ease-in-out infinite;
+}
+.vowe-mark.is-thinking .field,
+.vowe-mark.is-answering .field {
+  animation: vowe-mark-drift var(--mark-spin-period, 9s) linear infinite;
+}
+/* Displacement depth, as the shell's scale. `--mark-amp` carries `pulse` too. */
+@keyframes vowe-mark-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(var(--mark-amp, 1.05)); }
+}
+/* Rotational drift of the field, sheared by the state's torsion. */
+@keyframes vowe-mark-drift {
+  from { transform: skewX(var(--mark-torsion, 0deg)) rotate(0deg); }
+  to { transform: skewX(var(--mark-torsion, 0deg)) rotate(360deg); }
+}
+/*
+ * `speed`, `pulse` and `spin` are already damped for reduced motion upstream,
+ * so the presence still differs by state. Here the animation stops outright:
+ * a byline is not the subject, and repeated motion in a reading column is
+ * exactly what the preference is about.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .vowe-mark.is-thinking,
+  .vowe-mark.is-answering,
+  .vowe-mark.is-thinking .field,
+  .vowe-mark.is-answering .field { animation: none; }
+}
 
 code.inline {
   font-family: var(--mono);
@@ -826,66 +1336,172 @@ code.inline {
 }
 .milestone .text.failed { color: var(--bad); }
 
-.receipt {
+/* The kind of lookup, as a glyph beside its label. */
+.check-icon { flex: 0 0 auto; color: var(--ink-9); }
+
+/*
+ * One execution timeline: lookups and thinking, in the order they happened.
+ *
+ * Not two regions. Reasoning used to sit in a faded box of its own with a
+ * gradient over it, which said that the honest part of this column was a
+ * shadow and lost the interleaving entirely — look, think, look, think became
+ * four lookups and one blur.
+ */
+/*
+ * The window onto the column.
+ *
+ * Tall enough for about ten rows on an ordinary window and never the length of
+ * the page: the height follows the app's, within bounds, rather than a row
+ * count, because rows are not all one line. Short traces take their natural
+ * height; long ones scroll inside themselves.
+ *
+ * The edge fades are a mask on the scroller, not a gradient drawn over the
+ * rows, so they fade into whatever the conversation sits on, catch no clicks,
+ * and are only as deep as a fraction of a row. Each one is present only while
+ * there is something beyond that edge.
+ */
+.exec-viewport { position: relative; min-width: 0; }
+.exec-scroll {
+  --fade-above: 0px;
+  --fade-below: 0px;
+  max-height: clamp(180px, 34vh, 300px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-above),
+    #000 calc(100% - var(--fade-below)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-above),
+    #000 calc(100% - var(--fade-below)),
+    transparent 100%
+  );
+}
+.exec-scroll.more-above { --fade-above: 18px; }
+.exec-scroll.more-below { --fade-below: 18px; }
+/* Work arrived below while the reader was up the column. Said once, quietly. */
+.exec-latest {
+  position: absolute;
+  right: 14px;
+  bottom: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--pane);
+  padding: 1px 9px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-6);
+  animation: vowe-stream-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.exec-latest:hover { color: var(--ink-3); }
+
+/* A settled investigation, before anyone opens it: one line in the same ink. */
+.settled-investigation { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.exec-summary {
   display: inline-flex;
-  align-self: flex-start;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
+  align-self: flex-start;
   border: 0;
+  border-radius: 6px;
   background: transparent;
-  padding: 0;
+  padding: 1px 8px 1px 6px;
+  font-size: 12.5px;
+  color: var(--ink-7);
+}
+.exec-summary:hover { background: var(--hover); color: var(--ink-4); }
+.exec-summary svg { flex: 0 0 auto; color: var(--ink-9); transition: transform 160ms ease; }
+.exec-summary.open svg { transform: rotate(90deg); }
+
+.exec {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-left: 5px;
+  padding-left: 5px;
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
+}
+.exec-step {
+  min-width: 0;
+  animation: vowe-stream-in 320ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.exec-step.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-start;
+  max-width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 1px 8px;
+  text-align: left;
+}
+/* Following a lookup opens what it found. Only a lookup that found something. */
+button.exec-step.check:hover { background: var(--hover); }
+button.exec-step.check:hover .target-label { color: var(--ink-4); }
+.exec-step .target-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--ink-6);
+}
+
+/*
+ * A span of exposed working, in the same language as a lookup.
+ *
+ * Same scale, same indentation, same muted ink, same icon slot — thinking is
+ * an execution event and not an announcement. It had grown a presence mark and
+ * a larger face, which made the least certain row in the column the loudest
+ * and put Vowe's identity beside a line that is not Vowe speaking.
+ */
+.exec-step.thought { display: flex; flex-direction: column; gap: 2px; }
+.exec-step.thought > .label { padding: 1px 8px; }
+.exec-step.thought,
+.exec-step.thought > button {
   color: var(--ink-6);
   font-size: 13px;
   line-height: 1.55;
 }
-.receipt:hover { color: var(--ink-3); }
-.receipt svg { transition: transform 160ms ease; }
-.receipt.open svg { transform: rotate(90deg); }
-
-.trail {
+.exec-step.thought > button {
   display: flex;
-  flex-direction: column;
-  margin: -3px 0 1px 5px;
-  padding-left: 5px;
-  border-left: 1px solid rgba(255, 255, 255, 0.07);
-}
-.trail button {
-  display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
-  width: 100%;
-  min-width: 0;
+  align-self: flex-start;
   border: 0;
   border-radius: 6px;
   background: transparent;
-  padding: 2px 8px;
-  text-align: left;
+  padding: 1px 8px;
 }
-.trail button:hover { background: var(--hover); }
-.trail .action { flex: 0 0 auto; font-size: 13px; color: var(--ink-6); }
-.trail .target {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--ink-8);
+.exec-step.thought > button svg { flex: 0 0 auto; color: var(--ink-9); }
+.exec-step.thought > button:hover { background: var(--hover); color: var(--ink-4); }
+.exec-step.thought > button svg { transition: transform 160ms ease; }
+.exec-step.thought.open > button svg { transform: rotate(90deg); }
+/* The one counting up is the live state, so it carries the pulse. */
+.exec-step.thought.live > button .label,
+.exec-step.thought.live > .label { animation: vowe-pulse 1.9s ease-in-out infinite; }
+/*
+ * The body of a thought, set like a tool row's detail rather than like prose.
+ *
+ * Scoped under `.exec` so it outranks `.turn p`, which had been winning and
+ * setting exposed reasoning in the answer's size and the answer's white. One
+ * step brighter than its label for reading, and still well short of the answer.
+ */
+.exec .thought-text {
+  margin: 1px 0 4px 26px;
+  max-width: 60ch;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-5);
+  white-space: pre-wrap;
+  text-wrap: pretty;
 }
-
-.artifact-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: var(--ink-3);
-  font-family: var(--mono);
-  font-size: 11.5px;
-}
-.artifact-link:hover { color: #fff; }
-.artifact-links { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 1px; }
 
 .interrupted {
   display: inline-flex;
@@ -905,15 +1521,26 @@ code.inline {
   text-wrap: pretty;
 }
 
-.thinking {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--ink-6);
-}
-.thinking .label { animation: vowe-pulse 1.9s ease-in-out infinite; }
+/*
+ * The live turn: the work, then the answer, in the order they happened.
+ *
+ * An ordinary block in an ordinary column — no bottom anchoring of any kind.
+ * The investigation appears under the question and the answer under the
+ * investigation, which is the shape of the conversation rather than a panel
+ * docked above the composer.
+ */
+.turn.live { gap: 8px; }
+
+/* One body renderer, so a settled answer looks exactly like the arriving one. */
+.message-body > .markdown > :first-child { margin-top: 0; }
+.message-body > .markdown > :last-child { margin-bottom: 0; }
+
+/*
+ * The answer, being written. Styled exactly as the settled one, so the moment
+ * the durable entry replaces it nothing on screen moves.
+ */
+.live-answer .markdown > :first-child { margin-top: 0; }
+.live-answer .markdown > :last-child { margin-bottom: 0; }
 
 .checkpoint {
   display: flex;
@@ -939,9 +1566,25 @@ code.inline {
 
 /* -------------------------------------------------------------- composer */
 
+/*
+ * The composer stands clear of the conversation, and grows upwards.
+ *
+ * The dock is `flex: 0 0 auto` beside a `flex: 1` conversation, which is what
+ * makes an attachment chip expand the composer into its own space rather than
+ * displace the thread: the column above it re-measures and keeps its scroll at
+ * the tail, so nothing old moves and no inset has to be computed for it. That
+ * is also why there is no `ResizeObserver` here — the layout already answers
+ * the question one would be measuring.
+ *
+ * The space between the two is here rather than only on the scrolling measure
+ * because the measure stretches to its container: its bottom padding sits at
+ * the bottom of a stretched box, which is nowhere near the last turn when the
+ * column is short. Padding on the dock is outside the scroller and therefore
+ * always between the two.
+ */
 .composer-dock {
   flex: 0 0 auto;
-  padding: 0 40px 22px;
+  padding: 18px 40px 20px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -952,8 +1595,13 @@ code.inline {
   max-width: var(--measure);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 12px 10px 10px 14px;
+  /*
+   * Tight. A 16px gap between the chip row and the field opened a band of
+   * empty surface the moment anything was attached, so adding context looked
+   * like it had knocked a hole in the composer.
+   */
+  gap: 6px;
+  padding: 10px 10px 8px 14px;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--field);
@@ -969,14 +1617,19 @@ code.inline {
   line-height: 1.6;
   color: var(--ink);
   width: 100%;
-  min-height: 56px;
+  /*
+   * Two lines at rest, and it grows from there — the component sets the height
+   * from `scrollHeight`, so the box is never taller than what is in it and the
+   * text is never clipped by a fixed floor.
+   */
+  min-height: 44px;
   max-height: 180px;
   overflow-y: auto;
-  padding: 5px 4px 0;
+  padding: 4px 4px 0;
 }
 .composer-row { display: flex; align-items: center; gap: 8px; }
 
-.chips { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {
   display: inline-flex;
   align-items: center;
@@ -1116,7 +1769,6 @@ code.inline {
 }
 .viewing span {
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .viewing button {
@@ -1191,31 +1843,46 @@ code.inline {
 
 /* -------------------------------------------------------------- workbench */
 
+/*
+ * The desk fills the column it was given, and clips — the mirror of the
+ * projects panel, including the missing divider. Its width is dragged from its
+ * own edge and lives in `--right-column`; nothing here fixes a percentage.
+ */
 .workbench {
-  flex: 0 0 32%;
-  min-width: 320px;
-  max-width: 440px;
+  min-width: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  border-left: 1px solid var(--hairline);
   background: var(--rail);
 }
-.workbench.full { flex: 1 1 auto; min-width: 0; max-width: none; border-left: 0; }
+.workbench > * { min-width: var(--desk-width, 380px); }
+.workbench.full { min-width: 0; }
+.workbench.full > * { min-width: 0; }
 
+/*
+ * The desk's own header, which is where its close control lives.
+ *
+ * Top inset from `--chrome-top` so that control sits in the same chrome row as
+ * the sidebar's collapse and as the rail that replaces it — one vertical
+ * rhythm across the window, kept as the boundary moves rather than by pinning
+ * anything to a coordinate.
+ */
 .workbench-header {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 20px 14px 12px 20px;
+  /*
+   * The right inset is this panel's clearance for the window's own desk
+   * toggle, which is fixed above this row in both states — padding inside the
+   * panel, never a column in the room.
+   */
+  padding: var(--chrome-top) var(--chrome-reserve) 12px 20px;
 }
 .workbench-header .titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .workbench-header .title {
   font-size: 13px;
   font-weight: 600;
   letter-spacing: -0.006em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .workbench-header .kind {
   font-family: var(--mono);
@@ -1223,6 +1890,12 @@ code.inline {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-8);
+}
+/* Why this is in front of you. Present only when there is a true answer. */
+.workbench-header .because {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--ink-6);
 }
 
 .workbench-actions { display: flex; align-items: center; gap: 6px; margin: 0 20px 16px; }
@@ -1280,9 +1953,181 @@ pre.code .gutter {
   user-select: none;
 }
 pre.code .line.focus { background: rgba(143, 176, 232, 0.1); }
-pre.code .line.added { color: var(--good); }
-pre.code .line.removed { color: var(--bad); }
-pre.code .line.meta { color: var(--ink-9); }
+
+/*
+ * A file's change as two panes, after Magic UI's Code Comparison.
+ *
+ * Stacked in an ordinary desk and side by side once the desk is wide enough to
+ * hold two columns of code — measured on the desk, not the window. The `VS`
+ * mark only exists in the side-by-side form, where there is a seam for it to
+ * sit on. Shiki paints its own background inline, so the pane's surface has to
+ * win with `!important`.
+ */
+.diff-files {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  container-type: inline-size;
+}
+.code-comparison {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.code-comparison .sides { display: grid; grid-template-columns: minmax(0, 1fr); }
+.code-comparison .side { min-width: 0; display: flex; flex-direction: column; }
+.code-comparison .side + .side { border-top: 1px solid var(--divider); }
+.code-comparison .side-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--divider);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--ink-6);
+}
+.code-comparison .side-head svg { flex: 0 0 auto; }
+.code-comparison .side-head .name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+.code-comparison .side-head .which { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-8); }
+.code-comparison .side-note { margin: 0; padding: 10px 12px; font-size: 11.5px; color: var(--ink-7); }
+.side-code {
+  flex: 1;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+.side-code pre {
+  margin: 0;
+  padding: 6px 0;
+  min-width: max-content;
+  background: transparent !important;
+}
+.side-code pre.plain { color: var(--ink-3); }
+.side-code code { display: block; font: inherit; }
+/*
+ * Inline blocks, as in the original: Shiki separates its line spans with
+ * newlines, and block-level lines would turn each of those into a blank row.
+ */
+.side-code .line {
+  display: inline-block;
+  width: 100%;
+  min-height: 1.6em;
+  padding: 0 12px;
+  box-sizing: border-box;
+  white-space: pre;
+}
+.side-code .line.add { background: rgba(16, 185, 129, 0.16); }
+.side-code .line.remove { background: rgba(244, 63, 94, 0.16); }
+.side-code .line.gap { color: var(--ink-9); background: rgba(255, 255, 255, 0.025); font-style: italic; }
+.code-comparison .vs {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-3);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-5);
+  pointer-events: none;
+}
+@container (min-width: 640px) {
+  .code-comparison .sides { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .code-comparison .side + .side { border-top: 0; border-left: 1px solid var(--divider); }
+  .code-comparison .vs { display: flex; }
+}
+
+/* --------------------------------------------------------------- markdown */
+
+.artifact-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.artifact-head .path { flex: 1; }
+.segmented.tiny { flex: 0 0 auto; padding: 1px; }
+.segmented.tiny button { padding: 3px 8px; font-size: 10.5px; }
+
+.markdown { font-size: 13px; line-height: 1.62; color: var(--ink-3); }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 {
+  margin: 18px 0 8px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--ink-strong);
+  line-height: 1.3;
+}
+.markdown h1 { font-size: 17px; }
+.markdown h2 { font-size: 15px; }
+.markdown h3 { font-size: 13.5px; }
+.markdown h4 { font-size: 13px; color: var(--ink-2); }
+.markdown p { margin: 0 0 10px; text-wrap: pretty; }
+.markdown ul, .markdown ol { margin: 0 0 10px; padding-left: 20px; }
+.markdown li { margin: 3px 0; }
+.markdown li::marker { color: var(--ink-8); }
+.markdown blockquote {
+  margin: 0 0 10px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+  color: var(--ink-5);
+}
+.markdown code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--hover-strong);
+  color: var(--ink-2);
+}
+.markdown pre.md-code {
+  margin: 0 0 10px;
+  white-space: pre;
+}
+.markdown pre.md-code code {
+  padding: 0;
+  background: transparent;
+  font-size: 11px;
+  color: var(--ink-4);
+}
+.markdown hr { border: 0; border-top: 1px solid var(--divider); margin: 16px 0; }
+/* Not an anchor: a document being read as evidence does not navigate. */
+.markdown .md-link { color: var(--ask); border-bottom: 1px solid rgba(143, 176, 232, 0.35); }
+.markdown table {
+  width: 100%;
+  margin: 0 0 10px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.markdown th, .markdown td {
+  border: 1px solid var(--divider);
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.markdown th { color: var(--ink-2); font-weight: 600; background: rgba(255, 255, 255, 0.02); }
+.markdown img { max-width: 100%; }
+
+.raw-evidence { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height: 1.6; }
 
 .narrative {
   margin: 0;
@@ -1541,7 +2386,20 @@ pre.code .line.meta { color: var(--ink-9); }
 .presence-signature { width: 26px; height: 26px; }
 .presence-compact { width: 36px; height: 36px; }
 .presence-project { width: 176px; height: 176px; }
-.presence-voice { width: clamp(150px, 34vh, 300px); height: clamp(150px, 34vh, 300px); }
+/*
+ * Square, and never larger than the row it is in.
+ *
+ * The stage clips what overflows it, so a short window used to crop the orb
+ * from below. Bounded by its own cell and kept square by its aspect ratio, it
+ * shrinks instead of being cut.
+ */
+.presence-voice {
+  width: clamp(150px, 34vh, 300px);
+  height: clamp(150px, 34vh, 300px);
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 1 / 1;
+}
 .presence-studio { width: clamp(180px, 34vh, 420px); height: clamp(180px, 34vh, 420px); }
 
 /* Hover grows the project orb, as in the design. */

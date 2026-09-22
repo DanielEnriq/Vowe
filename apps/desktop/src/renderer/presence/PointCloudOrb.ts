@@ -10,6 +10,15 @@ import { HALO_FRAG, HALO_VERT } from './shaders/halo.js';
 import { POINTS_FRAG, POINTS_VERT } from './shaders/points.js';
 
 /**
+ * How far the presence can reach from its own centre.
+ *
+ * The unit sphere plus the deepest displacement any state asks for, plus a
+ * little for the point sprites themselves, which are drawn at a size in pixels
+ * and so stand slightly proud of the geometry they sit on.
+ */
+const PRESENCE_REACH = 1.38;
+
+/**
  * Vowe's presence, drawn.
  *
  * This is the only file in the application that knows what WebGL is. It takes
@@ -148,9 +157,10 @@ export class PointCloudOrb {
 
     const scene = new three.Scene();
     const camera = new three.PerspectiveCamera(32, width / height, 0.1, 100);
-    camera.position.set(0, 0, 4.15);
+    camera.position.set(0, 0, 0);
     this.scene = scene;
     this.camera = camera;
+    this.frameCamera();
 
     const uniforms = {
       uTime: { value: 0 },
@@ -285,8 +295,34 @@ export class PointCloudOrb {
     const { width, height } = this.measure();
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
+    this.frameCamera();
     this.uniforms.uHeight!.value = height;
+  }
+
+  /**
+   * Pull back far enough that the presence cannot touch the edge of its frame.
+   *
+   * The camera used to sit at a fixed distance chosen against an undeformed
+   * sphere, which is fine at 26px and wrong at 300: a thinking presence
+   * displaces its shell outwards, and what that produced was a large orb
+   * flattening against an invisible rectangle. Distance is therefore derived
+   * from the reach the presence can actually occupy, and from the shape of the
+   * box it is being drawn in, so the framing is correct at every size and
+   * every aspect rather than at the one it was tuned for.
+   *
+   * Framing lives here, in the renderer, and not in the visual parameters: how
+   * far away a camera stands is a fact about drawing this with a perspective
+   * projection, and the product has no opinion about it.
+   */
+  private frameCamera(): void {
+    const camera = this.camera;
+    if (!camera) return;
+    const halfFov = (camera.fov * Math.PI) / 360;
+    const vertical = PRESENCE_REACH / Math.tan(halfFov);
+    // A tall, narrow box is constrained by its width, not its height.
+    const horizontal = vertical / Math.min(1, camera.aspect || 1);
+    camera.position.set(0, 0, Math.max(vertical, horizontal));
+    camera.updateProjectionMatrix();
   }
 
   private readonly onContextLost = (event: Event): void => {

@@ -2,7 +2,8 @@ import type { ReactElement } from 'react';
 
 import type { WorkbenchArtifact } from '@vowe/core';
 
-import { CloseIcon, PinIcon, PlusIcon } from '../shell/icons.js';
+import { Fading } from '../shell/Fading.js';
+import { PinIcon, PlusIcon } from '../shell/icons.js';
 import { activeArtifact, type WorkbenchState } from '../state/workbench.js';
 import { SourceArtifact } from './SourceArtifact.js';
 import { DiffArtifact } from './DiffArtifact.js';
@@ -14,7 +15,6 @@ interface Props {
   full: boolean;
   onActivate: (id: string) => void;
   onTogglePin: () => void;
-  onClose: () => void;
   onAttach: (artifact: WorkbenchArtifact) => void;
 }
 
@@ -24,17 +24,50 @@ interface Props {
  * One primary artifact with the rest on the desk beneath it. Viewing is not
  * attaching: this is where attention is, and what a question carries is said
  * explicitly in the composer.
+ *
+ * Closing is not in this header. One control, fixed to the window, opens and
+ * closes the desk in both states — a control that travelled with the panel
+ * edge was never where it had last been clicked, and a second control for the
+ * closed state meant two glyphs for one act. The header's right inset keeps
+ * its own content clear of it.
  */
 export function Workbench({
   state,
   full,
   onActivate,
   onTogglePin,
-  onClose,
   onAttach,
-}: Props): ReactElement | null {
+}: Props): ReactElement {
   const artifact = activeArtifact(state);
-  if (!artifact) return null;
+
+  /*
+   * Opened with nothing on it, which is a state worth having.
+   *
+   * The desk is where attention is, and "show me what we are looking at" is a
+   * reasonable thing to ask before there is anything to see. It answers
+   * honestly rather than refusing to open — and the panel existing is not a
+   * claim that Vowe has put something in it.
+   */
+  if (!artifact) {
+    return (
+      <aside className={`workbench${full ? ' full' : ''}`} aria-label="Workbench">
+        <div className="workbench-header">
+          <div className="titles">
+            <Fading className="title">Nothing on the desk</Fading>
+            <span className="kind">Workbench</span>
+          </div>
+        </div>
+        <div className="workbench-body">
+          <div className="artifact">
+            <p className="empty">
+              This is what you and Vowe are looking at. Open a file, a diff or
+              something Vowe checked, and it appears here.
+            </p>
+          </div>
+        </div>
+      </aside>
+    );
+  }
 
   const pinned = state.pinnedId === artifact.id;
 
@@ -42,12 +75,15 @@ export function Workbench({
     <aside className={`workbench${full ? ' full' : ''}`} aria-label="Workbench">
       <div className="workbench-header">
         <div className="titles">
-          <span className="title">{artifact.title}</span>
+          <Fading className="title">{artifact.title}</Fading>
           <span className="kind">{artifact.subtitle ?? kindLabel(artifact.kind)}</span>
+          {/*
+            Why this is in front of you, where that is actually known. Said in
+            the product's terms and never guessed: an artifact opened by hand
+            carries no reason, because the reason was that you opened it.
+          */}
+          {state.reason && <span className="because">{state.reason}</span>}
         </div>
-        <button className="icon-button" type="button" aria-label="Close workbench" onClick={onClose}>
-          <CloseIcon />
-        </button>
       </div>
 
       <div className="workbench-actions">
@@ -107,7 +143,14 @@ function ArtifactBody({ artifact }: { artifact: WorkbenchArtifact }): ReactEleme
     case 'diff':
       return <DiffArtifact content={artifact.content} />;
     case 'narrative':
-      return <NarrativeArtifact content={artifact.content} kind={artifact.kind} />;
+      return (
+        <NarrativeArtifact
+          content={artifact.content}
+          kind={artifact.kind}
+          sourceRef={artifact.sourceRef}
+          {...(artifact.focus ? { focus: artifact.focus } : {})}
+        />
+      );
     case 'unavailable':
       // An expected absence, said plainly. A fault would have thrown.
       return (

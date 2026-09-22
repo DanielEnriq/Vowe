@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   AgentSession,
+  InvestigationProgress,
   ConversationDelivery,
   ConversationEntry,
   NormalizedEvent,
@@ -9,6 +10,7 @@ import type {
   Project,
   ProjectBrief,
   ProjectConversationEntry,
+  ProjectMemoryRecord,
   SessionAttentionCursor,
   TemperamentProfile,
   WindowNote,
@@ -19,6 +21,18 @@ import { DEFAULT_PRESENCE_PROFILE } from '@vowe/core/presence';
 import { DEFAULT_TEMPERAMENT, workerMilestones } from '@vowe/core/projections';
 
 import type { AppStatus } from '../../shared/ipc.js';
+import {
+  NOTHING_STREAMED,
+  QUIET,
+  commitStreamed,
+  gather,
+  isReplaced,
+  liveInvestigationReducer,
+  type LiveInvestigation,
+  type StreamedText,
+} from '../state/live-investigation.js';
+
+export type { LiveInvestigation } from '../state/live-investigation.js';
 
 /**
  * The renderer's reads, each one a subscription rather than a poll.
@@ -190,6 +204,45 @@ export function useProjectThread(projectId: string | null): {
 }
 
 /**
+ * What Vowe has worked out about this project and kept.
+ *
+ * Read for the idle room, which has space to say what has been learned here
+ * recently. No model runs for it and nothing is summarised: these are the
+ * records `ProjectMemoryStore` already wrote, newest first. An empty list is
+ * an answer — the room then omits the section rather than filling it.
+ */
+export function useProjectMemories(projectId: string | null): ProjectMemoryRecord[] {
+  const [records, setRecords] = useState<ProjectMemoryRecord[]>([]);
+
+  useEffect(() => {
+    setRecords([]);
+    if (!projectId) return;
+    let live = true;
+    const load = () => {
+      void window.vowe
+        .listProjectMemories(projectId)
+        .then((next) => {
+          if (live) setRecords(next);
+        })
+        .catch(() => undefined);
+    };
+
+    load();
+    // The same event the brief listens to: a new memory is a change to what
+    // Vowe knows about this repository.
+    const unsubscribe = window.vowe.onProjectKnowledgeChanged((changed) => {
+      if (changed === projectId) load();
+    });
+    return () => {
+      live = false;
+      unsubscribe();
+    };
+  }, [projectId]);
+
+  return records;
+}
+
+/**
  * The appearance profile, live.
  *
  * Presence Studio writes it and every other mount reads it, so this holds one
@@ -355,4 +408,113 @@ export function useObservationStatus(sessionId: string | null): {
   }, [sessionId]);
 
   return status;
+}
+
+function useInvestigationProgress(
+  matches: (scope: InvestigationProgress['scope']) => boolean,
+  key: string | null,
+  /**
+   * Entries already in the thread.
+   *
+   * The live view is not dismissed when the investigation reports it finished,
+   * because at that moment the room has the streamed answer and not yet the
+   * durable one, and clearing would blank the answer the developer is reading.
+   * It is dismissed when the entry it was streaming towards actually appears,
+   * which makes the swap a replacement.
+   */
+  settledIds: readonly string[],
+): LiveInvestigation {
+  const [state, setState] = useState<LiveInvestigation>(QUIET);
+  const pending = useRef<StreamedText>(NOTHING_STREAMED);
+  const frame = useRef<number | null>(null);
+  const matcher = useRef(matches);
+  matcher.current = matches;
+
+  useEffect(() => {
+    setState(QUIET);
+    pending.current = NOTHING_STREAMED;
+    if (!key) return;
+
+    /*
+     * One commit per frame, holding everything that arrived during it.
+     *
+     * The coalescing is for React's benefit and changes nothing about the
+     * text: deltas are appended to the buffer the instant they land, and the
+     * frame simply decides when to hand the accumulated string over. A
+     * provider that sends one character at a time and one that sends two
+     * hundred both end up with the same string on screen, just as promptly.
+     */
+    const flush = (): void => {
+      frame.current = null;
+      const batch = pending.current;
+      pending.current = NOTHING_STREAMED;
+      setState((current) => commitStreamed(current, batch));
+    };
+
+    const schedule = (): void => {
+      if (frame.current !== null) return;
+      frame.current = requestAnimationFrame(flush);
+    };
+
+    const off = window.vowe.onInvestigationProgress((progress) => {
+      // Scoped: a question running in another room must not make this one look
+      // busy, or put another room's words in this one.
+      if (!matcher.current(progress.scope)) return;
+
+      if (progress.phase === 'reasoning' || progress.phase === 'answer') {
+        pending.current = gather(pending.current, progress);
+        schedule();
+        return;
+      }
+
+      // A new investigation starts from silence, buffer included.
+      if (progress.phase === 'started') pending.current = NOTHING_STREAMED;
+      setState((current) => liveInvestigationReducer(current, progress));
+    });
+
+    return () => {
+      off();
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+      frame.current = null;
+    };
+  }, [key]);
+
+  // The swap: the moment the answer exists durably, the live copy goes.
+  const replaced = isReplaced(state, settledIds);
+  useEffect(() => {
+    if (replaced) setState(QUIET);
+  }, [replaced]);
+
+  return state;
+}
+
+/**
+ * The investigation currently in flight for one session, if any.
+ *
+ * Driven by the main process rather than polled: the runner reports each
+ * lookup as it records it and each piece of language as the model emits it.
+ */
+export function useInvestigation(
+  sessionId: string | null,
+  settledIds: readonly string[] = [],
+): LiveInvestigation {
+  const matches = useCallback(
+    (scope: InvestigationProgress['scope']) =>
+      'sessionId' in scope && scope.sessionId === sessionId,
+    [sessionId],
+  );
+  return useInvestigationProgress(matches, sessionId, settledIds);
+}
+
+/** The same, for a project's own thread. */
+export function useProjectInvestigation(
+  projectId: string | null,
+  settledIds: readonly string[] = [],
+): LiveInvestigation {
+  const matches = useCallback(
+    (scope: InvestigationProgress['scope']) =>
+      'projectId' in scope && scope.projectId === projectId,
+    [projectId],
+  );
+  return useInvestigationProgress(matches, projectId, settledIds);
 }

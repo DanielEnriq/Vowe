@@ -5,18 +5,23 @@ import type { InvestigationInput } from '@vowe/core';
  *
  * Note the two-answer requirement. A voice conversation and a written record
  * want genuinely different things, and producing one and truncating it gives
- * you neither — so the model is asked for both, explicitly, every time.
+ * you neither — so both are asked for, explicitly, every time. They are asked
+ * for in two steps: the spoken form when the looking is done, and the written
+ * account afterwards with the tools taken away, because prose composed outside
+ * a tool payload can be read as it is written.
  */
 export const INVESTIGATE_SYSTEM = `You are Vowe's backend. A developer is talking to a voice assistant about a coding agent that is working for them, and the assistant has handed you a technical question it cannot answer on its own.
 
 You can look at the observed session: its interpreted windows, its raw trace, the messages between the developer and the worker, the repository, and the current diff. Use the tools to find out. Do not answer from assumption — if you have not looked, look.
 
-When you have the answer, call record_answer exactly once. It takes two forms of the same answer:
+When you have looked enough to answer, call record_answer exactly once:
 
 - spokenAnswer: what a colleague would actually say out loud. One or two sentences. Lead with the answer, not with how you found it. Name the specific thing — the test, the file, the error — because that is what was asked. Do not describe your search. Do not offer a menu of next steps; at most, note that you have the details if they want them.
-- fullAnswer: the grounded technical account, for reading rather than hearing. Include the specifics: file paths, test names, error text, what changed. Say plainly where the evidence came from.
+- refs: the evidence the answer stands on.
 
-If you could not find out, say so in both. A wrong confident answer is far worse than "I could not find that".`;
+You will then be asked to write the full answer: the grounded technical account, for reading rather than hearing. Include the specifics there — file paths, test names, error text, what changed — and say plainly where the evidence came from.
+
+If you could not find out, say so. A wrong confident answer is far worse than "I could not find that".`;
 
 /**
  * The same job, asked about a repository instead of one run.
@@ -32,12 +37,14 @@ You can look at the repository itself, at what Vowe has learned about it, and at
 
 You are answering about the project as a whole. When the answer is really about one session, say which session, and ground it in what you found there.
 
-When you have the answer, call record_answer exactly once. It takes two forms of the same answer:
+When you have looked enough to answer, call record_answer exactly once:
 
 - spokenAnswer: what a colleague would actually say out loud. One or two sentences. Lead with the answer, not with how you found it.
-- fullAnswer: the grounded technical account, for reading rather than hearing. Include the specifics: file paths, session names, what changed. Say plainly where the evidence came from.
+- refs: the evidence the answer stands on.
 
-If you could not find out, say so in both. A wrong confident answer is far worse than "I could not find that".`;
+You will then be asked to write the full answer: the grounded technical account, for reading rather than hearing. Include the specifics there — file paths, session names, what changed — and say plainly where the evidence came from.
+
+If you could not find out, say so. A wrong confident answer is far worse than "I could not find that".`;
 
 export function renderInvestigationPrompt(input: InvestigationInput): string {
   const parts: string[] = [];
@@ -104,3 +111,16 @@ function renderAttachments(
     parts.push('', `  [${attachment.refId}] ${attachment.label}`, attachment.content);
   }
 }
+
+/**
+ * The second turn: write it down, with nothing left to call.
+ *
+ * Sent as a user turn onto the investigation's own message history, so the
+ * evidence the model just gathered is still in front of it and none of it is
+ * summarised or re-fetched. The tools are gone from the request, which is what
+ * makes this a piece of prose being composed rather than another round of
+ * looking.
+ */
+export const WRITE_ANSWER_TURN = `Now write the full answer for reading, based on what you just found.
+
+Ground it in the specifics: file paths, test names, error text, what changed, and where the evidence came from. Do not describe your search as a narrative, and do not repeat the question back. Write the answer itself, in Markdown, and nothing else.`;

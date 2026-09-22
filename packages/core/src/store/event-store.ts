@@ -71,6 +71,20 @@ export interface EventStore {
   getSession(sessionId: string): AgentSession | null;
 
   /**
+   * Give a session a readable name, once.
+   *
+   * Its own call rather than part of `upsertSession`, because the adapter that
+   * reports a session has no title to report and would otherwise clear this
+   * one on every discovery pass.
+   *
+   * **Write-once.** A session that already has a title keeps it: the column is
+   * the delimiter that says a session has been named, so the check belongs in
+   * the write and not in whoever happened to call it. `false` means there was
+   * already a name there — an ordinary outcome, never an error.
+   */
+  setGeneratedTitle(sessionId: string, title: string): Promise<boolean>;
+
+  /**
    * Assigns identity and ordering, then persists. Returns `null` when the
    * event was already stored (matched by its raw reference), which makes
    * restart-and-replay safe.

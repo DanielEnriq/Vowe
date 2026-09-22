@@ -1,6 +1,9 @@
-import { useEffect, useRef, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 
 import type { ArtifactContent, ArtifactFocus } from '@vowe/core';
+
+import { Fading } from '../shell/Fading.js';
+import { Markdown, isMarkdownPath } from './Markdown.js';
 
 type Source = Extract<ArtifactContent, { type: 'source' }>;
 
@@ -20,10 +23,23 @@ export function SourceArtifact({
   focus?: ArtifactFocus;
 }): ReactElement {
   const focused = useRef<HTMLSpanElement | null>(null);
+  const document = isMarkdownPath(content.path);
+  /**
+   * A document opens as a document.
+   *
+   * Someone who opens a README wants to read it; someone who wants the source
+   * of it says so. The toggle is there because both are legitimate and neither
+   * is a guess — but only one of them is what was asked for by default.
+   */
+  const [rendered, setRendered] = useState(document);
 
   useEffect(() => {
-    focused.current?.scrollIntoView({ block: 'center' });
-  }, [content.path, focus?.startLine]);
+    setRendered(isMarkdownPath(content.path));
+  }, [content.path]);
+
+  useEffect(() => {
+    if (!rendered) focused.current?.scrollIntoView({ block: 'center' });
+  }, [content.path, focus?.startLine, rendered]);
 
   const lines = content.text.split('\n');
   const from = focus?.startLine;
@@ -31,9 +47,35 @@ export function SourceArtifact({
 
   return (
     <div className="artifact">
-      <span className="path">
-        {content.path} · {content.startLine}–{content.endLine}
-      </span>
+      <div className="artifact-head">
+        <Fading className="path" title={content.path}>
+          {content.path}
+          {rendered ? '' : ` · ${content.startLine}–${content.endLine}`}
+        </Fading>
+        {document && (
+          <div className="segmented tiny">
+            <button
+              className={rendered ? 'on' : undefined}
+              type="button"
+              aria-pressed={rendered}
+              onClick={() => setRendered(true)}
+            >
+              Rendered
+            </button>
+            <button
+              className={rendered ? undefined : 'on'}
+              type="button"
+              aria-pressed={!rendered}
+              onClick={() => setRendered(false)}
+            >
+              Source
+            </button>
+          </div>
+        )}
+      </div>
+
+      {rendered && <Markdown text={content.text} />}
+      {!rendered && (
       <pre className="code">
         {lines.map((line, index) => {
           const number = content.startLine + index;
@@ -50,6 +92,7 @@ export function SourceArtifact({
           );
         })}
       </pre>
+      )}
       {content.truncated && <span className="note">Truncated — this is a slice of the file.</span>}
     </div>
   );

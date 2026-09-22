@@ -33,7 +33,32 @@ export interface ObservationLlm {
     input: InvestigationInput,
     tools: ReadOnlyToolset,
     trace?: ModelTrace,
+    stream?: InvestigationStream,
   ): Promise<DelegatedAnswer>;
+}
+
+/**
+ * An investigation as it is generated, rather than when it is finished.
+ *
+ * Separate from `ModelTrace` on purpose, and the distinction is the same one
+ * the store makes everywhere else: a trace is the durable account of what a
+ * model did, written once and read later; this is a view of work in flight,
+ * which nothing persists and nobody can replay. An implementation that buffers
+ * its trace is correct; one that buffered this would defeat it.
+ *
+ * Both methods are optional, both are best-effort, and neither may be awaited —
+ * a developer watching an answer arrive must never be the reason it arrives
+ * slower. Only text the provider actually emitted reaches here: an adapter that
+ * cannot stream simply never calls it, and the answer lands whole as before.
+ *
+ * `reasoning` carries exposed reasoning only. Where a provider returns a
+ * summary of its thinking rather than the thinking itself, that is what this
+ * carries, and where it exposes nothing this stays silent rather than
+ * inventing a monologue.
+ */
+export interface InvestigationStream {
+  reasoning?(delta: string): void;
+  answer?(delta: string): void;
 }
 
 /** The three read tools, shared unchanged by observation and delegation. */

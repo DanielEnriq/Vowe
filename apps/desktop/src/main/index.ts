@@ -25,12 +25,14 @@ import {
   ObservationService,
   ConservativeMemoryAdmission,
   describeObservedState,
+  investigationChronology,
   PresenceProfileStore,
   ProjectBriefService,
   ProjectKnowledgeService,
   ProjectMemoryStore,
   ProjectService,
   SessionRegistry,
+  SessionTitleService,
   TemperamentStore,
   UserProfileStore,
   UnavailableLiveTransport,
@@ -45,7 +47,7 @@ import {
 } from '@vowe/core';
 import { ClaudeCodeAdapter, PROVIDER } from '@vowe/adapter-claude-code';
 import { createGraphifyKnowledge } from '@vowe/knowledge-graphify';
-import { AnthropicLlmClient } from '@vowe/llm';
+import { AnthropicLlmClient, AnthropicTitleModel } from '@vowe/llm';
 import { JevDecisionRouter } from '@vowe/decision-jev';
 import { OpenAiLiveTransport } from '@vowe/live-openai';
 
@@ -58,9 +60,13 @@ import {
 } from '../shared/ipc.js';
 import type {
   ContextRef,
+  EventStore,
+  InvestigationReceipt,
+  InvestigationStep,
   PlaybackReport,
   PresenceProfile,
   UserProfile,
+  VoweRun,
 } from '@vowe/core';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -112,6 +118,8 @@ interface Services {
   /** The one grounded investigator. Typed questions and Vo both arrive here. */
   delegated: DelegatedQuestionRunner;
   runner: InterpretationRunner;
+  /** Names a session, once, when a person's action asks for a name. */
+  titles: SessionTitleService;
   observation: ObservationService;
   live: LiveBridge;
   status: AppStatus;
@@ -300,6 +308,29 @@ async function createServices(): Promise<Services> {
     onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
   });
 
+  /**
+   * Titles, written once, when a person asks for one by acting.
+   *
+   * There are exactly two triggers, both below: Vowe creating a session, and
+   * someone opening an existing one for the first time. Discovery is not one
+   * of them — it used to be, and a machine with a week of history paid for
+   * that at every launch and then again whenever the interpreter revised its
+   * reading of a session.
+   */
+  const titles = new SessionTitleService({
+    store,
+    model: new AnthropicTitleModel({
+      onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+    }),
+    onTitled: (sessionId, title) => {
+      // The cached session learns its name now rather than on the next
+      // discovery pass, so the sidebar changes when the title is written.
+      registry.noteGeneratedTitle(sessionId, title);
+      broadcastSessions();
+    },
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+  });
+
   const liveTransport: LiveTransport = process.env.OPENAI_API_KEY
     ? new OpenAiLiveTransport({
         onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
@@ -338,6 +369,12 @@ async function createServices(): Promise<Services> {
     investigator: llm ?? nullObserver(store),
     runs,
     temperament: () => temperament,
+    // Forwarded straight to the window: an investigation in flight is not
+    // history, and the durable account of it is the receipt written with the
+    // answer. This only lets the room show the work while it happens.
+    onProgress: (progress) => {
+      window?.webContents.send(IPC.investigationProgress, progress);
+    },
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
     // After the answer is delivered, never during. Most answers are not kept.
     // Text and voice share this hook; nothing about admission asks which it was.
@@ -407,6 +444,15 @@ async function createServices(): Promise<Services> {
     window?.webContents.send(IPC.observationChanged, answered.sessionId);
   });
 
+  /*
+   * Discovery names nothing.
+   *
+   * Finding a session is not a request to name it: it is how every session on
+   * the machine arrives, repeatedly, for as long as Vowe is running. A
+   * session appears in the sidebar the moment it is found, under the
+   * deterministic concise name `sessionTitle` derives, and it stays under that
+   * name until a person opens it.
+   */
   registry.on('session:added', broadcastSessions);
   registry.on('session:updated', broadcastSessions);
   registry.on('session:removed', broadcastSessions);
@@ -447,6 +493,7 @@ async function createServices(): Promise<Services> {
     workbench,
     delegated,
     runner,
+    titles,
     observation,
     live,
     status: {
@@ -679,6 +726,29 @@ function registerIpc(): void {
     (await requireServices()).workbench.resolve(ref),
   );
 
+  /*
+   * The chronology of one settled answer.
+   *
+   * A join across two lanes that were already durable, performed here because
+   * this is the side that has the store: the run whose `outputEntryId` is this
+   * entry, that run's trace, and the receipt the entry itself carries. The
+   * renderer receives the same `InvestigationStep[]` shape the live column
+   * renders, so a finished investigation and one in flight are drawn by one
+   * component rather than two that can drift.
+   */
+  ipcMain.handle(
+    IPC.getInvestigationSteps,
+    async (_event, entryId: string): Promise<InvestigationStep[]> => {
+      const { store } = await requireServices();
+      const run = store.getRunForEntry(entryId);
+      const receipt = run ? receiptFor(store, run, entryId) : undefined;
+      return investigationChronology({
+        ...(receipt ? { receipt } : {}),
+        ...(run ? { trace: store.getTraceItems(run.id) } : {}),
+      });
+    },
+  );
+
   // The control channel. Separate handler, separate service, separate button.
   ipcMain.handle(
     IPC.sendInstruction,
@@ -686,9 +756,33 @@ function registerIpc(): void {
       (await requireServices()).registry.sendInstruction(sessionId, text),
   );
 
-  ipcMain.handle(IPC.launch, async (_event, cwd: string, prompt: string) =>
-    (await requireServices()).registry.launchSession(PROVIDER, { cwd, prompt }),
-  );
+  ipcMain.handle(IPC.launch, async (_event, cwd: string, prompt: string) => {
+    const services = await requireServices();
+    const session = await services.registry.launchSession(PROVIDER, { cwd, prompt });
+    /*
+     * A session Vowe started is named straight away.
+     *
+     * The first of the two triggers, and the easy one: the developer has just
+     * written the prompt, so there is a real naming signal and an obvious
+     * moment. Deliberately not awaited — what the session is called is not a
+     * precondition of it having been launched.
+     */
+    void services.titles.ensure(session.id);
+    return session;
+  });
+
+  /*
+   * The second trigger: someone opened this session.
+   *
+   * Its own channel rather than a side effect of reading the conversation,
+   * because the distinction is the whole point — listing, discovering and
+   * polling a session must never reach a model, and opening one may. The
+   * handler returns immediately and the service takes it from there; a naming
+   * failure is invisible to the room that called it.
+   */
+  ipcMain.handle(IPC.sessionOpened, async (_event, sessionId: string) => {
+    void (await requireServices()).titles.ensure(sessionId);
+  });
 
   // ------------------------------------------------------------- observation
 
@@ -757,6 +851,8 @@ function registerIpc(): void {
 
   // For attaching a file to a question. The renderer never reads it: it hands
   // back a path, which becomes a `repo:` ref the investigator opens for itself.
+  ipcMain.handle(IPC.isFullscreen, () => window?.isFullScreen() ?? false);
+
   ipcMain.handle(IPC.chooseFile, async () => {
     const options: Electron.OpenDialogOptions = { properties: ['openFile'] };
     const result = window
@@ -784,6 +880,15 @@ function createWindow(): void {
       contextIsolation: true,
     },
   });
+
+  // The renderer reserves space for the traffic lights, which do not exist in
+  // fullscreen. Telling it which state the window is in beats guessing in CSS
+  // and leaving a dead band at the top of the sidebar.
+  const announceFullscreen = () => {
+    window?.webContents.send(IPC.fullscreenChanged, window.isFullScreen());
+  };
+  window.on('enter-full-screen', announceFullscreen);
+  window.on('leave-full-screen', announceFullscreen);
 
   const devServer = process.env.ELECTRON_RENDERER_URL;
   if (devServer) {
@@ -855,3 +960,25 @@ app.on('before-quit', () => {
   // checkpoints the write-ahead log and releases the file.
   void services?.store.close();
 });
+
+/**
+ * The receipt on the answer this run produced.
+ *
+ * A run knows which session or project it belonged to and which entry it
+ * wrote, so the entry is found in the thread it was written to rather than
+ * through a lookup by id that no store offers. Session and project threads are
+ * deliberately separate types and separate tables; a run belongs to one of
+ * them, and this asks the one it belongs to.
+ */
+function receiptFor(
+  store: EventStore,
+  run: VoweRun,
+  entryId: string,
+): InvestigationReceipt | undefined {
+  const thread = run.sessionId
+    ? store.getConversation(run.sessionId)
+    : run.projectId
+      ? store.getProjectConversation(run.projectId)
+      : [];
+  return thread.find((entry) => entry.id === entryId)?.investigation;
+}

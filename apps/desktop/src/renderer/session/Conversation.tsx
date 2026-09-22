@@ -7,7 +7,8 @@ import type {
   PresenceProfile,
   WorkerMilestone,
 } from '@vowe/core';
-import { formatRef } from '@vowe/core/refs';
+
+import type { LiveInvestigation as LiveInvestigationState } from '../hooks/useVoweData.js';
 
 import {
   buildTimeline,
@@ -16,9 +17,10 @@ import {
   isGroundedAnswer,
   type SpeakerTurn,
 } from '../state/conversation.js';
-import { OpenIcon } from '../shell/icons.js';
-import { Receipt } from './Receipt.js';
-import { signatureStyle } from './signature.js';
+import { LiveInvestigation } from './LiveInvestigation.js';
+import { MessageBody } from './MessageBody.js';
+import { SettledInvestigation } from './SettledInvestigation.js';
+import { VoweMark } from './VoweMark.js';
 
 interface Props {
   entries: ConversationEntry[];
@@ -30,16 +32,28 @@ interface Props {
   workbenchOpen: boolean;
   /** An ask is in flight; Vowe is looking into it right now. */
   investigating: boolean;
+  /** The work as it happens: lookups, exposed working, the answer being written. */
+  live: LiveInvestigationState;
+  /** Real execution activity, so the live mark moves to the work. */
+  activity: number | undefined;
+  /** Where a lookup in the investigation column opens. */
   onOpenRef: (ref: ContextRef) => void;
 }
 
 /**
  * The session's one conversation, read as a column rather than a chat.
  *
- * Editorial treatment: identity is shown once per speaker run, not once per
- * message, and Vowe's mark is a point field drawn from the same profile as the
- * orb rather than an avatar. Worker milestones sit between turns as rules, so
- * the thread stays readable while still saying what happened.
+ * The asymmetry is deliberate and is not bubbles-on-both-sides. What the
+ * developer said is an *object* they handed over: compact, right aligned,
+ * sitting on a surface, as wide as its own content and no wider. What Vowe
+ * said is a *document*: left aligned, full reading measure, Markdown, no
+ * container, identified by the mark and byline. The eye should be able to tell
+ * which is which without reading either, and a symmetric chat would throw that
+ * away for the sake of looking like every other client.
+ *
+ * Identity is shown once per speaker run rather than once per message, and
+ * Vowe's mark is the same `VoweMark` the live region uses — one identity down
+ * the whole column, in different states.
  */
 export function Conversation({
   entries,
@@ -50,6 +64,8 @@ export function Conversation({
   providerLabel,
   workbenchOpen,
   investigating,
+  live,
+  activity,
   onOpenRef,
 }: Props): ReactElement {
   const scroller = useRef<HTMLDivElement | null>(null);
@@ -58,12 +74,29 @@ export function Conversation({
     [entries, milestones],
   );
 
-  // The log rests at the newest turn.
+  /*
+   * The log follows the newest turn — unless the reader has gone looking.
+   *
+   * The tail grows as work lands and as the answer is written, and staying
+   * with it is the whole point of streaming. But scrolling to the bottom on
+   * every delta takes the column away from anyone who has scrolled up to read
+   * something earlier, several times a second, which is worse than not
+   * following at all. So the rule is the ordinary one: follow while the reader
+   * is already at the end, and leave them alone the moment they are not.
+   *
+   * `working` is how much of the live region exists so far: one number that
+   * moves whenever anything down there does.
+   */
+  const last = live.steps[live.steps.length - 1];
+  const working =
+    live.steps.length + (last?.kind === 'thought' ? last.text.length : 0);
   useEffect(() => {
     const element = scroller.current;
     if (!element) return;
+    const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
+    if (distance > FOLLOW_WITHIN) return;
     element.scrollTop = element.scrollHeight;
-  }, [timeline.length, investigating]);
+  }, [timeline.length, investigating, working, live.answer.length]);
 
   return (
     <div className="conversation" ref={scroller}>
@@ -99,19 +132,26 @@ export function Conversation({
           ),
         )}
 
-        {investigating && (
-          <div className="turn">
-            <div className="thinking">
-              <span className="signature" style={signatureStyle(presence)} aria-hidden />
-              <span className="label">Looking into it…</span>
-            </div>
-          </div>
+        {(investigating || live.answer.length > 0) && (
+          <LiveInvestigation
+            live={live}
+            presence={presence}
+            activity={activity}
+            onOpenRef={onOpenRef}
+          />
         )}
       </div>
     </div>
   );
 }
 
+/**
+ * One speaker's run of turns.
+ *
+ * Vowe's byline is the same `VoweMark` the live region uses, in its settled
+ * state. One identity down the whole column: what changes between a turn that
+ * finished and an answer being written is the mark's state, never the mark.
+ */
 function Turn({
   turn,
   deliveries,
@@ -131,13 +171,18 @@ function Turn({
         <span className="speaker">{userName}</span>
       ) : (
         <div className="signature-line">
-          <span className="signature" style={signatureStyle(presence)} aria-hidden />
+          <VoweMark profile={presence} />
           <span className="speaker">Vowe</span>
         </div>
       )}
 
       {turn.entries.map((entry) => (
-        <Entry key={entry.id} entry={entry} deliveries={deliveries} onOpenRef={onOpenRef} />
+        <Entry
+          key={entry.id}
+          entry={entry}
+          deliveries={deliveries}
+          onOpenRef={onOpenRef}
+        />
       ))}
     </div>
   );
@@ -159,13 +204,23 @@ function Entry({
 
   return (
     <>
+      {/*
+        What Vowe did before answering, in the order it did it — the same
+        column the live region showed, read back from the run's trace once the
+        answer settled. One line until it is opened, and then the whole
+        chronology, thinking included, in the same bounded window.
+      */}
       {grounded && entry.investigation && (
-        <Receipt receipt={entry.investigation} onOpen={onOpenRef} />
+        <SettledInvestigation
+          entryId={entry.id}
+          receipt={entry.investigation}
+          onOpenRef={onOpenRef}
+        />
       )}
 
       {portion.boundaryUnknown ? (
         <>
-          <p>{entry.text}</p>
+          <MessageBody text={entry.text} />
           <span className="interrupted">
             <span className="mark">Interrupted</span>
             <span>Where it stopped was not recorded.</span>
@@ -173,64 +228,40 @@ function Entry({
         </>
       ) : portion.spokenFormDiffers ? (
         <>
-          <p>{portion.heard}</p>
+          <MessageBody text={portion.heard ?? ''} />
           <span className="interrupted">
             <span className="mark">Interrupted</span>
             <span>Spoken aloud; the written answer is below.</span>
           </span>
-          <p className="unheard">{portion.unheard}</p>
+          <div className="unheard">
+            <MessageBody text={portion.unheard ?? ''} />
+          </div>
         </>
       ) : portion.interrupted ? (
         <>
-          <p>{portion.heard}</p>
+          <MessageBody text={portion.heard ?? ''} />
           <span className="interrupted">
             <span className="mark">Interrupted</span>
             <span>You did not hear the rest.</span>
           </span>
-          {portion.unheard && <p className="unheard">{portion.unheard}</p>}
+          {portion.unheard && (
+            <div className="unheard">
+              <MessageBody text={portion.unheard ?? ''} />
+            </div>
+          )}
         </>
       ) : (
-        <p>{entry.text}</p>
-      )}
-
-      {grounded && entry.refs && entry.refs.length > 0 && (
-        <div className="artifact-links">
-          {entry.refs.slice(0, 3).map((ref) => (
-            <button
-              className="artifact-link"
-              type="button"
-              key={formatRef(ref)}
-              onClick={() => onOpenRef(ref)}
-            >
-              <OpenIcon />
-              {shortLabel(ref)}
-            </button>
-          ))}
-        </div>
+        <MessageBody text={entry.text} />
       )}
     </>
   );
 }
 
-/** `↗ ask.ts · 84` — the address, at the length a line can hold. */
-function shortLabel(ref: ContextRef): string {
-  switch (ref.kind) {
-    case 'repo':
-      return `${base(ref.path)}${ref.line ? ` · ${ref.line}` : ''}`;
-    case 'diff':
-      return ref.path ? `${base(ref.path)} · diff` : 'working diff';
-    case 'window':
-      return 'worker activity';
-    case 'trace':
-      return `trace ${ref.startSeq}–${ref.endSeq}`;
-    case 'event':
-    case 'transcript':
-      return 'worker activity';
-    case 'symbol':
-      return ref.nodeId;
-    case 'lesson':
-      return 'project memory';
-  }
-}
-
-const base = (path: string): string => path.split('/').pop() ?? path;
+/**
+ * How close to the end still counts as being at the end.
+ *
+ * Generous enough that a line of prose arriving does not count as the reader
+ * having scrolled away, and small enough that someone who has genuinely gone
+ * up to read an earlier turn is left where they are.
+ */
+const FOLLOW_WITHIN = 120;

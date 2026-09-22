@@ -102,8 +102,63 @@ export function workerMilestones(
   flush();
 
   milestones.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  const collapsed = collapse(milestones);
   const limit = options.limit;
-  return typeof limit === 'number' && limit >= 0 ? milestones.slice(-limit) : milestones;
+  return typeof limit === 'number' && limit >= 0 ? collapsed.slice(-limit) : collapsed;
+}
+
+/**
+ * The same thing, said once.
+ *
+ * A worker that runs its suite after every edit produces "started the test
+ * suite / test suite passed" over and over, and ten of those lines crowd out
+ * the one fact they all carry: the suite passes. Two rules, both selection and
+ * neither summarisation:
+ *
+ * - a start followed by its own finish is the finish, because by the time
+ *   anyone reads it the starting is no longer news;
+ * - a run of identical consecutive lines is the last of them.
+ *
+ * Every collapsed line keeps every `eventId` it stands for, so nothing becomes
+ * unreachable — the trace is still there, one descent away.
+ */
+function collapse(milestones: readonly WorkerMilestone[]): WorkerMilestone[] {
+  const settled: WorkerMilestone[] = [];
+
+  for (const milestone of milestones) {
+    let current = milestone;
+    // Absorbing runs backwards, not one step: a finish that has just swallowed
+    // its own start becomes identical to the finish before it, and the round
+    // of the loop that created that likeness is the one that must see it.
+    while (settled.length) {
+      const previous = settled[settled.length - 1]!;
+      if (!mergeable(previous, current)) break;
+      current = absorb(current, previous);
+      settled.pop();
+    }
+    settled.push(current);
+  }
+
+  return settled;
+}
+
+function mergeable(previous: WorkerMilestone, current: WorkerMilestone): boolean {
+  if (previous.sessionId !== current.sessionId) return false;
+  if (previous.kind === 'tests_started' && current.kind === 'tests_finished') return true;
+  return previous.kind === current.kind && previous.text === current.text;
+}
+
+/**
+ * Keep the later line and everything the earlier one stood for.
+ *
+ * The survivor's own identity is kept — its id anchors it across recomputes —
+ * and the absorbed events are prepended so the ids stay in the order they
+ * happened.
+ */
+function absorb(survivor: WorkerMilestone, absorbed: WorkerMilestone): WorkerMilestone {
+  const eventIds = [...absorbed.eventIds];
+  for (const id of survivor.eventIds) if (!eventIds.includes(id)) eventIds.push(id);
+  return { ...survivor, eventIds };
 }
 
 function milestoneFor(event: NormalizedEvent): WorkerMilestone | null {

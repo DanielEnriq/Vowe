@@ -117,6 +117,9 @@ export function toSession(row: Row): AgentSession {
     // Required keys that are nullable in the domain: always assigned.
     task: strOrNull(row['task']),
     displayLabel: str(row['display_label']),
+    ...(row['generated_title'] === null || row['generated_title'] === undefined
+      ? {}
+      : { generatedTitle: str(row['generated_title']) }),
     cwd: strOrNull(row['cwd']),
     projectId: strOrNull(row['project_id']),
     status: str(row['status']) as AgentSession['status'],

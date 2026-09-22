@@ -135,3 +135,62 @@ describe('Workbench — the desk', () => {
     expect(state).toEqual(EMPTY_WORKBENCH);
   });
 });
+
+describe('Workbench — the developer closed it', () => {
+  /**
+   * The rule the desk exists to respect: closing something means it stays
+   * closed. Surfacing keeps collecting; it simply stops being able to reopen
+   * the panel over somebody who just put it away.
+   */
+  it('does not reopen itself after a manual close', () => {
+    const state = run([
+      { type: 'open', artifact: artifact('a') },
+      { type: 'close' },
+      { type: 'surface', artifact: artifact('b'), level: 'show' },
+    ]);
+
+    expect(state.open).toBe(false);
+    // Still collected, and still marked as unseen, so the rail can say so.
+    expect(state.items.map((item) => item.id)).toEqual(['a', 'b']);
+    expect(state.newIds).toContain('b');
+  });
+
+  it('comes back the moment it is asked for', () => {
+    const closed = run([
+      { type: 'open', artifact: artifact('a') },
+      { type: 'close' },
+    ]);
+    expect(closed.dismissed).toBe(true);
+
+    const reopened = workbenchReducer(closed, { type: 'setOpen', open: true });
+    expect(reopened.open).toBe(true);
+    expect(reopened.dismissed).toBe(false);
+    // Opening the desk is looking at it.
+    expect(reopened.newIds).toEqual([]);
+  });
+
+  it('opens empty, because "what are we looking at?" is a fair question', () => {
+    const state = run([{ type: 'setOpen', open: true }]);
+    expect(state.open).toBe(true);
+    expect(activeArtifact(state)).toBeNull();
+  });
+
+  /**
+   * Why a view is being shown belongs to the desk, not to the artifact: the
+   * same file is the same file whether Vowe cited it or somebody opened it.
+   */
+  it('remembers why the current view was surfaced, and forgets on a manual open', () => {
+    const surfaced = run([
+      {
+        type: 'surface',
+        artifact: artifact('a'),
+        level: 'show',
+        reason: 'Used to answer your question',
+      },
+    ]);
+    expect(surfaced.reason).toBe('Used to answer your question');
+
+    const opened = workbenchReducer(surfaced, { type: 'open', artifact: artifact('b') });
+    expect(opened.reason).toBeNull();
+  });
+});

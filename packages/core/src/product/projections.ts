@@ -11,7 +11,11 @@
  * The rule that keeps it true: a module listed here may not import a store.
  */
 export * from './worker-milestones.js';
+export * from './evidence.js';
+export * from './investigation-chronology.js';
 export * from './return-checkpoint.js';
 export * from './temperament.js';
+export * from './session-display.js';
+export * from './session-title.js';
 export * from './user-profile.js';
 export * from './voice-preference.js';

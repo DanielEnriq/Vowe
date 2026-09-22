@@ -5,6 +5,8 @@ import type {
   ConversationDelivery,
   ConversationEntry,
   InstructionResult,
+  InvestigationProgress,
+  InvestigationStep,
   LiveStatus,
   NormalizedEvent,
   ObservationStatus,
@@ -216,6 +218,21 @@ export interface VoweApi {
   markSessionViewed(sessionId: string, seq: number): Promise<void>;
 
   /**
+   * A person has opened this session.
+   *
+   * Reported rather than inferred, and deliberately not folded into reading
+   * the conversation. It is the one moment at which naming an existing
+   * session is warranted, and the distinction it protects is that listing,
+   * discovering or polling a session must never reach a model. Sending it
+   * again for a session already open costs nothing and asks nothing.
+   *
+   * Resolves as soon as the main process has been told. Whether a name is
+   * produced, and whether producing one fails, is invisible from here: the
+   * room opens either way.
+   */
+  sessionOpened(sessionId: string): Promise<void>;
+
+  /**
    * What Vowe itself is executing right now.
    *
    * The execution lane already records every model call Vowe makes on its own
@@ -237,6 +254,22 @@ export interface VoweApi {
    */
   openArtifact(ref: ContextRef): Promise<WorkbenchArtifact>;
 
+  // ----------------------------------------------------------- investigation
+
+  /**
+   * What Vowe did before writing one answer, read back after the fact.
+   *
+   * The live column shows the investigation while it happens; this is the same
+   * sequence once it has settled, joined in the main process from the two
+   * lanes that already hold it — the answer's receipt and the trace of the
+   * `VoweRun` whose `outputEntryId` is this entry. Nothing is recomputed, and
+   * nothing new is stored: see `investigationChronology`.
+   *
+   * An answer with no run behind it degrades to its receipt, and one with
+   * neither returns nothing, which is the truth about it.
+   */
+  getInvestigationSteps(entryId: string): Promise<InvestigationStep[]>;
+
   onSessionsChanged(listener: () => void): () => void;
   onSessionEvent(listener: (event: NormalizedEvent) => void): () => void;
   onObservationChanged(listener: (sessionId: string) => void): () => void;
@@ -250,6 +283,26 @@ export interface VoweApi {
    * when it is not, the stage says so rather than showing silence.
    */
   onLiveTranscript(listener: (delta: LiveTranscriptDelta) => void): () => void;
+
+  /**
+   * Whether the window is in macOS fullscreen.
+   *
+   * Real state rather than a CSS guess. In fullscreen the traffic lights are
+   * gone and the space reserved to clear them becomes a dead band at the top
+   * of the sidebar; only the main process knows which it is.
+   */
+  isFullscreen(): Promise<boolean>;
+  onFullscreenChanged(listener: (fullscreen: boolean) => void): () => void;
+  /**
+   * An investigation, as it happens.
+   *
+   * So a room can show Vowe working rather than a frozen column for half a
+   * minute. Each check forwarded here is the same object that lands in the
+   * persisted receipt, so the live trail and the record cannot disagree.
+   */
+  onInvestigationProgress(
+    listener: (progress: InvestigationProgress) => void,
+  ): () => void;
   /** Vowe started or finished executing something. */
   onRunActivity(listener: (activity: VoweRunActivity) => void): () => void;
   /**
@@ -354,6 +407,7 @@ export const IPC = {
   getPresenceProfile: 'vowe:presence:get',
   setPresenceProfile: 'vowe:presence:set',
   openArtifact: 'vowe:artifact:open',
+  getInvestigationSteps: 'vowe:investigation:steps',
   getDeliveries: 'vowe:session:deliveries',
   askProject: 'vowe:project:ask',
   getProjectConversation: 'vowe:project:conversation',
@@ -365,6 +419,7 @@ export const IPC = {
   listVoices: 'vowe:voice:list',
   getAttentionCursor: 'vowe:attention:get',
   markSessionViewed: 'vowe:attention:mark',
+  sessionOpened: 'vowe:session:opened',
   chooseFile: 'vowe:dialog:choose-file',
   getRunActivity: 'vowe:runs:activity',
   sessionsChanged: 'vowe:sessions:changed',
@@ -373,6 +428,9 @@ export const IPC = {
   projectKnowledgeChanged: 'vowe:knowledge:changed',
   liveStatusChanged: 'vowe:live:status-changed',
   liveTranscript: 'vowe:live:transcript',
+  investigationProgress: 'vowe:investigation:progress',
+  isFullscreen: 'vowe:window:fullscreen',
+  fullscreenChanged: 'vowe:window:fullscreen-changed',
   conversationChanged: 'vowe:session:conversation-changed',
   runActivityChanged: 'vowe:runs:activity-changed',
   projectConversationChanged: 'vowe:project:conversation-changed',

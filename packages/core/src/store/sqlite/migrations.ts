@@ -311,6 +311,20 @@ CREATE UNIQUE INDEX project_conversation_entries_origin
   WHERE origin_provider IS NOT NULL;
 `;
 
+/**
+ * A readable name for a session, kept beside the provider's own metadata.
+ *
+ * Its own column rather than an overwrite of `task` or `display_label`: those
+ * are what the adapter reported and stay that way, and losing them would mean
+ * losing the only thing a title can ever be regenerated from.
+ *
+ * `upsertSession` names its columns explicitly and this is not among them, so
+ * a discovery pass refreshing a session cannot clear the title it was given.
+ */
+const SESSION_TITLES = `
+ALTER TABLE sessions ADD COLUMN generated_title TEXT;  -- NULL => key ABSENT
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -331,6 +345,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 4,
     name: '004_project_conversation',
     up: (db) => db.exec(PROJECT_CONVERSATION),
+  },
+  {
+    version: 5,
+    name: '005_session_titles',
+    up: (db) => db.exec(SESSION_TITLES),
   },
 ];
 

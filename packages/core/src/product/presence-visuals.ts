@@ -109,7 +109,7 @@ const STATES: Record<PresenceState, StatePreset> = {
   observing:   { amp: 0.085, freq: 1.9, speed: 0.45, torsion: 0.010, jitter: 0.18, size: 1.00, bright: 0.95, rim: 1.00, halo: 0.10, pulse: 0.01, warm: 0.0 },
   joining:     { amp: 0.075, freq: 2.1, speed: 0.85, torsion: 0.005, jitter: 0.22, size: 1.02, bright: 0.90, rim: 1.05, halo: 0.18, pulse: 0.02, warm: 0.0 },
   listening:   { amp: 0.070, freq: 2.5, speed: 0.70, torsion: 0.000, jitter: 0.12, size: 1.12, bright: 1.05, rim: 1.15, halo: 0.55, pulse: 0.05, warm: 0.0 },
-  thinking:    { amp: 0.165, freq: 3.4, speed: 1.05, torsion: 0.075, jitter: 0.30, size: 0.92, bright: 0.95, rim: 1.10, halo: 0.12, pulse: 0.00, warm: 0.0 },
+  thinking:    { amp: 0.165, freq: 3.4, speed: 1.05, torsion: 0.075, jitter: 0.30, size: 0.92, bright: 0.95, rim: 1.10, halo: 0.12, pulse: 0.07, warm: 0.0 },
   speaking:    { amp: 0.125, freq: 2.0, speed: 0.95, torsion: 0.020, jitter: 0.16, size: 1.08, bright: 1.15, rim: 1.05, halo: 0.28, pulse: 0.09, warm: 0.0 },
   attention:   { amp: 0.105, freq: 5.6, speed: 1.45, torsion: 0.030, jitter: 0.45, size: 0.86, bright: 1.05, rim: 1.25, halo: 0.34, pulse: 0.03, warm: 0.7 },
   unavailable: { amp: 0.020, freq: 1.2, speed: 0.05, torsion: 0.000, jitter: 0.08, size: 0.88, bright: 0.34, rim: 0.40, halo: 0.00, pulse: 0.00, warm: 0.0 },
@@ -182,6 +182,15 @@ interface SizePreset {
   density: number;
   scale: number;
   maxFps: number;
+  /**
+   * How much of the state's ring this size draws.
+   *
+   * A ring reads as a halo at 26px and as a drawn circle at 300px, where it
+   * competes with the sphere it is supposed to surround rather than framing it.
+   * The large voice presence therefore draws none: the deformation is the
+   * signal there, and the object is strong enough without an outline.
+   */
+  halo: number;
 }
 
 /**
@@ -192,19 +201,20 @@ interface SizePreset {
  * same dense cloud rather than a handful of dots.
  */
 const SIZES: Record<PresenceSize, SizePreset> = {
-  signature: { density: 0.42, scale: 0.9, maxFps: 30 },
-  compact: { density: 0.5, scale: 0.95, maxFps: 30 },
-  project: { density: 1.0, scale: 1.0, maxFps: 60 },
-  voice: { density: 1.0, scale: 1.0, maxFps: 60 },
-  studio: { density: 1.0, scale: 1.0, maxFps: 60 },
+  signature: { density: 0.42, scale: 0.9, maxFps: 30, halo: 1 },
+  compact: { density: 0.5, scale: 0.95, maxFps: 30, halo: 1 },
+  project: { density: 1.0, scale: 1.0, maxFps: 60, halo: 1 },
+  voice: { density: 1.0, scale: 1.0, maxFps: 60, halo: 0 },
+  studio: { density: 1.0, scale: 1.0, maxFps: 60, halo: 1 },
 };
 
 export interface PresenceVisualOptions {
   /**
-   * Real, normalized speech energy, if the application has any.
+   * Real, normalized activity, if the application has any.
    *
-   * Undefined means nobody measured it. The presence then moves on its state
-   * alone rather than inventing a waveform.
+   * Speech energy during a call, and the rhythm of actual execution events
+   * while Vowe is thinking. Undefined means nobody measured it. The presence
+   * then moves on its state alone rather than inventing a waveform.
    */
   activity?: number | undefined;
   /** The developer asked the system for less movement. */
@@ -249,7 +259,7 @@ export function resolvePresenceVisuals(
     size: preset.size * FORM.sizeK,
     bright: preset.bright * light,
     rim: preset.rim * light,
-    halo: preset.halo,
+    halo: preset.halo * dimensions.halo,
     pulse: preset.pulse * (reduced ? REDUCED_PULSE : 1),
     warm: preset.warm,
     lineBias: FORM.lineBias,

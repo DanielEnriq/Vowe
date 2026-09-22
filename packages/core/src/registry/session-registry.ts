@@ -100,6 +100,20 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
   }
 
   /**
+   * A session has just been given its durable name.
+   *
+   * The cached session is refreshed here rather than waiting for the next
+   * discovery pass, so the name is on screen when it is written instead of a
+   * few seconds later. The database is still where it lives; this only keeps
+   * the view of it honest between passes.
+   */
+  noteGeneratedTitle(sessionId: string, title: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    this.sessions.set(sessionId, { ...session, generatedTitle: title });
+  }
+
+  /**
    * Ask every adapter what it can see and fold the answer in. Sessions that
    * disappear are marked finished rather than deleted: their observed history
    * stays meaningful after the worker is gone.
@@ -236,14 +250,26 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
 
   /** Merge one discovered session into our view and keep watching it. */
   private async absorb(discovered: AgentSession): Promise<void> {
-    const previous = this.sessions.get(discovered.id) ?? this.store.getSession(discovered.id);
+    // Read once. Reconciliation runs for every session every few seconds, and
+    // the stored row answers two questions below.
+    const stored = this.store.getSession(discovered.id);
+    const previous = this.sessions.get(discovered.id) ?? stored;
     const merged: AgentSession = {
       ...discovered,
       // Semantic state is owned by the interpretation layer, not the adapter.
-      semanticState:
-        previous?.semanticState ??
-        this.store.getSession(discovered.id)?.semanticState ??
-        null,
+      semanticState: previous?.semanticState ?? stored?.semanticState ?? null,
+      /*
+       * The name Vowe gave this session, which no adapter knows about.
+       *
+       * Taken from the database rather than from the cached session, because
+       * the column is where a title durably lives and this map is only a view
+       * of it. Without this line the title was written and then dropped from
+       * the in-memory session on the very next discovery pass, so
+       * `listSessions` served the un-named copy and the sidebar showed the
+       * fallback for a session that had been named. The column had the name;
+       * nothing ever read it back.
+       */
+      ...titleOf(stored ?? previous),
       createdAt: previous?.createdAt ?? discovered.createdAt,
       // Adapters do not know about projects, so carry the existing assignment
       // forward and only re-derive it when it is actually missing or stale.
@@ -368,4 +394,10 @@ function hasVisibleChange(a: AgentSession, b: AgentSession): boolean {
     a.capabilities.resume !== b.capabilities.resume ||
     a.projectId !== b.projectId
   );
+}
+
+/** The durable name, where there is one. Absent rather than `undefined`. */
+function titleOf(session: AgentSession | null | undefined): { generatedTitle?: string } {
+  const title = session?.generatedTitle?.trim();
+  return title ? { generatedTitle: title } : {};
 }

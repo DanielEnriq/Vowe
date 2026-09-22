@@ -88,3 +88,40 @@ export function shouldOfferWorker(
     looksLikeInstruction(draft)
   );
 }
+
+/**
+ * What a key press in a composer means.
+ *
+ * Enter sends and Shift+Enter inserts a newline, which is what every messaging
+ * surface a developer uses already does — the previous ⌘↩ made the common act
+ * the awkward one. ⌘↩ and Ctrl+↩ keep working, because people who learned them
+ * here should not have them taken away.
+ *
+ * The composition guard is not a nicety. While an IME is open, Enter commits
+ * the candidate the person is choosing; treating that as "send" would post a
+ * half-written word in Japanese, Chinese or Korean and lose the rest. A
+ * composing Enter therefore does nothing here and belongs to the IME.
+ *
+ * Pure, and takes only the four fields it reads, so the rule can be stated
+ * once and tested without a DOM.
+ */
+export interface ComposerKey {
+  key: string;
+  shiftKey?: boolean;
+  metaKey?: boolean;
+  ctrlKey?: boolean;
+  altKey?: boolean;
+  /** React re-exposes the DOM's own composition flag under `nativeEvent`. */
+  nativeEvent?: { isComposing?: boolean };
+  isComposing?: boolean;
+}
+
+export type ComposerAction = 'send' | 'newline' | 'none';
+
+export function composerKeyAction(event: ComposerKey): ComposerAction {
+  if (event.key !== 'Enter') return 'none';
+  if (event.isComposing === true || event.nativeEvent?.isComposing === true) return 'none';
+  if (event.shiftKey === true) return 'newline';
+  if (event.altKey === true) return 'newline';
+  return 'send';
+}

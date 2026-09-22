@@ -17,7 +17,10 @@
     "@vowe/decision-jev": "workspace:*",
     "@vowe/knowledge-graphify": "workspace:*",
     "@vowe/live-openai": "workspace:*",
-    "@vowe/llm": "workspace:*"
+    "@vowe/llm": "workspace:*",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

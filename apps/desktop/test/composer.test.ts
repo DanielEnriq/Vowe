@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AgentSession } from '@vowe/core';
 import {
+  composerKeyAction,
   looksLikeInstruction,
   resolveDestination,
   shouldOfferWorker,
@@ -123,5 +124,40 @@ describe('Composer — an imperative earns an offer, never a forward', () => {
   it('does not offer when the developer is already talking to the worker', () => {
     const armed = resolveDestination('worker', session());
     expect(shouldOfferWorker("Don't change the public API.", armed)).toBe(false);
+  });
+});
+
+describe('Composer keys — Enter sends, Shift+Enter does not', () => {
+  it('sends on a plain Enter', () => {
+    expect(composerKeyAction({ key: 'Enter' })).toBe('send');
+  });
+
+  it('inserts a newline on Shift+Enter', () => {
+    expect(composerKeyAction({ key: 'Enter', shiftKey: true })).toBe('newline');
+  });
+
+  /** Taken away from nobody: the old shortcut still sends. */
+  it('keeps ⌘↩ and Ctrl+↩ sending', () => {
+    expect(composerKeyAction({ key: 'Enter', metaKey: true })).toBe('send');
+    expect(composerKeyAction({ key: 'Enter', ctrlKey: true })).toBe('send');
+  });
+
+  /**
+   * The one that matters for anyone typing Japanese, Chinese or Korean: while
+   * the IME is open, Enter belongs to the candidate window and sending there
+   * would post a half-chosen word.
+   */
+  it('never sends while an IME is composing', () => {
+    expect(composerKeyAction({ key: 'Enter', nativeEvent: { isComposing: true } })).toBe('none');
+    expect(composerKeyAction({ key: 'Enter', isComposing: true })).toBe('none');
+    // Even with the modifier: the composition is still in progress.
+    expect(
+      composerKeyAction({ key: 'Enter', metaKey: true, nativeEvent: { isComposing: true } }),
+    ).toBe('none');
+  });
+
+  it('has nothing to say about other keys', () => {
+    expect(composerKeyAction({ key: 'a' })).toBe('none');
+    expect(composerKeyAction({ key: 'Escape' })).toBe('none');
   });
 });

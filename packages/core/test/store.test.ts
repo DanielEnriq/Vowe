@@ -133,3 +133,42 @@ describe('SqliteEventStore — observation persistence', () => {
     expect(fixture.store.getWindows('claude-code:never-seen')).toEqual([]);
   });
 });
+
+describe('SqliteEventStore — a session is named once', () => {
+  /**
+   * `generated_title` is the delimiter that says a session has been named, so
+   * the check is the write. Anything else — read, decide, write — has a gap in
+   * it, and the gap is where a second name comes from.
+   */
+  it('writes a name only where there is not one already', async () => {
+    const { store, cleanup: done } = await temporaryStore();
+    cleanup = done;
+    await store.upsertSession(testSession());
+
+    expect(await store.setGeneratedTitle(TEST_SESSION, 'Port the Vowe UI')).toBe(true);
+    expect(store.getSession(TEST_SESSION)?.generatedTitle).toBe('Port the Vowe UI');
+
+    expect(await store.setGeneratedTitle(TEST_SESSION, 'Something else entirely')).toBe(false);
+    expect(store.getSession(TEST_SESSION)?.generatedTitle).toBe('Port the Vowe UI');
+  });
+
+  /** Discovery reports sessions constantly and knows nothing about names. */
+  it('keeps the name across the discovery upserts that follow it', async () => {
+    const { store, reopen, cleanup: done } = await temporaryStore();
+    cleanup = done;
+    await store.upsertSession(testSession());
+    await store.setGeneratedTitle(TEST_SESSION, 'Port the Vowe UI');
+
+    await store.upsertSession(testSession({ task: 'the adapter reports something new' }));
+    expect(store.getSession(TEST_SESSION)?.generatedTitle).toBe('Port the Vowe UI');
+
+    const reopened = await reopen();
+    expect(reopened.getSession(TEST_SESSION)?.generatedTitle).toBe('Port the Vowe UI');
+  });
+
+  it('says nothing was written for a session that does not exist', async () => {
+    const { store, cleanup: done } = await temporaryStore();
+    cleanup = done;
+    expect(await store.setGeneratedTitle('claude-code:gone', 'Port the Vowe UI')).toBe(false);
+  });
+});

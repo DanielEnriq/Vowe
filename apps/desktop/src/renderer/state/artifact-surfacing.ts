@@ -3,14 +3,18 @@ import type { ContextRef, ConversationEntry, InvestigationReceipt } from '@vowe/
 /**
  * Which of an answer's references belong on the desk.
  *
- * No ranking model, and nothing learned: an investigation already recorded
- * what it opened, in the order it opened it, and that order is a better guide
- * to what the answer is about than anything that could be inferred afterwards.
+ * The desk is what Vowe and the developer are *looking at*. It is not a log of
+ * what Vowe did — that is the live trail and the receipt, and it belongs in the
+ * conversation. Conflating the two is what turns nine lookups into nine pieces
+ * of clutter nobody asked to keep.
  *
- * The rule is deliberately modest. The first thing Vowe *opened* takes the
- * view, because that is the artifact the answer is most likely to be built on;
- * everything else it touched joins the stack quietly. An answer that opened
- * nothing surfaces nothing rather than guessing from its prose.
+ * So the rule is about descents, not activity. A `search` is Vowe casting
+ * around: its refs are candidates, often many, and none of them is yet a thing
+ * anyone chose to look at. An `open` or a `diff` is Vowe going and reading
+ * something specific, and that is what earns a place.
+ *
+ * Nothing is learned and nothing is ranked. The order is the order the
+ * investigation actually happened in.
  */
 export interface SurfacePlan {
   /** Takes the workbench, unless the developer has pinned something. */
@@ -21,38 +25,50 @@ export interface SurfacePlan {
 
 export const NOTHING_TO_SURFACE: SurfacePlan = { show: null, suggest: [] };
 
-/** How many an answer may put on the desk at once. */
-const MAX_SUGGESTED = 4;
+/**
+ * Kept deliberately small. An answer that quietly added six things to the desk
+ * would be doing to the workbench what the trail already does properly.
+ */
+const MAX_SUGGESTED = 2;
+
+/**
+ * Refs worth a visual artifact.
+ *
+ * A file, a symbol, a diff and a remembered lesson all render as something a
+ * person reads. A window or trace range renders as narrative evidence — real,
+ * and reachable from the receipt, but not what the desk is for by default.
+ */
+const CONCRETE = new Set<ContextRef['kind']>(['repo', 'symbol', 'diff', 'lesson']);
 
 export function planSurfacing(entry: ConversationEntry): SurfacePlan {
   const receipt = entry.investigation;
   if (!receipt) return NOTHING_TO_SURFACE;
 
-  const opened = refsOfKind(receipt, 'open');
-  const rest = [...refsOfKind(receipt, 'diff'), ...refsOfKind(receipt, 'search')];
+  // Descents only: what Vowe chose to read, in the order it read it.
+  const descended = dedupe(refsOf(receipt, (kind) => kind === 'open' || kind === 'diff'));
+  const concrete = descended.filter((ref) => CONCRETE.has(ref.kind));
+  if (!concrete.length) return NOTHING_TO_SURFACE;
 
-  const show = opened[0] ?? rest[0] ?? null;
-  const suggest = dedupe([...opened.slice(1), ...rest], show).slice(0, MAX_SUGGESTED);
-
-  return { show, suggest };
+  const [show, ...rest] = concrete;
+  return { show: show ?? null, suggest: rest.slice(0, MAX_SUGGESTED) };
 }
 
-function refsOfKind(
+function refsOf(
   receipt: InvestigationReceipt,
-  kind: InvestigationReceipt['checks'][number]['kind'],
+  accept: (kind: InvestigationReceipt['checks'][number]['kind']) => boolean,
 ): ContextRef[] {
-  return receipt.checks.filter((check) => check.kind === kind).flatMap((check) => check.refs);
+  return receipt.checks
+    .filter((check) => accept(check.kind))
+    .flatMap((check) => check.refs);
 }
 
 /**
  * Compared by address, because that is what identity means for a ref — and
- * because the artifact id on the desk is the formatted ref, two refs that
+ * because an artifact's id on the desk is its formatted ref, two refs that
  * print the same are the same thing on the desk.
  */
-function dedupe(refs: ContextRef[], exclude: ContextRef | null): ContextRef[] {
+function dedupe(refs: ContextRef[]): ContextRef[] {
   const seen = new Set<string>();
-  if (exclude) seen.add(JSON.stringify(exclude));
-
   const kept: ContextRef[] = [];
   for (const ref of refs) {
     const key = JSON.stringify(ref);

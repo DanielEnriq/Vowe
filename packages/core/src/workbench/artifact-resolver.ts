@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { ContextNavigator, OpenResult } from '../context/context-navigator.js';
 import { formatRef, type ContextRef } from '../context/refs.js';
 import type { ProjectKnowledgeService } from '../knowledge/project-knowledge-service.js';
+import { eventSubtitle, eventTitle } from '../product/evidence.js';
 import type { EventStore } from '../store/event-store.js';
 import type { ArtifactContent, ArtifactFocus, WorkbenchArtifact } from './artifact.js';
 
@@ -143,7 +144,7 @@ export class ArtifactResolver {
         ? { projectId: ref.projectId, ...(ref.path ? { path: ref.path } : {}) }
         : { sessionId: ref.sessionId, ...(ref.path ? { path: ref.path } : {}) },
     );
-    const title = ref.path ?? 'Working diff';
+    const title = ref.path ?? 'Current diff';
 
     if (diff.unavailable) {
       return this.artifact(ref, 'diff', title, undefined, {
@@ -176,11 +177,20 @@ export class ArtifactResolver {
     const opened = await this.navigator.openContext({ ref });
     const window = this.store.getWindow(ref.sessionId, ref.windowId);
     const note = this.store.getWindowNoteForWindow(ref.sessionId, ref.windowId);
+    /*
+     * What this stretch of work *was*, when somebody has already said so.
+     *
+     * `Window 7` is an index into a structure the developer never asked about.
+     * The interpreter's own one-line summary is the thing they would recognise,
+     * so it leads and the index becomes the address underneath it.
+     */
+    const index = window ? `Window ${window.index}` : 'Window';
+    const summary = note?.summary?.trim();
     return this.artifact(
       ref,
       'worker_activity',
-      window ? `Window ${window.index}` : 'Window',
-      note?.summary,
+      summary || index,
+      summary ? index : undefined,
       narrativeOf(opened),
     );
   }
@@ -192,8 +202,8 @@ export class ArtifactResolver {
     return this.artifact(
       ref,
       'worker_activity',
+      'Worker activity',
       `Trace ${ref.startSeq}–${ref.endSeq}`,
-      undefined,
       narrativeOf(opened),
     );
   }
@@ -213,8 +223,8 @@ export class ArtifactResolver {
     return this.artifact(
       ref,
       ref.kind === 'transcript' ? 'transcript' : 'worker_activity',
-      event ? `[${event.seq}] ${event.kind}` : formatRef(ref),
-      event?.summary,
+      event ? eventTitle(event) : formatRef(ref),
+      event ? eventSubtitle(event) : undefined,
       narrativeOf(opened),
       { eventIds: [ref.eventId] },
     );

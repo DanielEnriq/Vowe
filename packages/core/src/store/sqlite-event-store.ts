@@ -155,6 +155,23 @@ export class SqliteEventStore implements EventStore {
 
   // ---------------------------------------------------------------- sessions
 
+  /**
+   * The name is written only where there is not one already.
+   *
+   * `generated_title IS NULL` in the statement rather than a read followed by
+   * a write: the column is what says whether a session has been named, so
+   * making it the condition is what makes naming genuinely once-only —
+   * concurrent callers, a second process and a restart mid-call all converge
+   * on the first name that landed.
+   */
+  async setGeneratedTitle(sessionId: string, title: string): Promise<boolean> {
+    const result = this.run(
+      'UPDATE sessions SET generated_title = :title WHERE id = :id AND generated_title IS NULL',
+      { id: sessionId, title },
+    );
+    return Number(result.changes) > 0;
+  }
+
   async upsertSession(session: AgentSession): Promise<void> {
     this.run(
       `INSERT INTO sessions (
@@ -978,8 +995,12 @@ export class SqliteEventStore implements EventStore {
     return statement;
   }
 
-  private run(sql: string, ...params: unknown[]): void {
-    this.statement(sql).run(...(params as never[]));
+  /**
+   * Returns what the driver reports, so a conditional write can say whether it
+   * wrote. Callers with nothing to decide simply ignore it.
+   */
+  private run(sql: string, ...params: unknown[]): { changes: number | bigint } {
+    return this.statement(sql).run(...(params as never[]));
   }
 
   private get(sql: string, ...params: unknown[]): rows.Row | null {

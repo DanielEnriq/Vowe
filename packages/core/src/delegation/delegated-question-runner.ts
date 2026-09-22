@@ -6,6 +6,7 @@ import type {
   DelegatedAnswer,
   InvestigationAttachment,
   InvestigationInput,
+  InvestigationStream,
   ObservationLlm,
   ProjectSessionLine,
   ReadOnlyToolset,
@@ -13,6 +14,7 @@ import type {
 import type { EventStore } from '../store/event-store.js';
 import type {
   ConversationEntry,
+  InvestigationCheck,
   ProjectConversationEntry,
 } from '../types/conversation.js';
 import type { RunHandle, VoweRunRecorder } from '../execution/run-recorder.js';
@@ -47,6 +49,13 @@ export interface DelegatedQuestionRunnerOptions {
    * shipped prompt exactly as written.
    */
   temperament?: () => TemperamentProfile | undefined;
+  /**
+   * Called as an investigation proceeds. Never awaited.
+   *
+   * A developer watching an answer arrive must not be able to slow it down, so
+   * this is fire-and-forget in exactly the way `onAnswer` is.
+   */
+  onProgress?: (progress: InvestigationProgress) => void;
   onError?: (scope: string, error: unknown) => void;
   /**
    * A grounded answer has been produced and persisted.
@@ -66,6 +75,46 @@ export interface DelegatedQuestionRunnerOptions {
  * straight through to every tool call without being reinterpreted on the way.
  */
 export type InvestigationScope = { sessionId: string } | { projectId: string };
+
+/**
+ * An investigation, as it happens.
+ *
+ * Emitted so the room a developer is waiting in can show the work proceeding
+ * instead of a frozen column. Every `check` here is the same object that ends
+ * up in the persisted `InvestigationReceipt`, so the live trail and the record
+ * agree by construction rather than by convention — nothing appears live that
+ * later turns out not to have been done.
+ *
+ * Not durable, and not meant to be: an investigation in flight has not
+ * happened yet. The durable account is the receipt, written with the answer.
+ */
+export type InvestigationProgress =
+  | { phase: 'started'; scope: InvestigationScope; at: string }
+  | { phase: 'check'; scope: InvestigationScope; check: InvestigationCheck; at: string }
+  /**
+   * Vowe's own working, as the provider exposes it.
+   *
+   * Two provenances, one lane, because on screen they are one thing: the
+   * model's exposed reasoning summaries, and any prose it emits while it is
+   * still looking. Neither is the answer. The durable trace keeps them apart —
+   * `reasoning_summary` and `model_output` are different rows — and this does
+   * not, because a developer watching Vowe think does not need the distinction
+   * and would be worse served by two columns of it.
+   *
+   * Absent where a provider exposes nothing. Private reasoning stays private
+   * rather than being approximated.
+   */
+  | { phase: 'reasoning'; scope: InvestigationScope; delta: string; at: string }
+  /** The written answer, as it is written. The same text the entry will hold. */
+  | { phase: 'answer'; scope: InvestigationScope; delta: string; at: string }
+  | {
+      phase: 'finished';
+      scope: InvestigationScope;
+      /** The persisted answer, so a listener stops waiting on the right one. */
+      entryId: string;
+      failed: boolean;
+      at: string;
+    };
 
 /**
  * Ceilings, because both of these reach a prompt.
@@ -158,6 +207,7 @@ export class DelegatedQuestionRunner {
   private readonly onError: (scope: string, error: unknown) => void;
   private readonly onAnswer: (result: DelegatedResult) => void;
   private readonly temperament: () => TemperamentProfile | undefined;
+  private readonly onProgress: (progress: InvestigationProgress) => void;
 
   constructor(options: DelegatedQuestionRunnerOptions) {
     this.store = options.store;
@@ -169,12 +219,48 @@ export class DelegatedQuestionRunner {
     this.onError = options.onError ?? (() => undefined);
     this.onAnswer = options.onAnswer ?? (() => undefined);
     this.temperament = options.temperament ?? (() => undefined);
+    this.onProgress = options.onProgress ?? (() => undefined);
+  }
+
+  /** Progress reporting is a view concern and never fails the work. */
+  private report(progress: InvestigationProgress): void {
+    try {
+      this.onProgress(progress);
+    } catch (error) {
+      this.onError('onProgress', error);
+    }
+  }
+
+  private progressRecorder(scope: InvestigationScope): InvestigationRecorder {
+    return new InvestigationRecorder({
+      onCheck: (check) =>
+        this.report({ phase: 'check', scope, check, at: new Date().toISOString() }),
+    });
+  }
+
+  /**
+   * The model's own output, on the same channel as its lookups.
+   *
+   * One progress stream rather than a second transport, because these are the
+   * same event in the developer's terms — Vowe is working, and here is what it
+   * is doing now. It stays as undurable as the rest of it: what lasts is the
+   * `ConversationEntry` and its receipt, written once when the work is done.
+   */
+  private progressStream(scope: InvestigationScope): InvestigationStream {
+    return {
+      reasoning: (delta) =>
+        this.report({ phase: 'reasoning', scope, delta, at: new Date().toISOString() }),
+      answer: (delta) =>
+        this.report({ phase: 'answer', scope, delta, at: new Date().toISOString() }),
+    };
   }
 
   async answer(question: DelegatedQuestion): Promise<DelegatedResult> {
     const session = this.store.getSession(question.sessionId);
+    const scope: InvestigationScope = { sessionId: question.sessionId };
     // The refs the investigation touches, and the order it touched them in.
-    const recorder = new InvestigationRecorder();
+    const recorder = this.progressRecorder(scope);
+    this.report({ phase: 'started', scope, at: new Date().toISOString() });
 
     const temperament = this.temperament();
     const attachments = await this.openAttachments(question.contextRefs, recorder);
@@ -230,6 +316,7 @@ export class DelegatedQuestionRunner {
         input,
         this.readTools({ sessionId: question.sessionId }, recorder, run),
         run,
+        this.progressStream(scope),
       );
     } catch (error) {
       this.onError('investigate', error);
@@ -280,6 +367,14 @@ export class DelegatedQuestionRunner {
       }
     }
 
+    this.report({
+      phase: 'finished',
+      scope,
+      entryId: entry.id,
+      failed,
+      at: new Date().toISOString(),
+    });
+
     const result: DelegatedResult = {
       ...answer,
       question: question.question,
@@ -311,7 +406,9 @@ export class DelegatedQuestionRunner {
   async answerProject(question: ProjectQuestion): Promise<ProjectDelegatedResult> {
     const { projectId } = question;
     const project = this.store.getProject(projectId);
-    const recorder = new InvestigationRecorder();
+    const scope: InvestigationScope = { projectId };
+    const recorder = this.progressRecorder(scope);
+    this.report({ phase: 'started', scope, at: new Date().toISOString() });
 
     const asked: ProjectConversationEntry = {
       id: randomUUID(),
@@ -352,6 +449,7 @@ export class DelegatedQuestionRunner {
         input,
         this.readTools({ projectId }, recorder, run),
         run,
+        this.progressStream(scope),
       );
     } catch (error) {
       this.onError('investigate:project', error);
@@ -388,6 +486,14 @@ export class DelegatedQuestionRunner {
         await run.complete({ outputEntryId: entry.id });
       }
     }
+
+    this.report({
+      phase: 'finished',
+      scope,
+      entryId: entry.id,
+      failed,
+      at: new Date().toISOString(),
+    });
 
     return { ...answer, question: question.question, refs, entry, failed };
   }

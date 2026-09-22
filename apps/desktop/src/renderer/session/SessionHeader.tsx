@@ -2,9 +2,10 @@ import type { ReactElement } from 'react';
 
 import type { AgentSession, PresenceProfile, PresenceState } from '@vowe/core';
 
+import { Fading } from '../shell/Fading.js';
 import { VowePresence } from '../presence/index.js';
-import { DeskIcon } from '../shell/icons.js';
 import { providerName } from '../components/ui.js';
+import { sessionTitle } from '@vowe/core/projections';
 
 interface Props {
   session: AgentSession;
@@ -13,17 +14,24 @@ interface Props {
   observing: boolean;
   inVoice: boolean;
   voiceUnavailableReason: string | null;
-  deskCount: number;
-  deskHasNew: boolean;
-  workbenchOpen: boolean;
   clearTitlebar: boolean;
   activity: number | undefined;
   onToggleVoice: () => void;
-  onOpenWorkbench: () => void;
 }
 
 /**
- * Who is working, on what, and what Vowe is doing about it.
+ * Which session this is. Not what is happening in it.
+ *
+ * The header used to carry the interpreter's current-activity line as well —
+ * "All ten regression items fixed, awaiting live end-to-end…" — which is real
+ * and useful prose in the wrong place twice over. It is already in the
+ * conversation, as a milestone or an answer, where it is dated and can be
+ * descended into; and a permanent strip of it re-renders on every observation,
+ * so the one piece of chrome that should be still was the one thing on screen
+ * that never stopped moving.
+ *
+ * So this identifies context and nothing else: who, on what, where, and
+ * whether Vowe is watching. Current worker activity belongs to the timeline.
  *
  * The presence here is the voice entry point. Clicking it joins or ends the
  * call — voice is a state of this room, not a separate product, so there is no
@@ -36,13 +44,9 @@ export function SessionHeader({
   observing,
   inVoice,
   voiceUnavailableReason,
-  deskCount,
-  deskHasNew,
-  workbenchOpen,
   clearTitlebar,
   activity,
   onToggleVoice,
-  onOpenWorkbench,
 }: Props): ReactElement {
   const canTalk = voiceUnavailableReason === null;
 
@@ -67,33 +71,18 @@ export function SessionHeader({
       </button>
 
       <div className="identity">
-        <div className="line">
-          <h1>{session.displayLabel}</h1>
-          <span className="where">
-            {[providerName(session.provider), session.branch].filter(Boolean).join(' · ')}
-          </span>
+        <Fading as="h1">{sessionTitle(session)}</Fading>
+        <Fading className="where">
+          {[providerName(session.provider), session.branch]
+            .filter(Boolean)
+            .join(' · ')}
+          {' · '}
           <span className="state">
             <span className={`dot ${session.status}`} aria-hidden />
             {inVoice ? 'In voice' : observing ? 'Observing' : 'Not observing'}
           </span>
-        </div>
-        <span className="worker">
-          {session.semanticState?.currentActivity ?? 'No interpretation yet.'}
-        </span>
+        </Fading>
       </div>
-
-      {!workbenchOpen && deskCount > 0 && (
-        <button
-          className="desk-button"
-          type="button"
-          aria-label={`Open workbench · ${deskCount} on the desk`}
-          onClick={onOpenWorkbench}
-        >
-          <DeskIcon />
-          <span className="count">{deskCount}</span>
-          {deskHasNew && <span className="new" aria-hidden />}
-        </button>
-      )}
     </header>
   );
 }
