@@ -32,12 +32,9 @@ import { VoweMark } from './VoweMark.js';
 export function ReturnCheckpoint({
   checkpoint,
   presence,
-  workbenchOpen,
 }: {
   checkpoint: Checkpoint;
   presence: PresenceProfile;
-  /** The conversation is on its narrower measure; the ribbon follows it. */
-  workbenchOpen: boolean;
 }): ReactElement | null {
   const [dismissed, setDismissed] = useState(false);
   const [open, setOpen] = useState(false);
@@ -49,7 +46,7 @@ export function ReturnCheckpoint({
   const accent = resolvePresenceVisuals('idle', presence, 'project').colorA;
 
   return (
-    <div className={`ribbon-lane${workbenchOpen ? ' with-workbench' : ''}`}>
+    <div className="ribbon-lane">
       <section
         className={`ribbon${needsDecision ? ' needs-decision' : ''}${open ? ' open' : ''}`}
         style={{ '--ribbon-accent': accent } as CSSProperties}

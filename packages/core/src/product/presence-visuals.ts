@@ -62,6 +62,19 @@ export interface PresenceVisuals {
   /** Overall scale of the point sprites for this size. */
   scale: number;
   /**
+   * Whether these numbers are for a light page.
+   *
+   * Not a material and not a second palette: the developer's material, accent
+   * and motion are exactly what they chose in either appearance. What changes
+   * is the *illumination* — on a dark page the presence adds its light to the
+   * surface it sits on, and on a light one it cannot, because nothing is
+   * brighter than paper. So the renderer composites it normally instead and
+   * the same object reads as a lit body seen against the page rather than as
+   * a glow. The two contrast inputs below are resolved from this here, so the
+   * shader is told numbers and never asked which theme it is in.
+   */
+  onLight: boolean;
+  /**
    * Frames per second the renderer should not exceed.
    *
    * A signature in the corner of a window that is open all day does not need
@@ -75,7 +88,7 @@ export interface PresenceVisuals {
 /** The parameters that carry state. Colour is deliberately not among them. */
 export type PresencePosture = Omit<
   PresenceVisuals,
-  'colorA' | 'colorB' | 'opacity' | 'gain' | 'irid' | 'density' | 'scale' | 'maxFps'
+  'colorA' | 'colorB' | 'opacity' | 'gain' | 'irid' | 'density' | 'scale' | 'maxFps' | 'onLight'
 >;
 
 interface StatePreset {
@@ -210,6 +223,13 @@ const SIZES: Record<PresenceSize, SizePreset> = {
 
 export interface PresenceVisualOptions {
   /**
+   * The presence is being drawn on a light surface.
+   *
+   * The appearance of the *application*, not of Vowe. Absent means dark,
+   * which is what every caller meant before there was a light one.
+   */
+  onLight?: boolean | undefined;
+  /**
    * Real, normalized activity, if the application has any.
    *
    * Speech energy during a call, and the rhythm of actual execution events
@@ -220,6 +240,16 @@ export interface PresenceVisualOptions {
   /** The developer asked the system for less movement. */
   reducedMotion?: boolean | undefined;
 }
+
+/**
+ * What a light page does to the two contrast inputs.
+ *
+ * Deliberately small. Enough that a chrome sphere reads as chrome on paper
+ * rather than as a pale smudge, and not so much that it becomes a different,
+ * darker material than the one the developer picked.
+ */
+const ON_LIGHT_OPACITY = 1.08;
+const ON_LIGHT_GAIN = 0.72;
 
 /** Reduced motion is also less work: half the frames, none of the meaning. */
 const REDUCED_FPS = 30;
@@ -249,6 +279,7 @@ export function resolvePresenceVisuals(
   const dimensions = SIZES[size] ?? SIZES.project;
   const reduced = options.reducedMotion === true;
   const light = lightGain(profile.lightResponse);
+  const onLight = options.onLight === true;
 
   return {
     amp: preset.amp * FORM.ampK,
@@ -259,12 +290,24 @@ export function resolvePresenceVisuals(
     size: preset.size * FORM.sizeK,
     bright: preset.bright * light,
     rim: preset.rim * light,
-    halo: preset.halo * dimensions.halo,
+    /*
+     * No ring on paper. The halo is light added around the object, which a
+     * light page cannot show — it would cost a pass to draw nothing, and the
+     * one thing it could do, wash the area pale, is the glow the light
+     * appearance is meant not to have.
+     */
+    halo: onLight ? 0 : preset.halo * dimensions.halo,
     pulse: preset.pulse * (reduced ? REDUCED_PULSE : 1),
     warm: preset.warm,
     lineBias: FORM.lineBias,
-    opacity: material.opacity,
-    gain: material.gain,
+    /*
+     * Composited rather than added, the cloud needs to be read against a
+     * bright surface instead of on top of a dark one: a little more ink per
+     * point, and the material's gain pulled below one so its lit side stays a
+     * tone rather than blowing out to the colour of the page.
+     */
+    opacity: onLight ? Math.min(1, material.opacity * ON_LIGHT_OPACITY) : material.opacity,
+    gain: onLight ? material.gain * ON_LIGHT_GAIN : material.gain,
     irid: material.irid,
     colorA: normalizeAccent(profile.accent) ?? material.colorA,
     colorB: normalizeAccent(profile.bodyAccent) ?? material.colorB,
@@ -272,6 +315,7 @@ export function resolvePresenceVisuals(
     density: dimensions.density,
     scale: dimensions.scale,
     maxFps: reduced ? Math.min(REDUCED_FPS, dimensions.maxFps) : dimensions.maxFps,
+    onLight,
   };
 }
 

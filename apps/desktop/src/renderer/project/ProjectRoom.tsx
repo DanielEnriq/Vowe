@@ -10,6 +10,7 @@ import type {
 } from '@vowe/core';
 
 import { Fading } from '../shell/Fading.js';
+import { RoomIdentity } from '../shell/TopChrome.js';
 import { VowePresence } from '../presence/index.js';
 import { CheckIcon } from '../shell/icons.js';
 import { formatAgo, tildePath } from '../components/ui.js';
@@ -21,7 +22,6 @@ interface Props {
   brief: ProjectBrief | null;
   presence: PresenceProfile;
   presenceState: PresenceState;
-  sidebarOpen: boolean;
   onOpenSession: (sessionId: string) => void;
 }
 
@@ -46,7 +46,6 @@ export function ProjectRoom({
   brief,
   presence,
   presenceState,
-  sidebarOpen,
   onOpenSession,
 }: Props): ReactElement {
   const memories = useProjectMemories(project.id);
@@ -54,8 +53,14 @@ export function ProjectRoom({
 
   return (
     <main className="pane">
-      <header className={`pane-header${sidebarOpen ? '' : ' clear-titlebar'}`}>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {/*
+        The room's first row, at the room's own inset — so `Vowe` begins where
+        the hero beneath it begins, and the two are pushed and pulled together
+        when the projects panel moves. No line under it: the Project Room has
+        never had one.
+      */}
+      <RoomIdentity>
+        <div className="stack">
           <Fading as="h1">{project.name}</Fading>
           {/*
             The whole line fades, not the path inside it. Fading one inline
@@ -68,7 +73,7 @@ export function ProjectRoom({
             <span className="path">{tildePath(project.repoRoot)}</span>
           </Fading>
         </div>
-      </header>
+      </RoomIdentity>
 
       <div className="scroll room">
         <div className="room-inner">

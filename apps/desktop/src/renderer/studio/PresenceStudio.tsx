@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactElement } from 'react';
 
 import type {
+  Appearance,
+  AppearanceSetting,
   LiveVoice,
   PresenceProfile,
   PresenceState,
@@ -8,15 +10,19 @@ import type {
   VoicePreference,
 } from '@vowe/core';
 import { NEUTRAL_LIGHT_RESPONSE, PRESENCE_MATERIALS, PRESENCE_MOTIONS, PRESENCE_STATES } from '@vowe/core/presence';
+import { APPEARANCES } from '@vowe/core/projections';
 
+import { Fading } from '../shell/Fading.js';
+import { RoomIdentity } from '../shell/TopChrome.js';
 import { VowePresence } from '../presence/index.js';
 
 interface Props {
   profile: PresenceProfile;
+  appearance: AppearanceSetting;
   temperament: TemperamentProfile;
   voice: VoicePreference;
   voiceUnavailableReason: string | null;
-  sidebarOpen: boolean;
+  onAppearanceChange: (next: AppearanceSetting) => void;
   onProfileChange: (next: PresenceProfile) => void;
   onTemperamentChange: (next: TemperamentProfile) => void;
   onVoiceChange: (next: VoicePreference) => void;
@@ -34,10 +40,11 @@ interface Props {
  */
 export function PresenceStudio({
   profile,
+  appearance,
   temperament,
   voice,
   voiceUnavailableReason,
-  sidebarOpen,
+  onAppearanceChange,
   onProfileChange,
   onTemperamentChange,
   onVoiceChange,
@@ -47,14 +54,18 @@ export function PresenceStudio({
 
   return (
     <main className="studio">
-      <div className={`studio-stage${sidebarOpen ? '' : ' clear-titlebar'}`}>
-        <div className="identity">
-          <h1 style={{ margin: 0, fontSize: 19, fontWeight: 600, letterSpacing: '-0.018em' }}>
-            Your Vowe
-          </h1>
-          <span className="summary">
+      {/* This room's first row, at the room's own inset, like every other. */}
+      <RoomIdentity>
+        <div className="stack">
+          <Fading as="h1">Your Vowe</Fading>
+          <Fading className="meta">
             {[profile.material, profile.motion].map(capitalize).join(' · ')}
-          </span>
+          </Fading>
+        </div>
+      </RoomIdentity>
+
+      <div className="studio-stage">
+        <div className="identity">
           <span className="what">
             Appearance, voice and behaviour are set separately. Changing the material never
             changes how much Vowe interrupts you.
@@ -87,8 +98,43 @@ export function PresenceStudio({
       </div>
 
       <aside className="studio-panel">
+        {/*
+          The window's appearance, above Vowe's own.
+
+          Two different things that the word "appearance" covers, so they are
+          two headings rather than one section with a rule in it. This one is
+          the application; everything below it is the presence, which is the
+          developer's and does not change when the window does.
+
+          `System` is a standing instruction rather than a resolved value: the
+          preference is stored, macOS resolves it, and the window follows for
+          as long as it is chosen — including the switch at dusk.
+        */}
         <div className="panel-heading">
-          <span className="title">Appearance</span>
+          <span className="title">Window</span>
+          <span className="what">Dark, light, or whatever the Mac is</span>
+        </div>
+
+        <section className="studio-section">
+          <div className="segmented">
+            {APPEARANCES.map((theme) => (
+              <button
+                className={appearance.theme === theme ? 'on' : undefined}
+                type="button"
+                key={theme}
+                aria-pressed={appearance.theme === theme}
+                onClick={() => onAppearanceChange({ theme })}
+              >
+                {APPEARANCE_LABELS[theme]}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <div className="rule" />
+
+        <div className="panel-heading">
+          <span className="title">Presence</span>
           <span className="what">Material, colour and motion</span>
         </div>
 
@@ -311,6 +357,13 @@ function useVoices(): LiveVoice[] {
 }
 
 /** Swatches mirror the material presets, so the picker shows what it selects. */
+/** Said the way the developer would say it, not the way it is stored. */
+const APPEARANCE_LABELS: Record<Appearance, string> = {
+  system: 'System',
+  dark: 'Dark',
+  light: 'Light',
+};
+
 const SWATCHES: Record<string, string> = {
   chrome: 'linear-gradient(145deg,#ffffff,#8b939c 55%,#464b52)',
   silver: 'linear-gradient(145deg,#f3f7ff,#7b8794 60%,#2f3640)',

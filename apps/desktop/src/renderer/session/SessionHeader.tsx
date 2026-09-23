@@ -3,6 +3,7 @@ import type { ReactElement } from 'react';
 import type { AgentSession, PresenceProfile, PresenceState } from '@vowe/core';
 
 import { Fading } from '../shell/Fading.js';
+import { RoomIdentity } from '../shell/TopChrome.js';
 import { VowePresence } from '../presence/index.js';
 import { providerName } from '../components/ui.js';
 import { sessionTitle } from '@vowe/core/projections';
@@ -14,7 +15,6 @@ interface Props {
   observing: boolean;
   inVoice: boolean;
   voiceUnavailableReason: string | null;
-  clearTitlebar: boolean;
   activity: number | undefined;
   onToggleVoice: () => void;
 }
@@ -36,6 +36,12 @@ interface Props {
  * The presence here is the voice entry point. Clicking it joins or ends the
  * call — voice is a state of this room, not a separate product, so there is no
  * modal and nothing to dismiss.
+ *
+ * Drawn at the top of the room, on the row the application band occupies. It
+ * belongs to the room and not to the window: it starts at the room's left
+ * edge plus the room's inset, the same inset the conversation below it uses,
+ * so opening the projects panel moves the session's name and the session's
+ * conversation together. Nothing here knows what is open. See `RoomIdentity`.
  */
 export function SessionHeader({
   session,
@@ -44,14 +50,13 @@ export function SessionHeader({
   observing,
   inVoice,
   voiceUnavailableReason,
-  clearTitlebar,
   activity,
   onToggleVoice,
 }: Props): ReactElement {
   const canTalk = voiceUnavailableReason === null;
 
   return (
-    <header className={`session-header${clearTitlebar ? ' clear-titlebar' : ''}`}>
+    <RoomIdentity>
       <button
         className="talk"
         type="button"
@@ -70,9 +75,9 @@ export function SessionHeader({
         {inVoice && <span className="hint">End</span>}
       </button>
 
-      <div className="identity">
+      <div className="stack">
         <Fading as="h1">{sessionTitle(session)}</Fading>
-        <Fading className="where">
+        <Fading className="meta">
           {[providerName(session.provider), session.branch]
             .filter(Boolean)
             .join(' · ')}
@@ -83,6 +88,6 @@ export function SessionHeader({
           </span>
         </Fading>
       </div>
-    </header>
+    </RoomIdentity>
   );
 }

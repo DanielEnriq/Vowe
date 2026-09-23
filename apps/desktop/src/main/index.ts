@@ -26,6 +26,7 @@ import {
   ConservativeMemoryAdmission,
   describeObservedState,
   investigationChronology,
+  AppearanceStore,
   PresenceProfileStore,
   ProjectBriefService,
   ProjectKnowledgeService,
@@ -51,6 +52,15 @@ import { AnthropicLlmClient, AnthropicTitleModel } from '@vowe/llm';
 import { JevDecisionRouter } from '@vowe/decision-jev';
 import { OpenAiLiveTransport } from '@vowe/live-openai';
 
+import { WINDOW_BACKGROUND } from '../shared/appearance.js';
+import {
+  TRAFFIC_LIGHT_X,
+  TRAFFIC_LIGHT_Y,
+  WINDOW_HEIGHT,
+  WINDOW_MIN_HEIGHT,
+  WINDOW_MIN_WIDTH,
+  WINDOW_WIDTH,
+} from '../shared/layout.js';
 import {
   IPC,
   type AppStatus,
@@ -64,6 +74,7 @@ import type {
   InvestigationReceipt,
   InvestigationStep,
   PlaybackReport,
+  AppearanceSetting,
   PresenceProfile,
   UserProfile,
   VoweRun,
@@ -145,6 +156,46 @@ let window: BrowserWindow | null = null;
  * It gets a store and a navigator. It never sees the registry or an adapter, so
  * a question asked of Vowe has no path to the coding agent even by accident.
  */
+/** Everything Vowe keeps on disk, under one directory. */
+function storeRoot(): string {
+  return path.join(app.getPath('userData'), 'vowe');
+}
+
+/**
+ * The appearance, read before anything else and applied to the window itself.
+ *
+ * Deliberately outside `Services`. Everything in there is wired after the
+ * window is created, because the window should paint while discovery runs —
+ * but the appearance has to be decided *before* the first frame or the choice
+ * arrives as a flash. It is one small file and no dependencies, so it is read
+ * on its own.
+ */
+let appearanceStore: AppearanceStore | null = null;
+function appearance(): AppearanceStore {
+  appearanceStore ??= new AppearanceStore({
+    root: storeRoot(),
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+  });
+  return appearanceStore;
+}
+
+/**
+ * Hand the setting to Electron, which is what resolves `system`.
+ *
+ * `themeSource` is the one place the preference exists at runtime: Chromium
+ * answers `prefers-color-scheme` from it, so the stylesheet and the presence
+ * both follow without anything being pushed to the renderer. Left on
+ * `system`, macOS switching itself at dusk reaches the window on its own.
+ */
+function applyAppearance(setting: AppearanceSetting): void {
+  nativeTheme.themeSource = setting.theme;
+  window?.setBackgroundColor(windowBackground());
+}
+
+function windowBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? WINDOW_BACKGROUND.dark : WINDOW_BACKGROUND.light;
+}
+
 async function createServices(): Promise<Services> {
   if (envFile) console.log(`[vowe] loaded configuration from ${envFile}`);
   const storeRoot = path.join(app.getPath('userData'), 'vowe');
@@ -626,6 +677,17 @@ function registerIpc(): void {
   ipcMain.handle(IPC.setPresenceProfile, async (_event, next: PresenceProfile) =>
     (await requireServices()).presence.set(next),
   );
+  /*
+   * Not behind `requireServices`: the appearance is readable and settable
+   * before the database is open, which is the point of it being its own file.
+   */
+  ipcMain.handle(IPC.getAppearance, () => appearance().get());
+  ipcMain.handle(IPC.setAppearance, async (_event, next: AppearanceSetting) => {
+    const stored = await appearance().set(next);
+    applyAppearance(stored);
+    return stored;
+  });
+
   ipcMain.handle(IPC.getRunActivity, async () => (await requireServices()).runs.activity);
 
   // Written through the store, then applied to the cached copy the synchronous
@@ -864,16 +926,34 @@ function registerIpc(): void {
 
 function createWindow(): void {
   window = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 900,
-    minHeight: 560,
+    /*
+     * The default width is load-bearing, not a preference.
+     *
+     * It is the width at which the reading measure fits between both panels
+     * with its gutters — the arithmetic in `shared/layout.ts` — which is what
+     * makes opening a panel move the conversation across rather than re-wrap
+     * it. The floor is the same promise with the projects panel alone, since
+     * that is the one usually out.
+     */
+    width: WINDOW_WIDTH,
+    height: WINDOW_HEIGHT,
+    minWidth: WINDOW_MIN_WIDTH,
+    minHeight: WINDOW_MIN_HEIGHT,
     title: 'Vowe',
-    // Matches --win in the renderer so there is no flash before first paint.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e20' : '#ffffff',
-    // The sidebar runs to the top edge; the traffic lights sit in its first 52px.
+    // The room's own surface, so the frame before the stylesheet arrives is
+    // the colour the room is about to be rather than a lighter grey.
+    backgroundColor: windowBackground(),
+    /*
+     * The window's own controls, centred in the application band.
+     *
+     * Both numbers come from `shared/layout.ts`, which is also where the
+     * renderer's `--chrome-height` and `--traffic-lights` come from: `y`
+     * centres the buttons in the band, and the band leaves `x` plus their
+     * width alone on its left. Two copies of either is how the chrome and the
+     * real controls drift apart.
+     */
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 18, y: 18 },
+    trafficLightPosition: { x: TRAFFIC_LIGHT_X, y: TRAFFIC_LIGHT_Y },
     webPreferences: {
       preload: path.join(dirname, '../preload/index.mjs'),
       sandbox: false,
@@ -915,7 +995,7 @@ function createPresencePreviewWindow(): void {
     width: 1180,
     height: 900,
     title: 'Vowe Presence — preview',
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e20' : '#ffffff',
+    backgroundColor: windowBackground(),
   });
 
   const devServer = process.env.ELECTRON_RENDERER_URL;
@@ -925,6 +1005,16 @@ function createPresencePreviewWindow(): void {
 
 app.whenReady().then(async () => {
   registerIpc();
+  /*
+   * Before the window exists, and awaited.
+   *
+   * After the window is created there is no appearance to *apply* any more,
+   * only one to change — and a change the developer can see is the startup
+   * flash this ordering exists to prevent. One small JSON read is the whole
+   * cost, and the frame it delays is a frame that would have been the wrong
+   * colour.
+   */
+  applyAppearance(await appearance().get());
   createWindow();
   if (process.env.VOWE_PRESENCE_PREVIEW === '1') createPresencePreviewWindow();
   servicesReady = createServices();

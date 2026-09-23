@@ -13,8 +13,10 @@ import { DEFAULT_USER_PROFILE } from '@vowe/core/projections';
 
 import { NewSessionSheet } from './components/NewSessionSheet.js';
 import { PanelToggle } from './shell/PanelToggle.js';
+import { TopChrome } from './shell/TopChrome.js';
 import {
   useAppStatus,
+  useAppearance,
   usePresenceProfile,
   useProjectBrief,
   useTemperament,
@@ -35,11 +37,42 @@ import {
 } from './state/disclosure.js';
 import { projectOf, reconcileRoute, type Route } from './state/navigation.js';
 
-/** Below this, the pane cannot hold a reading measure beside the workbench. */
-const NARROW_PANE = 790;
-const SIDEBAR_MIN = 208;
-const SIDEBAR_MAX = 420;
-const SIDEBAR_CLOSE_AT = 150;
+import {
+  CHROME_HEIGHT,
+  MEASURE_CSS,
+  NARROW_PANE,
+  PANEL_LEFT,
+  PANEL_LEFT_CLOSE_AT,
+  PANEL_LEFT_MAX,
+  PANEL_LEFT_MIN,
+  PANEL_RIGHT,
+  ROOM_GUTTER,
+  TRAFFIC_LIGHTS,
+} from '../shared/layout.js';
+
+/**
+ * The widths, handed to the stylesheet.
+ *
+ * Set here rather than declared in `styles.css` so there is one copy of each
+ * number. They satisfy an arithmetic relationship — the measure is exactly the
+ * room both panels leave — and two copies of a number in that relationship is
+ * how the relationship quietly stops holding.
+ *
+ * `--measure` is an expression rather than a length, and it is written in
+ * terms of `100vw`. That is what keeps it independent of what is open: a
+ * percentage would resolve against the column it lands in, which is the thing
+ * a panel changes.
+ */
+const WIDTHS = {
+  // The band, and the space macOS holds inside it. The main process positions
+  // the real buttons from the same two numbers.
+  '--chrome-height': `${CHROME_HEIGHT}px`,
+  '--traffic-lights': `${TRAFFIC_LIGHTS}px`,
+  '--measure': MEASURE_CSS,
+  '--room-gutter': `${ROOM_GUTTER}px`,
+  '--panel-left': `${PANEL_LEFT}px`,
+  '--panel-right': `${PANEL_RIGHT}px`,
+} as CSSProperties;
 
 /**
  * The window: one sidebar and one room.
@@ -52,6 +85,7 @@ export function AppShell(): ReactElement {
   const { projects, sessions } = useWorkspace();
   const status = useAppStatus();
   const [presence, savePresence] = usePresenceProfile();
+  const [appearance, saveAppearance] = useAppearance();
   const [temperament, saveTemperament] = useTemperament();
   const [voice, saveVoice] = useVoicePreference();
   const [route, setRoute] = useState<Route>({ kind: 'none' });
@@ -126,43 +160,44 @@ export function AppShell(): ReactElement {
   const brief = useProjectBrief(project?.id ?? null);
 
   return (
-    <div className={`app${fullscreen ? ' fullscreen' : ''}`}>
-      {/* Only the drag strip lives up here; the toggles below own the panels. */}
-      <div className="titlebar" aria-hidden />
+    <div
+      className={`app${fullscreen ? ' fullscreen' : ''}${resizing ? ' resizing' : ''}`}
+      style={
+        {
+          ...WIDTHS,
+          '--left-column': `${sidebarOpen ? sidebarWidth : 0}px`,
+          // What the panel measures whether or not it is showing, so its
+          // contents do not reflow to nothing on the way out.
+          '--panel-width': `${sidebarWidth}px`,
+        } as CSSProperties
+      }
+    >
       {/*
-        Overlay chrome, in both states.
-
-        Fixed to the window rather than laid out by the shell, which is what
-        lets the column beneath it collapse to nothing without the control
-        moving a pixel. See `PanelToggle`.
+        One band across the top of the window: the space macOS wants and the
+        two panel toggles, and nothing else. The three surfaces below run to
+        the roof underneath it, and the open room states its own identity on
+        this row inside its own column — see `TopChrome`.
       */}
-      <PanelToggle
-        side="left"
-        open={sidebarOpen}
-        label={sidebarOpen ? 'Hide projects panel' : 'Show projects panel'}
-        onToggle={toggleSidebar}
-      />
-
+      <TopChrome
+        controls={
+          <PanelToggle
+            side="left"
+            open={sidebarOpen}
+            label={sidebarOpen ? 'Hide projects panel' : 'Show projects panel'}
+            onToggle={toggleSidebar}
+          />
+        }
+      >
       {/*
-        The shell's columns, stated once.
+        The shell's columns, stated once — on `.app` itself, so the panel can
+        span the chrome row as well as the body one.
 
         A closed panel is a zero-width column and not a laid-out box slid out
         of view: `--left-column` is the panel's width or `0px`, and the centre
         is `minmax(0, 1fr)`, so the room genuinely grows into whatever the
-        panel gives back. Nothing else in this row reserves width — the toggle
-        is fixed and the resize handle is absolute.
+        panel gives back. Nothing here reserves width — the toggles are on the
+        band and the resize handle is absolute.
       */}
-      <div
-        className={`body${resizing ? ' resizing' : ''}`}
-        style={
-          {
-            '--left-column': `${sidebarOpen ? sidebarWidth : 0}px`,
-            // What the panel measures whether or not it is showing, so its
-            // contents do not reflow to nothing on the way out.
-            '--panel-width': `${sidebarWidth}px`,
-          } as CSSProperties
-        }
-      >
         <aside
           className={`sidebar${sidebarOpen ? '' : ' closed'}`}
           aria-hidden={!sidebarOpen}
@@ -213,7 +248,6 @@ export function AppShell(): ReactElement {
                 ? (status.voiceUnavailableReason ?? 'Voice is unavailable.')
                 : null
             }
-            sidebarOpen={sidebarOpen || fullscreen}
             narrow={paneWidth < NARROW_PANE}
           />
         ) : project ? (
@@ -223,12 +257,12 @@ export function AppShell(): ReactElement {
             brief={brief}
             presence={presence}
             presenceState={presenceState}
-            sidebarOpen={sidebarOpen || fullscreen}
             onOpenSession={(sessionId) => setRoute({ kind: 'session', sessionId })}
           />
         ) : live.kind === 'studio' ? (
           <PresenceStudio
             profile={presence}
+            appearance={appearance}
             temperament={temperament}
             voice={voice}
             voiceUnavailableReason={
@@ -236,7 +270,7 @@ export function AppShell(): ReactElement {
                 ? (status.voiceUnavailableReason ?? 'Voice is unavailable.')
                 : null
             }
-            sidebarOpen={sidebarOpen || fullscreen}
+            onAppearanceChange={(next) => void saveAppearance(next)}
             onProfileChange={(next) => void savePresence(next)}
             onTemperamentChange={(next) => void saveTemperament(next)}
             onVoiceChange={(next) => void saveVoice(next)}
@@ -248,7 +282,7 @@ export function AppShell(): ReactElement {
             onNewTask={() => setSheetOpen(true)}
           />
         )}
-      </div>
+      </TopChrome>
 
       {sheetOpen && (
         <NewSessionSheet
@@ -277,7 +311,6 @@ function Nowhere({
 }): ReactElement {
   return (
     <main className="pane">
-      <header className="pane-header clear-titlebar" />
       <div className="scroll room">
         <div className="room-inner">
           <div className="empty-block" style={{ paddingTop: 48 }}>
@@ -353,7 +386,7 @@ function useFullscreen(): boolean {
  */
 function useSidebar() {
   const [open, setOpen] = useState(true);
-  const [width, setWidth] = useState(252);
+  const [width, setWidth] = useState(PANEL_LEFT);
   const [resizing, setResizing] = useState(false);
   const frame = useRef<number | null>(null);
 
@@ -369,13 +402,13 @@ function useSidebar() {
         const x = moved.clientX;
         // Dragged to the left edge, the panel closes rather than shrinking to
         // something too narrow to read.
-        if (x < SIDEBAR_CLOSE_AT) {
+        if (x < PANEL_LEFT_CLOSE_AT) {
           stop();
           setOpen(false);
-          setWidth(SIDEBAR_MIN);
+          setWidth(PANEL_LEFT_MIN);
           return;
         }
-        setWidth(Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, x)));
+        setWidth(Math.max(PANEL_LEFT_MIN, Math.min(PANEL_LEFT_MAX, x)));
       });
     };
 

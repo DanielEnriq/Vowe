@@ -13,6 +13,8 @@ export * from './return-checkpoint.js';
 export * from './attention-cursor-store.js';
 export * from './temperament.js';
 export * from './temperament-store.js';
+export * from './appearance.js';
+export * from './appearance-store.js';
 export * from './voice-preference.js';
 export * from './voice-preference-store.js';
 export * from './local-settings.js';

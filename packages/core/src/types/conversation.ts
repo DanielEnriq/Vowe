@@ -115,6 +115,13 @@ export interface InvestigationCheck {
    * wording should not rewrite what Vowe said it did last month.
    */
   label: string;
+  /**
+   * A muted second line saying what that specific lookup found — a count, not
+   * a summary. Only a search writes one: an open or a diff already names one
+   * concrete thing, and a paraphrase of *its* content would be a claim this
+   * receipt has no basis for making.
+   */
+  detail?: string;
   /** What that one lookup turned up. Empty when it found nothing. */
   refs: ContextRef[];
 }

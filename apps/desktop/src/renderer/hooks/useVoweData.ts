@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   AgentSession,
+  AppearanceSetting,
   InvestigationProgress,
   ConversationDelivery,
   ConversationEntry,
@@ -18,7 +19,11 @@ import type {
   WorkerMilestone,
 } from '@vowe/core';
 import { DEFAULT_PRESENCE_PROFILE } from '@vowe/core/presence';
-import { DEFAULT_TEMPERAMENT, workerMilestones } from '@vowe/core/projections';
+import {
+  DEFAULT_APPEARANCE_SETTING,
+  DEFAULT_TEMPERAMENT,
+  workerMilestones,
+} from '@vowe/core/projections';
 
 import type { AppStatus } from '../../shared/ipc.js';
 import {
@@ -293,6 +298,32 @@ export function useTemperament(): [
   }, []);
 
   return [temperament, save];
+}
+
+/**
+ * Dark, light, or the machine's.
+ *
+ * Only the *preference* lives here. What the window is actually showing comes
+ * from `prefers-color-scheme` — see `shell/theme.ts` — because with `system`
+ * chosen the answer changes without anyone asking for it.
+ */
+export function useAppearance(): [
+  AppearanceSetting,
+  (next: AppearanceSetting) => Promise<void>,
+] {
+  const [setting, setSetting] = useState<AppearanceSetting>(DEFAULT_APPEARANCE_SETTING);
+
+  useEffect(() => {
+    void window.vowe.getAppearance().then(setSetting).catch(() => undefined);
+  }, []);
+
+  const save = useCallback(async (next: AppearanceSetting) => {
+    setSetting(next);
+    const stored = await window.vowe.setAppearance(next);
+    setSetting(stored);
+  }, []);
+
+  return [setting, save];
 }
 
 export function useVoicePreference(): [

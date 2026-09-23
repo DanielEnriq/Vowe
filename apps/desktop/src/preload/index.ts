@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import type {
+  AppearanceSetting,
   ContextRef,
   InvestigationProgress,
   LiveTranscriptDelta,
@@ -54,6 +55,9 @@ const api: VoweApi = {
   getPresenceProfile: () => ipcRenderer.invoke(IPC.getPresenceProfile),
   setPresenceProfile: (profile: PresenceProfile) =>
     ipcRenderer.invoke(IPC.setPresenceProfile, profile),
+  getAppearance: () => ipcRenderer.invoke(IPC.getAppearance),
+  setAppearance: (setting: AppearanceSetting) =>
+    ipcRenderer.invoke(IPC.setAppearance, setting),
   getTemperament: () => ipcRenderer.invoke(IPC.getTemperament),
   setTemperament: (profile: TemperamentProfile) =>
     ipcRenderer.invoke(IPC.setTemperament, profile),

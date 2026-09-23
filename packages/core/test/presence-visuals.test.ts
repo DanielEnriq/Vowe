@@ -18,19 +18,53 @@ const PROFILE: PresenceProfile = DEFAULT_PRESENCE_PROFILE;
 
 describe('Presence appearance — every state is drawable', () => {
   it('resolves finite, sane parameters for every state at every size', () => {
-    for (const state of PRESENCE_STATES) {
-      for (const size of PRESENCE_SIZES) {
-        const visuals = resolvePresenceVisuals(state, PROFILE, size);
-        for (const [key, value] of Object.entries(visuals)) {
-          if (typeof value === 'number') {
-            expect(Number.isFinite(value), `${state}/${size}/${key}`).toBe(true);
-            expect(value, `${state}/${size}/${key}`).toBeGreaterThanOrEqual(0);
-          } else {
-            expect(value, `${state}/${size}/${key}`).toMatch(/^#[0-9a-f]{6}$/);
+    // Both illuminations: a presence that is undrawable on paper is as broken
+    // as one that is undrawable in the dark.
+    for (const onLight of [false, true]) {
+      for (const state of PRESENCE_STATES) {
+        for (const size of PRESENCE_SIZES) {
+          const visuals = resolvePresenceVisuals(state, PROFILE, size, { onLight });
+          for (const [key, value] of Object.entries(visuals)) {
+            const where = `${onLight ? 'light' : 'dark'}/${state}/${size}/${key}`;
+            if (typeof value === 'number') {
+              expect(Number.isFinite(value), where).toBe(true);
+              expect(value, where).toBeGreaterThanOrEqual(0);
+            } else if (typeof value === 'boolean') {
+              expect(value, where).toBe(onLight);
+            } else {
+              expect(value, where).toMatch(/^#[0-9a-f]{6}$/);
+            }
           }
+          expect(visuals.opacity).toBeLessThanOrEqual(1);
         }
-        expect(visuals.opacity).toBeLessThanOrEqual(1);
       }
+    }
+  });
+
+  /**
+   * The light appearance changes the light, not the developer's choices.
+   *
+   * The failure this guards against is the easy one: reaching for a darker
+   * material or a different accent when the page turns white, which would
+   * silently overrule what someone picked in the studio. What may differ is
+   * how the cloud is composited and how hard it is lit — and the ring, which
+   * is added light and so has nothing to add to paper.
+   */
+  it('keeps the material on a light page, and changes only the light', () => {
+    for (const state of PRESENCE_STATES) {
+      const dark = resolvePresenceVisuals(state, PROFILE, 'project');
+      const light = resolvePresenceVisuals(state, PROFILE, 'project', { onLight: true });
+
+      expect(light.colorA).toBe(dark.colorA);
+      expect(light.colorB).toBe(dark.colorB);
+      expect(light.irid).toBe(dark.irid);
+      expect(presencePosture({ ...light, halo: dark.halo })).toEqual(presencePosture(dark));
+
+      expect(light.onLight).toBe(true);
+      expect(light.halo).toBe(0);
+      expect(light.gain).toBeLessThan(dark.gain);
+      expect(light.opacity).toBeGreaterThanOrEqual(dark.opacity);
+      expect(light.opacity).toBeLessThanOrEqual(1);
     }
   });
 

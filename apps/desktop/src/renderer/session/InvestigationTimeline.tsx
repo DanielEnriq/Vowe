@@ -40,7 +40,6 @@ import { CheckKindIcon } from './CheckKindIcon.js';
 export function InvestigationTimeline({
   rows,
   followTail = false,
-  pending,
   onOpenRef,
 }: {
   rows: readonly TimelineRow[];
@@ -50,8 +49,6 @@ export function InvestigationTimeline({
    * beginning, because it is read rather than watched.
    */
   followTail?: boolean;
-  /** A last row that is not a step yet — `Thinking · 3s` with nothing exposed. */
-  pending?: ReactNode;
   /**
    * Where a lookup opens, in rooms that have somewhere to open it.
    *
@@ -66,7 +63,7 @@ export function InvestigationTimeline({
    */
   onOpenRef?: (ref: ContextRef) => void;
 }): ReactElement | null {
-  if (rows.length === 0 && !pending) return null;
+  if (rows.length === 0) return null;
 
   return (
     <TraceViewport rowCount={rows.length} followTail={followTail}>
@@ -81,7 +78,6 @@ export function InvestigationTimeline({
           <Thought key={row.id} row={row} />
         ),
       )}
-      {pending}
     </TraceViewport>
   );
 }
@@ -278,26 +274,33 @@ function Check({
   onOpenRef?: (ref: ContextRef) => void;
 }): ReactElement {
   const ref = row.check.refs[0];
+  const detail = row.check.detail;
 
   if (!ref || !onOpenRef) {
     return (
-      <span className="exec-step check">
-        <CheckKindIcon kind={row.check.kind} />
-        <Fading className="target-label">{row.check.label}</Fading>
-      </span>
+      <div className="exec-step check">
+        <span className="check-row">
+          <CheckKindIcon kind={row.check.kind} />
+          <Fading className="target-label">{row.check.label}</Fading>
+        </span>
+        {detail && <span className="check-detail">{detail}</span>}
+      </div>
     );
   }
 
   return (
-    <button
-      className="exec-step check"
-      type="button"
-      title="Open this on the desk"
-      onClick={() => onOpenRef(ref)}
-    >
-      <CheckKindIcon kind={row.check.kind} />
-      <Fading className="target-label">{row.check.label}</Fading>
-    </button>
+    <div className="exec-step check">
+      <button
+        className="check-row"
+        type="button"
+        title="Open this on the desk"
+        onClick={() => onOpenRef(ref)}
+      >
+        <CheckKindIcon kind={row.check.kind} />
+        <Fading className="target-label">{row.check.label}</Fading>
+      </button>
+      {detail && <span className="check-detail">{detail}</span>}
+    </div>
   );
 }
 

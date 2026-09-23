@@ -21,3 +21,4 @@ export * from './session-display.js';
 export * from './session-title.js';
 export * from './user-profile.js';
 export * from './voice-preference.js';
+export * from './appearance.js';

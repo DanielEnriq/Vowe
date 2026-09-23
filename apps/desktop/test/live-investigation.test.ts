@@ -10,6 +10,7 @@ import {
   isReplaced,
   liveInvestigationReducer,
   openThought,
+  turnPhase,
   type LiveInvestigation,
   type StreamedText,
 } from '../src/renderer/state/live-investigation.js';
@@ -250,5 +251,23 @@ describe('Live investigation — the hand-over', () => {
     );
     expect(checksOf(state)).toHaveLength(1);
     expect(state.beat).toBe(1);
+  });
+});
+
+describe('Live investigation — the turn is not the thought', () => {
+  const running: LiveInvestigation = { ...QUIET, active: true };
+
+  it('is investigating while alive with no answer, whether or not a thought is open', () => {
+    expect(turnPhase(running)).toBe('investigating');
+    const between = liveInvestigationReducer(running, check('Searched session context'));
+    expect(openThought(between)).toBeNull();
+    expect(turnPhase(between)).toBe('investigating');
+  });
+
+  it('is answering once the reply has started, and finished once it has settled', () => {
+    expect(turnPhase({ ...running, answer: 'Here is' })).toBe('answering');
+    expect(turnPhase({ ...running, answer: 'Here is', settledEntryId: 'entry-1' })).toBe('finished');
+    expect(turnPhase({ ...running, answer: 'Here is', active: false })).toBe('finished');
+    expect(turnPhase(QUIET)).toBe('finished');
   });
 });

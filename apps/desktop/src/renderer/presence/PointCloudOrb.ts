@@ -85,6 +85,14 @@ export class PointCloudOrb {
 
   setVisuals(visuals: PresenceVisuals): void {
     this.target = visuals;
+    // Not a number and so not interpolated: the composite is either adding
+    // light to a dark surface or laying ink on a bright one, and there is no
+    // halfway. The appearance changes about as often as the machine's does.
+    if (visuals.onLight !== this.current.onLight) {
+      this.current.onLight = visuals.onLight;
+      this.applyComposite();
+      if (this.uniforms) this.uniforms['uOnLight']!.value = visuals.onLight ? 1 : 0;
+    }
     // Point count is the one parameter that is geometry rather than a uniform,
     // so it is the one change that costs anything. Sizes do not change while a
     // presence is mounted, so this is effectively once per instance.
@@ -180,6 +188,7 @@ export class PointCloudOrb {
       uWarm: { value: this.current.warm },
       uOpacity: { value: this.current.opacity },
       uGain: { value: this.current.gain },
+      uOnLight: { value: this.current.onLight ? 1 : 0 },
       uColorA: { value: new three.Vector3(...hexToRgb(this.current.colorA)) },
       uColorB: { value: new three.Vector3(...hexToRgb(this.current.colorB)) },
       uWarmColor: { value: new three.Vector3(...hexToRgb('#ffb15e')) },
@@ -193,7 +202,7 @@ export class PointCloudOrb {
       transparent: true,
       depthWrite: false,
       depthTest: false,
-      blending: three.AdditiveBlending,
+      blending: this.composite(three),
     });
     this.points = new three.Points(this.buildGeometry(three), material);
     scene.add(this.points);
@@ -228,6 +237,31 @@ export class PointCloudOrb {
     this.documentVisible = document.visibilityState !== 'hidden';
 
     this.syncLoop();
+  }
+
+  /**
+   * How the cloud meets the surface behind it.
+   *
+   * Additive is the whole reason the presence glows: every point adds its own
+   * light to what is already there, which is exactly right on a dark page and
+   * exactly nothing on a bright one — added light cannot make paper brighter
+   * than paper, so the object disappears. On light the points are composited
+   * normally instead, and the same material reads as a body seen against the
+   * page: its shadow side is ink, its lit side is the page showing through.
+   *
+   * The material is not swapped and the colours are not touched. What the
+   * light appearance changes is the light, which is what it is called.
+   */
+  private composite(three: typeof THREE): THREE.Blending {
+    return this.current.onLight ? three.NormalBlending : three.AdditiveBlending;
+  }
+
+  private applyComposite(): void {
+    const three = this.three;
+    const material = this.points?.material as THREE.ShaderMaterial | undefined;
+    if (!three || !material) return;
+    material.blending = this.composite(three);
+    material.needsUpdate = true;
   }
 
   /**

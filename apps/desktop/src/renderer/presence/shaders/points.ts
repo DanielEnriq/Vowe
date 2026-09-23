@@ -80,7 +80,7 @@ void main(){
 export const POINTS_FRAG = `
 precision highp float;
 uniform vec3 uColorA, uColorB, uWarmColor;
-uniform float uOpacity, uGain, uWarm;
+uniform float uOpacity, uGain, uWarm, uOnLight;
 varying float vShade;
 varying float vFres;
 varying float vHue;
@@ -103,6 +103,20 @@ void main(){
   if (vHue > 0.001) col = hueShift(col, vHue * 0.25);
   col = mix(col, uWarmColor, uWarm * clamp(vFres * 1.2, 0.0, 1.0) * 0.75);
 
-  float a = uOpacity * mask * clamp(0.16 + s * 0.9, 0.0, 1.0);
+  /*
+   * How much of each point actually lands, which is not the same question in
+   * the two appearances.
+   *
+   * Added to a dark surface, a point is only visible to the extent it is lit,
+   * so the alpha follows the shading: the unlit side contributes almost
+   * nothing and the object is its own highlight. Laid on paper it is the
+   * other way round — the unlit side is the part that shows, and an alpha
+   * that fades with shade leaves a ghost where the body should be. So on
+   * light the ink is nearly even and the tone is carried by the colour, which
+   * is how a drawn object on a page works.
+   */
+  float a = uOpacity * mask * (uOnLight > 0.5
+    ? clamp(0.55 + s * 0.25, 0.0, 1.0)
+    : clamp(0.16 + s * 0.9, 0.0, 1.0));
   gl_FragColor = vec4(col * uGain, a);
 }`;
