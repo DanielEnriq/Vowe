@@ -1,10 +1,44 @@
 import {
   createElement,
+  useCallback,
   useEffect,
   useRef,
   useState,
   type ReactNode,
 } from 'react';
+
+import { usePrefersReducedMotion } from './theme.js';
+
+/**
+ * Reading a name that does not fit, by resting on it.
+ *
+ * The fade is honest about there being more text; it does not help you read
+ * it. Usually that is fine — a truncated name is recognisable long before it
+ * is complete. It stops being fine in a list of sessions from one repository,
+ * where several names share a long opening and differ only at the end: the
+ * part that is cut off is exactly the part that tells them apart, and that is
+ * the moment somebody is choosing between them.
+ *
+ * So this is a reveal, not an animation. Three properties make it one:
+ *
+ *  - It waits. Moving the pointer down a list to reach the ninth row must not
+ *    set the eight above it sliding; the movement answers attention, and a
+ *    pointer passing through is not that.
+ *  - It travels once and stays. A loop restarts under your eye mid-word and
+ *    is unreadable by construction. This runs to the end and holds there, so
+ *    the tail — the part you came for — is what is on screen while you decide.
+ *  - It moves at a reading pace, not a fixed duration. A name two words too
+ *    long and a name two lines too long travel at the same speed rather than
+ *    the same time, so neither crawls nor blurs.
+ *
+ * It does nothing at all for text that fits, and nothing for somebody who has
+ * asked for reduced motion — the tooltip still has the whole string.
+ */
+const DWELL_MS = 420;
+/** A reading pace, in pixels per second. */
+const REVEAL_SPEED = 58;
+/** Coming back is not reading, so it is quick. */
+const RETURN_MS = 220;
 
 /**
  * Text that runs out of room, faded rather than cut with an ellipsis.
@@ -36,6 +70,7 @@ export function Fading({
   axis = 'x',
   className,
   title,
+  reveal = false,
 }: {
   children: ReactNode;
   /** The element this should be, where the surrounding CSS expects one. */
@@ -51,9 +86,21 @@ export function Fading({
   className?: string;
   /** The tooltip, when the children are not a plain string to take it from. */
   title?: string;
+  /**
+   * Let resting on this scroll it, when it does not fit.
+   *
+   * Opt-in, because it is only worth it where the hidden part decides
+   * something — a row you are about to click. Text that is merely long can
+   * stay faded.
+   */
+  reveal?: boolean;
 }) {
   const node = useRef<HTMLElement | null>(null);
   const [faded, setFaded] = useState(false);
+  const [edges, setEdges] = useState<{ start: boolean; end: boolean } | null>(null);
+  const reducedMotion = usePrefersReducedMotion();
+  const dwell = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const frame = useRef<number | null>(null);
 
   useEffect(() => {
     const element = node.current;
@@ -82,6 +129,71 @@ export function Fading({
     };
   }, [children, axis]);
 
+  const stop = useCallback(() => {
+    if (dwell.current) clearTimeout(dwell.current);
+    dwell.current = null;
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = null;
+  }, []);
+
+  /** Which edges have more text beyond them, while it is moving. */
+  const readEdges = useCallback((element: HTMLElement) => {
+    const max = element.scrollWidth - element.clientWidth;
+    setEdges({ start: element.scrollLeft > 1, end: element.scrollLeft < max - 1 });
+  }, []);
+
+  const travel = useCallback(
+    (to: number, speedPerMs: number, done?: () => void) => {
+      const element = node.current;
+      if (!element) return;
+      const from = element.scrollLeft;
+      const distance = to - from;
+      if (Math.abs(distance) < 1) {
+        done?.();
+        return;
+      }
+      const started = performance.now();
+      const duration = Math.abs(distance) / speedPerMs;
+      const step = (at: number): void => {
+        const through = Math.min(1, (at - started) / duration);
+        element.scrollLeft = from + distance * through;
+        readEdges(element);
+        if (through < 1) {
+          frame.current = requestAnimationFrame(step);
+          return;
+        }
+        frame.current = null;
+        done?.();
+      };
+      frame.current = requestAnimationFrame(step);
+    },
+    [readEdges],
+  );
+
+  const enter = useCallback(() => {
+    if (!reveal || !faded || reducedMotion) return;
+    stop();
+    dwell.current = setTimeout(() => {
+      const element = node.current;
+      if (!element) return;
+      // Runs to the end and stays: the tail is what the reader came for.
+      travel(element.scrollWidth - element.clientWidth, REVEAL_SPEED / 1000);
+    }, DWELL_MS);
+  }, [reveal, faded, reducedMotion, stop, travel]);
+
+  const leave = useCallback(() => {
+    if (!reveal) return;
+    stop();
+    const element = node.current;
+    if (!element || element.scrollLeft === 0) {
+      setEdges(null);
+      return;
+    }
+    travel(0, element.scrollLeft / RETURN_MS, () => setEdges(null));
+  }, [reveal, stop, travel]);
+
+  useEffect(() => stop, [stop]);
+
   const tooltip = title ?? (typeof children === 'string' ? children : undefined);
   return createElement(
     as,
@@ -90,11 +202,19 @@ export function Fading({
       className: [
         axis === 'y' ? 'fading-block' : 'fading',
         faded ? 'is-faded' : null,
+        // While it is moving, the cut edge is wherever there is more text —
+        // which is the left as soon as any of it has gone past.
+        edges ? 'is-revealing' : null,
+        edges?.start ? 'more-start' : null,
+        edges?.end ? 'more-end' : null,
         className,
       ]
         .filter(Boolean)
         .join(' '),
       ...(tooltip ? { title: tooltip } : {}),
+      ...(reveal && faded && !reducedMotion
+        ? { onPointerEnter: enter, onPointerLeave: leave }
+        : {}),
     },
     children,
   );

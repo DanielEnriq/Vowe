@@ -1,6 +1,11 @@
-import { useRef, useState, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 
-import type { AgentSession, ContextRef } from '@vowe/core';
+import type {
+  AgentSession,
+  ContextRef,
+  PresenceProfile,
+  PresenceState,
+} from '@vowe/core';
 import { formatRef } from '@vowe/core/refs';
 
 import {
@@ -11,6 +16,7 @@ import {
 } from '../state/composer.js';
 import { Fading } from '../shell/Fading.js';
 import { ChevronDownIcon, CloseIcon, DiffIcon, FileIcon, PlusIcon, SendIcon } from '../shell/icons.js';
+import { VowePresence } from '../presence/index.js';
 
 export interface Attachment {
   ref: ContextRef;
@@ -33,7 +39,32 @@ interface Props {
   onRemoveAttachment: (ref: ContextRef) => void;
   onAsk: (question: string, refs: ContextRef[]) => void;
   onInstruct: (text: string) => void;
+  /** Vowe, drawn beside send: the way into a call from where you are typing. */
+  presence: PresenceProfile;
+  presenceState: PresenceState;
+  inVoice: boolean;
+  voiceUnavailableReason: string | null;
+  /** Real work, when something measured it. See `VowePresence`. */
+  activity: number | undefined;
+  onToggleVoice: () => void;
 }
+
+/**
+ * How long a pointer has to stay before Vowe stirs.
+ *
+ * Long enough that crossing the button on the way to send does nothing — the
+ * motion is an answer to attention, and a pointer passing through is not that.
+ */
+const DWELL_MS = 380;
+
+/**
+ * How much Vowe moves when you rest on it.
+ *
+ * The same motion it makes while it works, turned down: this is the presence
+ * acknowledging you, not reporting that anything is happening. A level, not an
+ * impulse, because nothing has happened to decay from.
+ */
+const DWELL_ACTIVITY = 0.22;
 
 /**
  * One composer, with a destination rather than a mode.
@@ -53,7 +84,38 @@ export function Composer({
   onRemoveAttachment,
   onAsk,
   onInstruct,
+  presence,
+  presenceState,
+  inVoice,
+  voiceUnavailableReason,
+  activity,
+  onToggleVoice,
 }: Props): ReactElement {
+  /*
+   * Vowe stirs when you rest on it.
+   *
+   * A timer rather than `:hover`, because the motion should answer attention
+   * rather than every pointer that crosses the button on its way to send.
+   */
+  const [dwelling, setDwelling] = useState(false);
+  const dwell = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopDwell = () => {
+    if (dwell.current) clearTimeout(dwell.current);
+    dwell.current = null;
+    setDwelling(false);
+  };
+  useEffect(() => stopDwell, []);
+
+  const canTalk = voiceUnavailableReason === null;
+  /*
+   * Real work wins over a hover. While Vowe is actually doing something the
+   * presence reports that; resting on it must not overwrite the report with a
+   * politer one.
+   */
+  const orbActivity =
+    activity !== undefined || dwelling
+      ? Math.max(activity ?? 0, dwelling ? DWELL_ACTIVITY : 0)
+      : undefined;
   const [draft, setDraft] = useState('');
   const [requested, setRequested] = useState<Destination>('vowe');
   const [menu, setMenu] = useState<'none' | 'context' | 'destination'>('none');
@@ -164,6 +226,37 @@ export function Composer({
           )}
 
           <span style={{ flex: 1 }} />
+
+          {/*
+            Voice, where you are already writing to Vowe.
+
+            The same entity that used to sit by the session's title, moved to
+            the one place in the room that is already addressed to it. Clicking
+            joins or ends the call: voice is a state of this room, not a
+            separate product, so there is no modal and nothing to dismiss.
+          */}
+          <button
+            className={`talk${inVoice ? ' in-voice' : ''}`}
+            type="button"
+            aria-label={inVoice ? 'End the call with Vowe' : 'Talk to Vowe'}
+            title={inVoice ? 'End' : (voiceUnavailableReason ?? 'Talk to Vowe')}
+            disabled={!canTalk}
+            onClick={onToggleVoice}
+            onPointerEnter={() => {
+              if (!canTalk) return;
+              dwell.current = setTimeout(() => setDwelling(true), DWELL_MS);
+            }}
+            onPointerLeave={stopDwell}
+            onBlur={stopDwell}
+          >
+            <VowePresence
+              state={presenceState}
+              profile={presence}
+              size="signature"
+              activity={orbActivity}
+            />
+          </button>
+
           <span className="shortcut">↩</span>
           <button
             className={`send${toWorker ? ' to-worker' : ''}`}

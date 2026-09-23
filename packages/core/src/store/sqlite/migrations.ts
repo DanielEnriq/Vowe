@@ -325,6 +325,42 @@ const SESSION_TITLES = `
 ALTER TABLE sessions ADD COLUMN generated_title TEXT;  -- NULL => key ABSENT
 `;
 
+/**
+ * The desk a session was left on: which tabs, in what order, which one was in
+ * front.
+ *
+ * One row per session holding the whole desk as a JSON document, rather than a
+ * row per tab. Tabs are an ordered list, not a relation — nothing joins to
+ * them, nothing queries across them, and normalizing them would buy ordering
+ * bookkeeping in exchange for nothing at all. Shaped like `observation_state`:
+ * session-keyed, no foreign key, and read through a total normalizer so a
+ * document written by an older version degrades rather than throws.
+ *
+ * Addresses only. Artifact contents are never written here.
+ */
+const WORKBENCH_STATE = `
+CREATE TABLE workbench_state (
+  session_id TEXT PRIMARY KEY,
+  state_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+`;
+
+/**
+ * A session the developer has put away.
+ *
+ * A timestamp rather than a flag: when something was archived is worth
+ * knowing, and a nullable date says "not archived" without a second column to
+ * disagree with. `upsertSession` names its columns explicitly and this is not
+ * among them, so a discovery pass cannot un-archive what somebody archived.
+ *
+ * Nothing is deleted. The session's events, windows and conversation are
+ * exactly where they were — this only says whether it is in the way.
+ */
+const SESSION_ARCHIVE = `
+ALTER TABLE sessions ADD COLUMN archived_at TEXT;  -- NULL => key ABSENT
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -350,6 +386,16 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 5,
     name: '005_session_titles',
     up: (db) => db.exec(SESSION_TITLES),
+  },
+  {
+    version: 6,
+    name: '006_workbench_state',
+    up: (db) => db.exec(WORKBENCH_STATE),
+  },
+  {
+    version: 7,
+    name: '007_session_archive',
+    up: (db) => db.exec(SESSION_ARCHIVE),
   },
 ];
 

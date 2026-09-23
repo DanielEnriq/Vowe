@@ -7,6 +7,7 @@ import type {
   ConversationDelivery,
   ConversationEntry,
   NormalizedEvent,
+  PersistedWorkbench,
   PresenceProfile,
   Project,
   ProjectBrief,
@@ -355,6 +356,73 @@ export function useVoicePreference(): [
  * Read before the mark is moved, on purpose: opening the room is what makes
  * the checkpoint worth showing, and marking first would erase it.
  */
+/**
+ * The desk a session was left on, read once and written back as it changes.
+ *
+ * The room hands its current desk in rather than being handed a setter: every
+ * change to the desk is already a reducer action, and a second way to save
+ * would be a second thing to keep in step with it.
+ *
+ * Writes are near-immediate and flush on the way out. A desk change is a
+ * deliberate, sparse act — open, close, activate, keep — not a keystroke, so
+ * there is nothing worth coalescing over a second, and "come back and your
+ * workspace is still there" is the whole promise. Switching sessions or
+ * closing the room cannot outrun the write.
+ */
+export function useSessionWorkbench(
+  sessionId: string | null,
+  desk: PersistedWorkbench,
+): PersistedWorkbench | null {
+  const [stored, setStored] = useState<PersistedWorkbench | null>(null);
+  /*
+   * The read has landed, so it is safe to write.
+   *
+   * Without this, the empty desk of the first render is written back before
+   * the stored one arrives, and restoring a session erases it instead.
+   */
+  const hydrated = useRef(false);
+
+  useEffect(() => {
+    hydrated.current = false;
+    setStored(null);
+    if (!sessionId) return;
+    let live = true;
+    void window.vowe
+      .getWorkbench(sessionId)
+      .then((next) => {
+        if (!live) return;
+        setStored(next);
+        hydrated.current = true;
+      })
+      .catch(() => {
+        // A desk that cannot be read is a desk that starts empty. Writing is
+        // still allowed, so today's tabs are not lost to yesterday's failure.
+        if (live) hydrated.current = true;
+      });
+    return () => {
+      live = false;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || !hydrated.current) return;
+    let pending = true;
+    const save = () => {
+      if (!pending) return;
+      pending = false;
+      void window.vowe.saveWorkbench(sessionId, desk).catch(() => undefined);
+    };
+    const timer = setTimeout(save, 150);
+    return () => {
+      clearTimeout(timer);
+      // Leaving the room is not a reason to lose the last thing that changed.
+      save();
+    };
+  }, [sessionId, desk]);
+
+  return stored;
+}
+
 export function useAttentionCursor(
   sessionId: string | null,
   latestSeq: number,

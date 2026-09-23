@@ -12,6 +12,7 @@ import type {
   VoweTraceItem,
 } from '../types/execution.js';
 import type { Project } from '../projects/project.js';
+import type { PersistedWorkbench } from '../workbench/persisted.js';
 import type {
   CommunicationDecision,
   ObservationState,
@@ -260,6 +261,30 @@ export interface EventStore {
    */
   getObservationState(sessionId: string): ObservationState | null;
   setObservationState(state: ObservationState): Promise<void>;
+
+  /**
+   * Put a session away, or bring it back.
+   *
+   * Attention, not data: an archived session keeps everything it had and is
+   * still observed. It stops appearing among the things going on now, and
+   * comes back the moment it is opened again.
+   */
+  setSessionArchived(sessionId: string, archived: boolean): Promise<void>;
+
+  // --------------------------------------------------------------- workbench
+
+  /**
+   * The desk a session was left on — which tabs, in what order, which one was
+   * in front.
+   *
+   * Addresses only: what a tab shows is rebuilt from its ref when it is
+   * opened, so nothing stored here is a copy of anybody's source. Reading is
+   * total — a document that no longer makes sense comes back as `null` or as
+   * the part of it that still parses, never as an exception on the way into a
+   * room. Saving a desk with no tabs forgets the session's desk entirely.
+   */
+  getWorkbenchState(sessionId: string): PersistedWorkbench | null;
+  setWorkbenchState(sessionId: string, desk: PersistedWorkbench): Promise<void>;
 
   // --------------------------------------------------------------- projects
 

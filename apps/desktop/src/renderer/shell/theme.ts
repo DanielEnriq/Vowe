@@ -39,3 +39,27 @@ export function useOnLight(): boolean {
 
   return onLight;
 }
+
+/**
+ * The developer's system-wide answer to "how much movement?", watched live.
+ *
+ * Asked by everything that moves on its own: the presence, and any text that
+ * scrolls itself to be read. Somebody who has turned motion down has not
+ * asked for a quieter version of it — they have asked for none, and both
+ * callers here simply do not move.
+ */
+export function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(
+    () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
+  );
+
+  useEffect(() => {
+    const query = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (!query) return;
+    const handler = (event: MediaQueryListEvent): void => setReduced(event.matches);
+    query.addEventListener('change', handler);
+    return () => query.removeEventListener('change', handler);
+  }, []);
+
+  return reduced;
+}

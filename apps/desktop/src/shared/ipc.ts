@@ -11,6 +11,7 @@ import type {
   LiveStatus,
   NormalizedEvent,
   ObservationStatus,
+  PersistedWorkbench,
   PlaybackReport,
   LiveTranscriptDelta,
   LiveVoice,
@@ -30,6 +31,7 @@ import type {
   VoweRunActivity,
   WindowNote,
   WorkbenchArtifact,
+  WorkbenchCandidate,
 } from '@vowe/core';
 
 /**
@@ -264,7 +266,37 @@ export interface VoweApi {
    * knowing which store answers. Reading a repository, reconstructing a diff
    * and finding what Vowe remembered all stay on the other side of this line.
    */
+  /**
+   * Put a session away, or bring it back.
+   *
+   * Attention, not data: nothing is deleted and observation carries on. An
+   * archived session leaves the projects panel and is found again through a
+   * project's own search.
+   */
+  archiveSession(sessionId: string, archived: boolean): Promise<void>;
+
   openArtifact(ref: ContextRef): Promise<WorkbenchArtifact>;
+
+  /**
+   * Repository files, matched by name, as things that can be opened.
+   *
+   * A display projection, and a deliberately thin one: addresses and what to
+   * call them, and nothing else. No file content crosses this line — what a
+   * file says is read by `openArtifact`, which is the one call built to carry
+   * material. A blank query answers with nothing, because this is a search
+   * rather than a file tree.
+   */
+  findFiles(sessionId: string, query: string): Promise<WorkbenchCandidate[]>;
+
+  /**
+   * The desk a session was left on, and the desk it is being left on now.
+   *
+   * References, never rendered artifacts: what a tab shows is rebuilt through
+   * `openArtifact` when somebody looks at it, so coming back to a session
+   * restores where you were looking rather than a week-old copy of it.
+   */
+  getWorkbench(sessionId: string): Promise<PersistedWorkbench | null>;
+  saveWorkbench(sessionId: string, desk: PersistedWorkbench): Promise<void>;
 
   // ----------------------------------------------------------- investigation
 
@@ -420,7 +452,11 @@ export const IPC = {
   setPresenceProfile: 'vowe:presence:set',
   getAppearance: 'vowe:appearance:get',
   setAppearance: 'vowe:appearance:set',
+  archiveSession: 'vowe:session:archive',
   openArtifact: 'vowe:artifact:open',
+  findFiles: 'vowe:workbench:find-files',
+  getWorkbench: 'vowe:workbench:get',
+  saveWorkbench: 'vowe:workbench:save',
   getInvestigationSteps: 'vowe:investigation:steps',
   getDeliveries: 'vowe:session:deliveries',
   askProject: 'vowe:project:ask',

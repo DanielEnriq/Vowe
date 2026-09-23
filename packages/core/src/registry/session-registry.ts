@@ -114,6 +114,20 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
   }
 
   /**
+   * A session has just been put away, or brought back.
+   *
+   * Same bargain as the title above: the column is where this lives, and this
+   * only keeps the cached view honest so the panel reacts to the click rather
+   * than to the next discovery pass a few seconds later.
+   */
+  noteArchived(sessionId: string, archivedAt: string | null): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    const { archivedAt: _was, ...rest } = session;
+    this.sessions.set(sessionId, archivedAt ? { ...rest, archivedAt } : rest);
+  }
+
+  /**
    * Ask every adapter what it can see and fold the answer in. Sessions that
    * disappear are marked finished rather than deleted: their observed history
    * stays meaningful after the worker is gone.
@@ -270,6 +284,13 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
        * nothing ever read it back.
        */
       ...titleOf(stored ?? previous),
+      /*
+       * Whether the developer has put this session away — the same story as
+       * the title above, and for the same reason. No adapter knows about it,
+       * the column is where it lives, and a discovery pass that did not read
+       * it back would un-archive everything every few seconds.
+       */
+      ...archiveOf(stored ?? previous),
       createdAt: previous?.createdAt ?? discovered.createdAt,
       // Adapters do not know about projects, so carry the existing assignment
       // forward and only re-derive it when it is actually missing or stale.
@@ -400,4 +421,9 @@ function hasVisibleChange(a: AgentSession, b: AgentSession): boolean {
 function titleOf(session: AgentSession | null | undefined): { generatedTitle?: string } {
   const title = session?.generatedTitle?.trim();
   return title ? { generatedTitle: title } : {};
+}
+
+function archiveOf(session: AgentSession | null | undefined): { archivedAt?: string } {
+  const at = session?.archivedAt;
+  return at ? { archivedAt: at } : {};
 }

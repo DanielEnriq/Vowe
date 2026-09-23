@@ -1,4 +1,4 @@
-import type { ContextRef } from '../../context/refs.js';
+import { formatRef, parseRef, type ContextRef } from '../../context/refs.js';
 import type {
   ConversationDelivery,
   ConversationEntry,
@@ -12,6 +12,10 @@ import type {
   VoweRun,
   VoweTraceItem,
 } from '../../types/execution.js';
+import type {
+  PersistedWorkbench,
+  PersistedWorkbenchTab,
+} from '../../workbench/persisted.js';
 import type {
   AgentSession,
   SemanticProvenance,
@@ -120,6 +124,9 @@ export function toSession(row: Row): AgentSession {
     ...(row['generated_title'] === null || row['generated_title'] === undefined
       ? {}
       : { generatedTitle: str(row['generated_title']) }),
+    ...(row['archived_at'] === null || row['archived_at'] === undefined
+      ? {}
+      : { archivedAt: str(row['archived_at']) }),
     cwd: strOrNull(row['cwd']),
     projectId: strOrNull(row['project_id']),
     status: str(row['status']) as AgentSession['status'],
@@ -429,4 +436,76 @@ export function toTraceItem(row: Row): VoweTraceItem {
     item.providerItemId = str(row['provider_item_id']);
   }
   return item;
+}
+
+// ----------------------------------------------------------------- workbench
+
+/**
+ * A stored desk, made safe to draw.
+ *
+ * Total, and deliberately unlike every other reader here: the rest of this
+ * module throws on a malformed row, because a corrupt event is a fault worth
+ * stopping for. A desk is not. It is a record of what someone had open, and
+ * the right response to one that no longer makes sense is to draw the part
+ * that does — never an exception on the way into a room.
+ *
+ * What it drops, and why: an address `parseRef` cannot read is an address
+ * nothing can be done with. Everything else is kept and repaired — a tab is
+ * re-keyed to its canonical spelling, an unrecognised status becomes `durable`
+ * (an unclassifiable tab is one the developer keeps, which is the conservative
+ * direction), all but the first `preview` are demoted, and an `activeId` left
+ * pointing at nothing becomes null.
+ *
+ * There is no cap on how many tabs survive. The strip scrolls and inactive
+ * tabs are resolved lazily, so tab forty costs an entry in an array; silently
+ * discarding what somebody left open would break the only promise this makes.
+ */
+export function toWorkbench(row: Row): PersistedWorkbench | null {
+  let document: unknown;
+  try {
+    document = JSON.parse(str(row['state_json']));
+  } catch {
+    return null;
+  }
+  if (typeof document !== 'object' || document === null) return null;
+
+  const raw = (document as { tabs?: unknown }).tabs;
+  if (!Array.isArray(raw)) return null;
+
+  const tabs: PersistedWorkbenchTab[] = [];
+  const seen = new Set<string>();
+  let preview = false;
+
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const candidate = entry as Partial<PersistedWorkbenchTab>;
+    if (typeof candidate.ref !== 'string') continue;
+    const parsed = parseRef(candidate.ref);
+    if (!parsed) continue;
+
+    const ref = formatRef(parsed);
+    if (seen.has(ref)) continue;
+    seen.add(ref);
+
+    const wantsPreview = candidate.status === 'preview' && !preview;
+    if (wantsPreview) preview = true;
+
+    tabs.push({
+      ref,
+      title:
+        typeof candidate.title === 'string' && candidate.title.trim()
+          ? candidate.title
+          : ref,
+      status: wantsPreview ? 'preview' : 'durable',
+    });
+  }
+
+  if (!tabs.length) return null;
+
+  const activeId = (document as { activeId?: unknown }).activeId;
+  return {
+    tabs,
+    activeId:
+      typeof activeId === 'string' && seen.has(activeId) ? activeId : null,
+  };
 }

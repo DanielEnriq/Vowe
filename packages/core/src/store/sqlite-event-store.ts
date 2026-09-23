@@ -23,6 +23,7 @@ import type {
   VoweTraceItem,
 } from '../types/execution.js';
 import type { Project } from '../projects/project.js';
+import type { PersistedWorkbench } from '../workbench/persisted.js';
 import type {
   ConversationChange,
   EventQuery,
@@ -974,6 +975,57 @@ export class SqliteEventStore implements EventStore {
         updatedAt: state.updatedAt,
       },
     );
+  }
+
+  // --------------------------------------------------------------- workbench
+
+  getWorkbenchState(sessionId: string): PersistedWorkbench | null {
+    const row = this.get(
+      'SELECT * FROM workbench_state WHERE session_id = ?',
+      sessionId,
+    );
+    return row ? rows.toWorkbench(row) : null;
+  }
+
+  async setWorkbenchState(sessionId: string, desk: PersistedWorkbench): Promise<void> {
+    /*
+     * An empty desk is forgotten rather than stored.
+     *
+     * "Nothing open" is the state a session starts in, so a row saying so
+     * carries no information and would only keep the table growing by one per
+     * session anybody ever glanced at.
+     */
+    if (!desk.tabs.length) {
+      this.run('DELETE FROM workbench_state WHERE session_id = ?', sessionId);
+      return;
+    }
+
+    this.run(
+      `INSERT INTO workbench_state (session_id, state_json, updated_at)
+       VALUES (:sessionId, :stateJson, :updatedAt)
+       ON CONFLICT (session_id) DO UPDATE SET
+         state_json = excluded.state_json,
+         updated_at = excluded.updated_at`,
+      {
+        sessionId,
+        stateJson: JSON.stringify(desk),
+        updatedAt: new Date().toISOString(),
+      },
+    );
+  }
+
+  /**
+   * Put a session away, or bring it back.
+   *
+   * Attention only. Nothing is deleted and nothing stops being recorded — an
+   * archived session is still observed and still answers when opened; it just
+   * stops appearing among the things going on now.
+   */
+  async setSessionArchived(sessionId: string, archived: boolean): Promise<void> {
+    this.run('UPDATE sessions SET archived_at = :at WHERE id = :id', {
+      id: sessionId,
+      at: archived ? new Date().toISOString() : null,
+    });
   }
 
   // ----------------------------------------------------------------- private

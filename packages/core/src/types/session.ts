@@ -109,6 +109,14 @@ export interface AgentSession {
   createdAt: string;
   lastActivityAt: string;
   capabilities: SessionCapabilities;
+  /**
+   * When the developer put this session away, if they have.
+   *
+   * Attention, not data: an archived session keeps every event, window and
+   * answer it had, and simply stops appearing in the places that are meant to
+   * show what is going on now. It comes back by being opened again.
+   */
+  archivedAt?: string;
   /** Populated by the interpretation layer, not by the adapter. */
   semanticState: SemanticState | null;
 }

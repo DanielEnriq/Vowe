@@ -1,142 +1,152 @@
-import type { ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 
-import type { WorkbenchArtifact } from '@vowe/core';
+import type { ContextRef, WorkbenchArtifact } from '@vowe/core';
 
 import { Fading } from '../shell/Fading.js';
-import { PinIcon, PlusIcon } from '../shell/icons.js';
-import { activeArtifact, type WorkbenchState } from '../state/workbench.js';
+import { PinIcon } from '../shell/icons.js';
+import type { LauncherEntry } from '../state/object-launcher.js';
+import { activeTab, type WorkbenchState } from '../state/workbench.js';
 import { SourceArtifact } from './SourceArtifact.js';
 import { DiffArtifact } from './DiffArtifact.js';
 import { NarrativeArtifact } from './NarrativeArtifact.js';
+import { WorkbenchEmpty } from './WorkbenchEmpty.js';
+import { WorkbenchTabs } from './WorkbenchTabs.js';
 
 interface Props {
   state: WorkbenchState;
   /** True when the pane is too narrow to hold a conversation beside this. */
   full: boolean;
+  entries: LauncherEntry[];
+  findFiles: (query: string) => Promise<LauncherEntry[]>;
   onActivate: (id: string) => void;
-  onTogglePin: () => void;
-  onAttach: (artifact: WorkbenchArtifact) => void;
+  onClose: (id: string) => void;
+  onKeep: (id: string) => void;
+  onOpenRef: (ref: ContextRef) => void;
 }
 
 /**
  * What Vowe and the developer are looking at.
  *
- * One primary artifact with the rest on the desk beneath it. Viewing is not
- * attaching: this is where attention is, and what a question carries is said
- * explicitly in the composer.
+ * Tabs along the top, one artifact beneath. Viewing is not attaching: this is
+ * where attention is, and what a question carries is said explicitly in the
+ * composer — twenty tabs can be open without a word of it reaching Vowe.
  *
- * Closing is not in this header. One control, fixed to the window, opens and
- * closes the desk in both states — a control that travelled with the panel
- * edge was never where it had last been clicked, and a second control for the
- * closed state meant two glyphs for one act. The header's right inset keeps
- * its own content clear of it.
+ * Closing the panel is not in this header. One control, fixed to the window,
+ * opens and closes the desk in both states — a control that travelled with the
+ * panel edge was never where it had last been clicked, and a second control
+ * for the closed state meant two glyphs for one act. The header's right inset
+ * keeps its own content clear of it.
  */
 export function Workbench({
   state,
   full,
+  entries,
+  findFiles,
   onActivate,
-  onTogglePin,
-  onAttach,
+  onClose,
+  onKeep,
+  onOpenRef,
 }: Props): ReactElement {
-  const artifact = activeArtifact(state);
-
-  /*
-   * Opened with nothing on it, which is a state worth having.
-   *
-   * The desk is where attention is, and "show me what we are looking at" is a
-   * reasonable thing to ask before there is anything to see. It answers
-   * honestly rather than refusing to open — and the panel existing is not a
-   * claim that Vowe has put something in it.
-   */
-  if (!artifact) {
-    return (
-      <aside className={`workbench${full ? ' full' : ''}`} aria-label="Workbench">
-        <div className="workbench-header">
-          <div className="titles">
-            <Fading className="title">Nothing on the desk</Fading>
-            <span className="kind">Workbench</span>
-          </div>
-        </div>
-        <div className="workbench-body">
-          <div className="artifact">
-            <p className="empty">
-              This is what you and Vowe are looking at. Open a file, a diff or
-              something Vowe checked, and it appears here.
-            </p>
-          </div>
-        </div>
-      </aside>
-    );
-  }
-
-  const pinned = state.pinnedId === artifact.id;
+  const [launcherOpen, setLauncherOpen] = useState(false);
+  const tab = activeTab(state);
+  const artifact = tab?.artifact ?? null;
 
   return (
     <aside className={`workbench${full ? ' full' : ''}`} aria-label="Workbench">
-      <div className="workbench-header">
-        <div className="titles">
-          <Fading className="title">{artifact.title}</Fading>
-          <span className="kind">{artifact.subtitle ?? kindLabel(artifact.kind)}</span>
-          {/*
-            Why this is in front of you, where that is actually known. Said in
-            the product's terms and never guessed: an artifact opened by hand
-            carries no reason, because the reason was that you opened it.
-          */}
+      <WorkbenchTabs
+        tabs={state.tabs}
+        activeId={state.activeId}
+        newIds={state.newIds}
+        entries={entries}
+        onActivate={onActivate}
+        onClose={onClose}
+        onOpenRef={onOpenRef}
+        findFiles={findFiles}
+        launcherOpen={launcherOpen}
+        onLauncherOpen={setLauncherOpen}
+      />
+
+      {/*
+        What kind of thing this is, and why it is in front of you where that is
+        actually known. Said in the product's terms and never guessed: an
+        artifact opened by hand carries no reason, because the reason was that
+        you opened it. The row is absent when it would have nothing to say.
+      */}
+      {artifact && (
+        <div className="workbench-note">
+          {/* A source artifact's subtitle is its directory, which readily
+              outruns a 352px panel. Faded like every other line that can. */}
+          <Fading className="kind">{artifact.subtitle ?? kindLabel(artifact.kind)}</Fading>
           {state.reason && <span className="because">{state.reason}</span>}
         </div>
-      </div>
+      )}
 
-      <div className="workbench-actions">
-        <button
-          className={`small-button${pinned ? ' on' : ''}`}
-          type="button"
-          aria-pressed={pinned}
-          onClick={onTogglePin}
-          title={
-            pinned
-              ? 'Pinned: Vowe may add to the desk but will not take this view away'
-              : 'Pin this so Vowe does not replace it'
-          }
-        >
-          <PinIcon filled={pinned} />
-          {pinned ? 'Pinned' : 'Pin'}
-        </button>
-        <button className="small-button" type="button" onClick={() => onAttach(artifact)}>
-          <PlusIcon />
-          Add to question
-        </button>
-      </div>
+      {/*
+        Keeping is the whole of what pinning used to be, and the only action
+        that belongs beside the artifact. It appears on Vowe's own tab alone,
+        because a tab you opened is already kept.
 
-      <div className="workbench-body">
-        <ArtifactBody artifact={artifact} />
-      </div>
-
-      {state.items.length > 1 && (
-        <div className="desk">
-          <span className="eyebrow" style={{ fontSize: 9.5 }}>
-            On the desk
-          </span>
-          <div className="items">
-            {state.items.map((item) => (
-              <button
-                className={`desk-item${item.id === artifact.id ? ' active' : ''}`}
-                type="button"
-                key={item.id}
-                onClick={() => onActivate(item.id)}
-              >
-                {item.title}
-                {state.newIds.includes(item.id) && <span className="new" aria-label="new" />}
-                {state.pinnedId === item.id && <span className="pinned">pinned</span>}
-              </button>
-            ))}
-          </div>
+        Attaching is said in the composer instead — "Viewing X · Add", where
+        the question is being written. A second button up here was the same act
+        in two places, and the one that mattered was the one next to the text.
+      */}
+      {tab?.status === 'preview' && (
+        <div className="workbench-actions">
+          <button
+            className="small-button"
+            type="button"
+            onClick={() => onKeep(tab.id)}
+            title="Keep this tab: Vowe will not replace it with the next thing it shows you"
+          >
+            <PinIcon filled={false} />
+            Keep
+          </button>
         </div>
       )}
+
+      <div
+        className="workbench-body"
+        id="workbench-panel"
+        role="tabpanel"
+        {...(state.activeId ? { 'aria-labelledby': `tab-${state.activeId}` } : {})}
+        tabIndex={0}
+      >
+        {tab ? (
+          <ArtifactBody tab={tab} />
+        ) : (
+          <WorkbenchEmpty
+            entries={entries}
+            onOpen={onOpenRef}
+            /*
+              The empty state's own affordance opens the one launcher, which
+              lives in the strip because that is what it hangs off.
+            */
+            onOpenLauncher={() => setLauncherOpen(true)}
+          />
+        )}
+      </div>
     </aside>
   );
 }
 
-function ArtifactBody({ artifact }: { artifact: WorkbenchArtifact }): ReactElement {
+function ArtifactBody({ tab }: { tab: { artifact: WorkbenchArtifact | null; title: string } }): ReactElement {
+  const artifact = tab.artifact;
+  /*
+   * Restored, and not read yet.
+   *
+   * Distinct from `unavailable`, which is the resolver saying the thing is not
+   * there. This is Vowe not having looked — a tab nobody has clicked since the
+   * session came back — and drawing the two the same way would turn a file
+   * that exists into a file that does not.
+   */
+  if (!artifact) {
+    return (
+      <div className="artifact">
+        <p className="empty">Opening {tab.title}…</p>
+      </div>
+    );
+  }
+
   switch (artifact.content.type) {
     case 'source':
       return <SourceArtifact content={artifact.content} focus={artifact.focus} />;

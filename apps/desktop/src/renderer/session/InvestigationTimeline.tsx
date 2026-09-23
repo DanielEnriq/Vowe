@@ -15,7 +15,6 @@ import type { ContextRef } from '@vowe/core';
 import { Fading } from '../shell/Fading.js';
 import type { TimelineRow } from '../state/investigation-timeline.js';
 import { CaretIcon } from '../shell/icons.js';
-import { CheckKindIcon } from './CheckKindIcon.js';
 
 /**
  * What Vowe did before it answered, as one column.
@@ -263,6 +262,12 @@ const HoldRow = createContext<(row: HTMLElement) => void>(() => undefined);
  * command: `Reviewed worker activity`, because that is what happened. The raw
  * call is in the run's trace, which is where a raw call belongs.
  *
+ * And no glyph for the kind either. The label already says which kind of
+ * lookup it was — `Searched`, `Read`, `Inspected the diff` — so a column of
+ * icons in front of those words was a second, cruder copy of the sentence
+ * beside it, and a column of shapes is what made the trace look like tooling
+ * rather than like an account of what Vowe did.
+ *
  * A lookup that turned nothing up has nothing to open, so it stays a line of
  * text rather than becoming a control that does nothing.
  */
@@ -280,7 +285,6 @@ function Check({
     return (
       <div className="exec-step check">
         <span className="check-row">
-          <CheckKindIcon kind={row.check.kind} />
           <Fading className="target-label">{row.check.label}</Fading>
         </span>
         {detail && <span className="check-detail">{detail}</span>}
@@ -296,7 +300,6 @@ function Check({
         title="Open this on the desk"
         onClick={() => onOpenRef(ref)}
       >
-        <CheckKindIcon kind={row.check.kind} />
         <Fading className="target-label">{row.check.label}</Fading>
       </button>
       {detail && <span className="check-detail">{detail}</span>}
@@ -350,15 +353,25 @@ function Thought({
           setChosen(!open);
         }}
       >
-        <CaretIcon />
         <span className="label">{label}</span>
+        <CaretIcon />
       </button>
 
-      {open && (
-        // Append-only, like everything else on this path: the text grows and
-        // nothing that was on screen is taken away to make room for more.
-        <p className="thought-text">{row.text}</p>
-      )}
+      {/*
+        Mounted whether it is open or not.
+
+        Rendering it conditionally meant a thought could only animate one way:
+        on the way in there is an element to move, and on the way out it is
+        already gone by the time anything could be transitioned. Kept in the
+        tree, opening and closing are the same movement run in either
+        direction — and the text is append-only either way, which is the rest
+        of this path's rule: nothing on screen is taken away to make room.
+      */}
+      <div className="thought-details">
+        <div className="thought-details-inner">
+          <p className="thought-text">{row.text}</p>
+        </div>
+      </div>
     </div>
   );
 }
