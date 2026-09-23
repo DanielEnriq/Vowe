@@ -82,3 +82,18 @@ export interface ArtifactFocus {
   endLine?: number;
   eventIds?: string[];
 }
+
+/**
+ * Something that could be put on the desk, named but not yet read.
+ *
+ * What a search answers with. Deliberately not a `WorkbenchArtifact`: a
+ * candidate is an address and a name, and resolving it into something to look
+ * at is a second, explicit act. Nothing a search returns has read a file.
+ */
+export interface WorkbenchCandidate {
+  ref: ContextRef;
+  /** What to call it — a file's own name. */
+  label: string;
+  /** Where it lives, quietly. Empty for something at the repository root. */
+  detail: string;
+}

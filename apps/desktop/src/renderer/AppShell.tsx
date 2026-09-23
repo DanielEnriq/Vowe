@@ -12,6 +12,7 @@ import type { UserProfile } from '@vowe/core';
 import { DEFAULT_USER_PROFILE } from '@vowe/core/projections';
 
 import { NewSessionSheet } from './components/NewSessionSheet.js';
+import { ComposeIcon } from './shell/icons.js';
 import { PanelToggle } from './shell/PanelToggle.js';
 import { TopChrome } from './shell/TopChrome.js';
 import {
@@ -39,7 +40,10 @@ import { projectOf, reconcileRoute, type Route } from './state/navigation.js';
 
 import {
   CHROME_HEIGHT,
-  MEASURE_CSS,
+  CHROME_BODY,
+  CHROME_BREATHING,
+  CHROME_CONTROL,
+  CHROME_GLYPH,
   NARROW_PANE,
   PANEL_LEFT,
   PANEL_LEFT_CLOSE_AT,
@@ -48,6 +52,7 @@ import {
   PANEL_RIGHT,
   ROOM_GUTTER,
   TRAFFIC_LIGHTS,
+  measureCssFor,
 } from '../shared/layout.js';
 
 /**
@@ -68,7 +73,15 @@ const WIDTHS = {
   // the real buttons from the same two numbers.
   '--chrome-height': `${CHROME_HEIGHT}px`,
   '--traffic-lights': `${TRAFFIC_LIGHTS}px`,
-  '--measure': MEASURE_CSS,
+  // The glyphs on the band. Sized to carry the traffic lights' weight, which
+  // is not the traffic lights' number: see `CHROME_GLYPH`.
+  '--chrome-glyph': `${CHROME_GLYPH}px`,
+  // What a glyph and the session's title both measure, seen.
+  '--chrome-body': `${CHROME_BODY}px`,
+  // The one gap along the band: lights → toggle → pencil.
+  '--chrome-breathing': `${CHROME_BREATHING}px`,
+  // The band's controls, and part of the arithmetic that places them.
+  '--chrome-control': `${CHROME_CONTROL}px`,
   '--room-gutter': `${ROOM_GUTTER}px`,
   '--panel-left': `${PANEL_LEFT}px`,
   '--panel-right': `${PANEL_RIGHT}px`,
@@ -95,7 +108,8 @@ export function AppShell(): ReactElement {
 
   const { sidebarOpen, sidebarWidth, toggleSidebar, startResize, resizing } = useSidebar();
   const fullscreen = useFullscreen();
-  const paneWidth = usePaneWidth(sidebarOpen ? sidebarWidth : 0);
+  const viewport = useViewportWidth();
+  const paneWidth = viewport - (sidebarOpen ? sidebarWidth : 0);
 
   const { state: presenceState } = usePresenceSignals({ status, sessions });
 
@@ -165,6 +179,13 @@ export function AppShell(): ReactElement {
       style={
         {
           ...WIDTHS,
+          /*
+           * Which of the two regimes this window is in — the promise, or the
+           * room. Decided here rather than in a media query because the
+           * threshold is arithmetic over the panel widths and the floor, and
+           * a stylesheet cannot be handed those without a second copy of them.
+           */
+          '--measure': measureCssFor(viewport),
           '--left-column': `${sidebarOpen ? sidebarWidth : 0}px`,
           // What the panel measures whether or not it is showing, so its
           // contents do not reflow to nothing on the way out.
@@ -180,12 +201,31 @@ export function AppShell(): ReactElement {
       */}
       <TopChrome
         controls={
-          <PanelToggle
-            side="left"
-            open={sidebarOpen}
-            label={sidebarOpen ? 'Hide projects panel' : 'Show projects panel'}
-            onToggle={toggleSidebar}
-          />
+          <>
+            <PanelToggle
+              side="left"
+              open={sidebarOpen}
+              label={sidebarOpen ? 'Hide projects panel' : 'Show projects panel'}
+              onToggle={toggleSidebar}
+            />
+            {/*
+              Starting work is the window's act, not the panel's.
+              
+              It lived in the projects panel's own header, which meant it went
+              away with the panel — and a panel is closed precisely when
+              somebody wants the room, which is when a new task is most
+              likely. On the band it is always where it was last clicked.
+            */}
+            <button
+              className="icon-button chrome-button"
+              type="button"
+              aria-label="New task"
+              title="New task"
+              onClick={() => setSheetOpen(true)}
+            >
+              <ComposeIcon />
+            </button>
+          </>
         }
       >
       {/*
@@ -213,7 +253,6 @@ export function AppShell(): ReactElement {
             presence={presence}
             presenceState={presenceState}
             onNavigate={setRoute}
-            onNewTask={() => setSheetOpen(true)}
           />
         </aside>
 
@@ -433,8 +472,16 @@ function useSidebar() {
   };
 }
 
-/** Breakpoints are about the pane the content gets, not the window. */
-function usePaneWidth(sidebarWidth: number): number {
+/**
+ * The window's own width, watched.
+ *
+ * Two different questions are asked of it and they are not the same question.
+ * Which measure regime the window is in is about the *window*, because the
+ * regime may not depend on what is open. Whether the desk can sit beside the
+ * conversation is about the *pane*, because that is the box the two would
+ * have to share.
+ */
+function useViewportWidth(): number {
   const [viewport, setViewport] = useState(() =>
     typeof window === 'undefined' ? 1400 : window.innerWidth,
   );
@@ -443,5 +490,5 @@ function usePaneWidth(sidebarWidth: number): number {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  return viewport - sidebarWidth;
+  return viewport;
 }

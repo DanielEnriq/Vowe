@@ -15,7 +15,6 @@ import type {
   LiveTranscriptDelta,
   PresenceProfile,
   PresenceState,
-  WorkbenchArtifact,
 } from '@vowe/core';
 import { formatRef } from '@vowe/core/refs';
 import { attentionFor, returnCheckpoint } from '@vowe/core/projections';
@@ -24,11 +23,21 @@ import {
   useAttentionCursor,
   useInvestigation,
   useObservationStatus,
+  useProjectMemories,
   useSessionThread,
+  useSessionWorkbench,
 } from '../hooks/useVoweData.js';
 import { useVo } from '../components/VoPanel.js';
 import { providerName } from '../components/ui.js';
-import { EMPTY_WORKBENCH, workbenchReducer, deskHasUnseen } from '../state/workbench.js';
+import {
+  EMPTY_WORKBENCH,
+  activeTab,
+  deskHasUnseen,
+  workbenchReducer,
+  type WorkbenchTab,
+} from '../state/workbench.js';
+import { persistDesk, restoreTabs, restoredActiveId } from '../state/workbench-persistence.js';
+import { launcherEntries, type LauncherEntry } from '../state/object-launcher.js';
 import { planSurfacing } from '../state/artifact-surfacing.js';
 import { useActivityImpulse } from '../presence/index.js';
 import { PanelToggle } from '../shell/PanelToggle.js';
@@ -126,20 +135,93 @@ export function SessionRoom({
   );
 
   const openRef = useCallback(
-    async (ref: ContextRef, level?: 'show' | 'suggest', reason?: string) => {
+    async (ref: ContextRef, how: 'open' | 'surface' = 'open', reason?: string) => {
       try {
         const artifact = await window.vowe.openArtifact(ref);
-        dispatch(
-          level
-            ? { type: 'surface', artifact, level, ...(reason ? { reason } : {}) }
-            : { type: 'open', artifact, ...(reason ? { reason } : {}) },
-        );
+        dispatch({ type: how, artifact, ...(reason ? { reason } : {}) });
       } catch {
         // A ref that will not resolve is not worth a dialog; the desk simply
         // does not gain it.
       }
     },
     [],
+  );
+
+  /**
+   * A restored tab is an address until somebody looks at it.
+   *
+   * Resolving every tab when the room opens would read a dozen files and run
+   * `git diff` a dozen times to draw a strip that only needs their names.
+   */
+  const resolveTab = useCallback(async (tab: WorkbenchTab) => {
+    if (tab.artifact) return;
+    try {
+      const artifact = await window.vowe.openArtifact(tab.sourceRef);
+      dispatch({ type: 'resolved', id: tab.id, artifact });
+    } catch {
+      // Left unresolved, and retried the next time it is clicked. The tab
+      // stays: an address that failed to resolve once is not a missing thing.
+    }
+  }, []);
+
+  /*
+   * The desk this session was left on, restored.
+   *
+   * References and their order; the artifacts themselves are read back when
+   * somebody looks at them. Only the tab in front is resolved on the way in —
+   * a dozen restored tabs must not mean a dozen files read to draw a strip
+   * that needs their names.
+   */
+  const persisted = useMemo(() => persistDesk(workbench), [workbench.tabs, workbench.activeId]);
+  const storedDesk = useSessionWorkbench(session.id, persisted);
+  useEffect(() => {
+    if (!storedDesk) return;
+    const tabs = restoreTabs(storedDesk);
+    if (!tabs.length) return;
+    const activeId = restoredActiveId(storedDesk, tabs);
+    dispatch({ type: 'hydrate', tabs, activeId });
+    const front = tabs.find((tab) => tab.id === activeId);
+    if (front) void resolveTab(front);
+  }, [storedDesk, resolveTab]);
+
+  /*
+   * What the `+` can open, derived from what this room already holds.
+   *
+   * No model call and no new read: the diff has an address by construction,
+   * and the rest come from the observation notes, the thread and what Vowe has
+   * remembered about this project. An entry whose source is absent is omitted.
+   */
+  const memories = useProjectMemories(session.projectId ?? null);
+  const entries = useMemo(
+    () =>
+      launcherEntries({
+        sessionId: session.id,
+        projectId: session.projectId ?? null,
+        events: thread.events,
+        milestones: thread.milestones,
+        notes,
+        memories,
+      }),
+    [session.id, session.projectId, thread.events, thread.milestones, notes, memories],
+  );
+
+  /** Repository files by name. Addresses only; nothing is read to answer it. */
+  const findFiles = useCallback(
+    async (query: string): Promise<LauncherEntry[]> => {
+      try {
+        const candidates = await window.vowe.findFiles(session.id, query);
+        return candidates.map((candidate) => ({
+          id: formatRef(candidate.ref),
+          section: 'repository' as const,
+          label: candidate.label,
+          ...(candidate.detail ? { detail: candidate.detail } : {}),
+          ref: candidate.ref,
+        }));
+      } catch {
+        return [];
+      }
+    },
+    [session.id],
   );
 
   /**
@@ -152,12 +234,10 @@ export function SessionRoom({
   useEffect(() => {
     const entry = thread.entries.at(-1);
     if (!entry || entry.role !== 'companion_answer') return;
-    const plan = planSurfacing(entry);
+    const ref = planSurfacing(entry);
     // Why it is here, in the developer's terms. Said only where it is true:
-    // these are the refs the answer was actually grounded in.
-    const because = 'Used to answer your question';
-    if (plan.show) void openRef(plan.show, 'show', because);
-    for (const ref of plan.suggest) void openRef(ref, 'suggest', because);
+    // this is the ref the answer was actually grounded in.
+    if (ref) void openRef(ref, 'surface', 'Used to answer your question');
   }, [lastAnswerId, thread.entries, openRef]);
 
   const checkpoint = useMemo(
@@ -224,7 +304,7 @@ export function SessionRoom({
    * call the orb belongs to the conversation instead and this stays out of it.
    */
   const thinkingActivity = useActivityImpulse(investigation.beat, investigation.active);
-  const active = workbench.items.find((item) => item.id === workbench.activeId) ?? null;
+  const active = activeTab(workbench);
   const viewing: Attachment | null = active
     ? { ref: active.sourceRef, label: active.title }
     : null;
@@ -259,16 +339,7 @@ export function SessionRoom({
         The room's first row, and outside the branch below, because which
         session this is does not stop being true when the desk takes the pane.
       */}
-      <SessionHeader
-        session={session}
-        presence={presence}
-        presenceState={presenceState}
-        observing={observing}
-        inVoice={inVoice}
-        voiceUnavailableReason={voiceUnavailableReason}
-        activity={inVoice ? undefined : thinkingActivity}
-        onToggleVoice={toggleVoice}
-      />
+      <SessionHeader session={session} observing={observing} inVoice={inVoice} />
 
       {!workbenchTakesPane && (
         <div className="conversation-column">
@@ -313,6 +384,12 @@ export function SessionRoom({
                 onRemoveAttachment={detach}
                 onAsk={ask}
                 onInstruct={instruct}
+                presence={presence}
+                presenceState={presenceState}
+                inVoice={inVoice}
+                voiceUnavailableReason={voiceUnavailableReason}
+                activity={inVoice ? undefined : thinkingActivity}
+                onToggleVoice={toggleVoice}
               />
             </>
           )}
@@ -344,13 +421,16 @@ export function SessionRoom({
         <Workbench
           state={workbench}
           full={workbenchTakesPane}
-          onActivate={(id) => dispatch({ type: 'activate', id })}
-          onTogglePin={() => dispatch({ type: 'togglePin' })}
-          onAttach={(artifact: WorkbenchArtifact) =>
-            // An address, not the material: the investigator opens it for
-            // itself when the question is asked.
-            attach({ ref: artifact.sourceRef, label: artifact.title })
-          }
+          entries={entries}
+          findFiles={findFiles}
+          onActivate={(id) => {
+            dispatch({ type: 'activate', id });
+            const tab = workbench.tabs.find((candidate) => candidate.id === id);
+            if (tab) void resolveTab(tab);
+          }}
+          onClose={(id) => dispatch({ type: 'closeTab', id })}
+          onKeep={(id) => dispatch({ type: 'keep', id })}
+          onOpenRef={(ref) => void openRef(ref)}
         />
       )}
 

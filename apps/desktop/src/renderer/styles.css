@@ -38,10 +38,34 @@
    * for the only reason that is actually true: macOS holds space for its own
    * controls in a window and does not in fullscreen. See `--chrome-left`.
    */
-  --chrome-height: 56px;
+  /*
+   * A fallback only. `.app` sets this from `CHROME_HEIGHT` in
+   * `shared/layout.ts`, which is also what positions the real traffic lights
+   * — the two have to be one number. Kept in step by hand, and kept here for
+   * anything rendered outside the shell.
+   */
+  --chrome-height: 40px;
   --chrome-gutter: 14px;
+  /*
+   * The hit target; the glyph inside it is `--chrome-glyph`, and smaller.
+   * A fallback — `.app` sets it from `CHROME_CONTROL`, which the band's left
+   * inset is computed from.
+   */
   --chrome-control: 26px;
   --chrome-gap: 16px;
+  /* A fallback; `.app` sets it from `CHROME_GLYPH`. */
+  --chrome-glyph: 17.6px;
+  /* What a traffic light and the band's title measure. */
+  --chrome-body: 12px;
+  /* One light wide: the gap between the band's own controls. */
+  --chrome-breathing: 12px;
+  /*
+   * The session's title, set so its capitals stand exactly a traffic light
+   * tall. Not 12: a 12px face has an 8.5px cap height and read as small
+   * beside the lights, where a 12px disc is 12px of ink. Matched on what the
+   * eye sees, the same way the glyphs are.
+   */
+  --chrome-title: 17px;
   /*
    * What macOS is holding at the top left.
    *
@@ -160,6 +184,20 @@
   /* How far the text dissolves for. One distance, so every fade matches. */
   --fade: 2.4em;
   --shadow-menu: 0 18px 40px rgba(0, 0, 0, 0.55);
+}
+
+/*
+ * How much of the right edge is already claimed, so text stops short of it.
+ *
+ * Declared rather than merely used, because a plain custom property is a
+ * string as far as animation is concerned: it would jump from nothing to a
+ * control's width the instant a pointer arrived. A registered length
+ * interpolates, so the text draws back to make room instead of snapping.
+ */
+@property --fade-gap {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
 }
 
 /*
@@ -427,7 +465,16 @@ textarea, input { font: inherit; color: inherit; }
  * them and neither of these is reached.
  */
 .app {
-  --chrome-content-left: calc(var(--chrome-left) + var(--chrome-control) + var(--chrome-gap));
+  /*
+   * Two controls on the left now, not one: the panel toggle and the pencil,
+   * with the band's own gap between them. Counting one was what slid the
+   * room's orb and title under the pencil whenever the projects panel was
+   * closed — the clearance has to describe what is actually standing there.
+   */
+  --chrome-content-left: calc(
+    var(--chrome-left) + 2 * var(--chrome-control) + var(--chrome-breathing) +
+      var(--chrome-gap)
+  );
   --chrome-content-right: calc(var(--chrome-gutter) + var(--chrome-control) + var(--chrome-gap));
 }
 
@@ -482,8 +529,26 @@ textarea, input { font: inherit; color: inherit; }
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 4px;
+  /*
+   * The same measure that separates the traffic lights from the first of
+   * these. One rhythm along the row rather than a tight pair of Vowe's
+   * buttons sitting apart from macOS's.
+   */
+  gap: var(--chrome-breathing, 12px);
   pointer-events: auto;
+}
+/*
+ * Anything of Vowe's standing on the band wears the toggles' box.
+ *
+ * Qualified with `.icon-button` on purpose: that class is the composer's
+ * 24px size and is declared further down, so an unqualified rule here loses
+ * the tie on source order and the button comes out two pixels short.
+ */
+.icon-button.chrome-button {
+  width: var(--chrome-control);
+  height: var(--chrome-control);
+  flex: 0 0 var(--chrome-control);
+  border-radius: 6px;
 }
 /* The desk's control sits against the window's right edge, not the room's. */
 .chrome-actions { margin-left: auto; }
@@ -537,24 +602,37 @@ textarea, input { font: inherit; color: inherit; }
  * row. Anything here that can be clicked takes itself out of it.
  */
 .room-identity button { -webkit-app-region: no-drag; }
+/*
+ * One line, not two.
+ *
+ * The band is a row of 12px things now, and a two-line identity was the only
+ * thing on it tall enough to set the band's height by itself. The title leads
+ * and what it is follows, on the same baseline — the same order the stacked
+ * version read in, with the line break taken out.
+ */
 .room-identity .stack {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: baseline;
+  gap: 10px;
   overflow: hidden;
 }
 .room-identity h1 {
   margin: 0;
+  /* Shrinks and fades before the line that qualifies it does. */
   flex: 0 1 auto;
-  font-size: 15px;
+  min-width: 0;
+  /* Its capitals stand a traffic light tall — see `--chrome-title`. */
+  font-size: var(--chrome-title, 17px);
   font-weight: 600;
   letter-spacing: -0.014em;
   color: var(--ink-bright);
 }
 .room-identity .meta {
+  flex: 0 1 auto;
   min-width: 0;
+  white-space: nowrap;
   font-family: var(--mono);
   font-size: 10.5px;
   letter-spacing: 0.06em;
@@ -596,6 +674,27 @@ textarea, input { font: inherit; color: inherit; }
   color: var(--ink-7);
   transition: color 180ms ease, background 180ms ease;
 }
+/*
+ * The glyph is the window's button's size; the box around it is not.
+ *
+ * One size for every glyph on this row, so the panel toggles and the
+ * workbench's `+` agree with each other and hold their own beside macOS's
+ * buttons. Only the drawing is sized here — the 26px target stays, because
+ * the thing you aim at should be bigger than the thing you see.
+ */
+.panel-toggle svg,
+.chrome-button svg,
+.tab-launcher svg {
+  /*
+   * `flex: 0 0 auto` is load-bearing: as an ordinary flex item the glyph was
+   * shrunk below the width asked for here, and an SVG scales its artwork by
+   * the smaller of its two ratios — so a squeezed width quietly shortened the
+   * drawing as well, which is the thing this size exists to control.
+   */
+  flex: 0 0 auto;
+  width: var(--chrome-glyph);
+  height: var(--chrome-glyph);
+}
 .panel-toggle:hover { background: var(--selected); color: var(--ink); }
 .panel-toggle.open { color: var(--ink-5); }
 
@@ -636,10 +735,101 @@ textarea, input { font: inherit; color: inherit; }
   white-space: nowrap;
   text-overflow: clip;
 }
+/*
+ * `--fade-gap` is how much of the right edge is spoken for by something else
+ * — a control that appears on hover and needs the text out from under it. It
+ * is zero everywhere by default, so the text dissolves into the boundary
+ * itself; where a row raises it, the text finishes that much earlier and the
+ * fade is the same length either way. Registered as a real length so it can
+ * be animated rather than snapping.
+ */
+/*
+ * The ramp is curved, not straight.
+ *
+ * A linear mask spends its whole length taking opacity away at a constant
+ * rate, so the first third of it removes a tenth of the text's contrast —
+ * too little to read as a fade, enough to dim a word that is nowhere near the
+ * edge. Over a long fade, and over a longer one still while a row is holding
+ * a gap open, that reaches back into text the reader is trying to read and
+ * makes it look slightly wrong rather than slightly gone.
+ *
+ * So the stops trace `1 - t²`: the opening fifth is all but untouched and the
+ * back half does most of the work — enough of a hold to keep the fade off
+ * text the reader is still in, without the abruptness of a steeper curve. The dissolve
+ * still lands on the boundary — only what happens before it changes.
+ */
 .fading.is-faded {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
-  mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+  -webkit-mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - var(--fade-gap) - var(--fade)),
+    rgba(0, 0, 0, 0.96) calc(100% - var(--fade-gap) - var(--fade) * 0.8),
+    rgba(0, 0, 0, 0.84) calc(100% - var(--fade-gap) - var(--fade) * 0.6),
+    rgba(0, 0, 0, 0.64) calc(100% - var(--fade-gap) - var(--fade) * 0.4),
+    rgba(0, 0, 0, 0.36) calc(100% - var(--fade-gap) - var(--fade) * 0.2),
+    transparent calc(100% - var(--fade-gap)));
+  mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - var(--fade-gap) - var(--fade)),
+    rgba(0, 0, 0, 0.96) calc(100% - var(--fade-gap) - var(--fade) * 0.8),
+    rgba(0, 0, 0, 0.84) calc(100% - var(--fade-gap) - var(--fade) * 0.6),
+    rgba(0, 0, 0, 0.64) calc(100% - var(--fade-gap) - var(--fade) * 0.4),
+    rgba(0, 0, 0, 0.36) calc(100% - var(--fade-gap) - var(--fade) * 0.2),
+    transparent calc(100% - var(--fade-gap)));
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
 }
+
+/*
+ * While it is scrolling itself to be read.
+ *
+ * The fade follows the text: as soon as any of the name has gone past the
+ * left edge there is more that way, and once the end arrives there is no
+ * longer anything beyond the right. Two properties at zero, raised by the
+ * classes the component sets from where it has scrolled to — the same
+ * treatment the tab strip and the execution trail use.
+ */
+.fading.is-revealing {
+  --fade-start: 0px;
+  --fade-end: 0px;
+  /* The same curve, mirrored, on whichever edge has more text beyond it. */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    rgba(0, 0, 0, 0.36) calc(var(--fade-start) * 0.2),
+    rgba(0, 0, 0, 0.64) calc(var(--fade-start) * 0.4),
+    rgba(0, 0, 0, 0.84) calc(var(--fade-start) * 0.6),
+    rgba(0, 0, 0, 0.96) calc(var(--fade-start) * 0.8),
+    #000 var(--fade-start),
+    #000 calc(100% - var(--fade-gap) - var(--fade-end)),
+    rgba(0, 0, 0, 0.96) calc(100% - var(--fade-gap) - var(--fade-end) * 0.8),
+    rgba(0, 0, 0, 0.84) calc(100% - var(--fade-gap) - var(--fade-end) * 0.6),
+    rgba(0, 0, 0, 0.64) calc(100% - var(--fade-gap) - var(--fade-end) * 0.4),
+    rgba(0, 0, 0, 0.36) calc(100% - var(--fade-gap) - var(--fade-end) * 0.2),
+    transparent calc(100% - var(--fade-gap)));
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    rgba(0, 0, 0, 0.36) calc(var(--fade-start) * 0.2),
+    rgba(0, 0, 0, 0.64) calc(var(--fade-start) * 0.4),
+    rgba(0, 0, 0, 0.84) calc(var(--fade-start) * 0.6),
+    rgba(0, 0, 0, 0.96) calc(var(--fade-start) * 0.8),
+    #000 var(--fade-start),
+    #000 calc(100% - var(--fade-gap) - var(--fade-end)),
+    rgba(0, 0, 0, 0.96) calc(100% - var(--fade-gap) - var(--fade-end) * 0.8),
+    rgba(0, 0, 0, 0.84) calc(100% - var(--fade-gap) - var(--fade-end) * 0.6),
+    rgba(0, 0, 0, 0.64) calc(100% - var(--fade-gap) - var(--fade-end) * 0.4),
+    rgba(0, 0, 0, 0.36) calc(100% - var(--fade-gap) - var(--fade-end) * 0.2),
+    transparent calc(100% - var(--fade-gap)));
+}
+.fading.is-revealing.more-start { --fade-start: var(--fade); }
+.fading.is-revealing.more-end { --fade-end: var(--fade); }
+/*
+ * Text that has run to its end still has to clear a control parked over the
+ * edge, so a row holding a gap open always keeps a fade there — otherwise the
+ * tail would meet the gap as a cut.
+ */
+.session-row:hover .fading.is-revealing,
+.session-row:focus-within .fading.is-revealing { --fade-end: var(--fade); }
 
 /*
  * The same shadow, for a block held to a couple of lines.
@@ -662,13 +852,17 @@ textarea, input { font: inherit; color: inherit; }
 }
 .fading-block.is-faded {
   -webkit-mask-image:
-    linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%),
+    linear-gradient(to right, #000 calc(100% - var(--fade)),
+      rgba(0, 0, 0, 0.84) calc(100% - var(--fade) * 0.6),
+      rgba(0, 0, 0, 0.36) calc(100% - var(--fade) * 0.2), transparent 100%),
     linear-gradient(#000, #000);
   -webkit-mask-size: 100% var(--fade-line), 100% calc(100% - var(--fade-line));
   -webkit-mask-position: left bottom, left top;
   -webkit-mask-repeat: no-repeat;
   mask-image:
-    linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%),
+    linear-gradient(to right, #000 calc(100% - var(--fade)),
+      rgba(0, 0, 0, 0.84) calc(100% - var(--fade) * 0.6),
+      rgba(0, 0, 0, 0.36) calc(100% - var(--fade) * 0.2), transparent 100%),
     linear-gradient(#000, #000);
   mask-size: 100% var(--fade-line), 100% calc(100% - var(--fade-line));
   mask-position: left bottom, left top;
@@ -864,6 +1058,35 @@ textarea, input { font: inherit; color: inherit; }
 .project-row.selected { background: var(--selected); }
 
 /*
+ * Finding what the row is not showing.
+ *
+ * On hover and on focus only. The panel's job is to be a short list of
+ * current work, and a magnifier standing permanently on every project would
+ * make the thing that is normally unnecessary the most visible part of a row.
+ */
+.project-row .find {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-8);
+  opacity: 0;
+  pointer-events: none;
+}
+.project-row:hover .find,
+.project-row:focus-within .find,
+.project-row .find[aria-expanded='true'] { opacity: 1; pointer-events: auto; }
+.project-row .find:hover { background: var(--fill-2); color: var(--ink-2); }
+.project-row .find:disabled { opacity: 0; pointer-events: none; }
+
+
+/*
  * Two controls in one row, because these are two different acts: showing a
  * project's sessions, and opening the project.
  */
@@ -924,30 +1147,132 @@ textarea, input { font: inherit; color: inherit; }
  * step the eye catches rather than the smallest offset that technically
  * differs from the row above.
  */
-.session-list { display: flex; flex-direction: column; padding-left: 28px; }
+/*
+ * Indented so a session's name starts where its project's name starts.
+ *
+ * The status dot hangs in the gutter to the left of that line, under the
+ * project's own icon, so the panel reads as one column of text with markers
+ * beside it rather than as two columns that nearly line up.
+ */
+.session-list { display: flex; flex-direction: column; padding-left: 10px; }
 
+/* The row is the container; the two controls inside it are the targets. */
 .session-row {
   position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
   width: 100%;
-  border: 0;
   border-radius: 6px;
-  background: transparent;
-  padding: 6px 8px;
-  text-align: left;
+  /*
+   * One distance for both lines of the row, in pixels rather than ems.
+   *
+   * `--fade` is normally relative to the text it is fading, which is right
+   * when the fades are rooms apart. Here they are one above the other and
+   * two points apart in size, and two fades of visibly different lengths
+   * stacked in the same 30 pixels of column read as a mistake. So the row
+   * fixes the distance and the title and the activity line dissolve
+   * identically.
+   *
+   * Longer here than the 2.4em elsewhere, and deliberately so. The resting
+   * fade and the hovered one are the same gradient moved sideways, so a short
+   * resting fade made arriving on a row look like a shadow appearing rather
+   * than one sliding over. At this length the dissolve is already the row's
+   * normal state and the pointer only shifts where it lands.
+   */
+  --fade: 50px;
+  /*
+   * Fast, because this is not a thing that moves — it is text getting out of
+   * the way of a control that has already arrived. Anything long enough to
+   * watch reads as the row animating rather than as the button appearing.
+   * Short and eased out: it is over by the time the eye reaches the edge.
+   */
+  transition: --fade-gap 40ms ease-out;
 }
 .session-row:hover { background: var(--hover); }
 .session-row.selected { background: var(--selected); }
+/*
+ * Room for the control that appears on hover, taken only while it is there.
+ *
+ * Held open by the fade rather than by layout: reserving the width all the
+ * time would truncate every title in the panel for the sake of a button that
+ * is almost never on screen, and would move the text sideways the moment one
+ * appeared. Instead the text keeps the whole row until the pointer arrives,
+ * and then draws back by exactly the button's footprint — 24px of control and
+ * the 4px it sits in from the edge.
+ */
+.session-row:hover,
+.session-row:focus-within { --fade-gap: 28px; }
+.session-row .open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  /*
+   * No padding on the right: both lines run all the way to the edge of the
+   * row and dissolve into it. A right inset would have ended the fade short
+   * of the boundary, which is the one place the eye reads it against.
+   */
+  padding: 6px 0 6px 8px;
+  text-align: left;
+  color: inherit;
+}
+/*
+ * Putting a session away, from the list it is in.
+ *
+ * On hover and focus only: the panel is a list of work, and a control on
+ * every row permanently would make dismissing things the most visible thing
+ * you can do with them.
+ */
+.session-row .hide {
+  /*
+   * Over the row, not inside it. In the flow this button held its 24px open
+   * on every row whether or not it was showing, which is the width the title
+   * wanted; the fade above makes the room instead, when it is needed.
+   */
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-9);
+  opacity: 0;
+  pointer-events: none;
+}
+.session-row:hover .hide,
+.session-row:focus-within .hide { opacity: 1; pointer-events: auto; }
+.session-row .hide:hover { background: var(--fill-2); color: var(--ink-2); }
+/*
+ * The whole first line fades and scrolls as one thing.
+ *
+ * The title used to carry the fade by itself, which put the dissolve wherever
+ * the title happened to end — before the provider's initials, a dozen pixels
+ * short of the edge — while the activity line under it dissolved at the edge
+ * itself. Two boundaries in one row. The line is the unit now: the dot, the
+ * name and the initials scroll together and dissolve at the same place the
+ * line below them does.
+ */
 .session-row .line {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   min-width: 0;
 }
 .session-row .label {
-  flex: 1;
+  /* Its full width, so the line overflows and there is something to reveal. */
+  flex: 0 0 auto;
   font-size: 12.5px;
   font-weight: 500;
   color: var(--ink-2);
@@ -959,12 +1284,13 @@ textarea, input { font: inherit; color: inherit; }
   letter-spacing: 0.12em;
   color: var(--ink-9);
 }
+/* What it is doing — one line under the name, inset to clear the dot. */
 .session-row .activity {
+  width: 100%;
+  min-width: 0;
   padding-left: 14px;
   font-size: 11px;
   color: var(--ink-6);
-  overflow: hidden;
-  white-space: nowrap;
 }
 
 .dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px; display: inline-block; }
@@ -1472,19 +1798,34 @@ textarea, input { font: inherit; color: inherit; }
 /*
  * The presence, which is the session's and sits beside its title.
  */
+/*
+ * Vowe in the composer, beside send.
+ *
+ * Square and the send button's size, so the two read as a pair of controls
+ * rather than an illustration next to a button. No background of its own: the
+ * orb is the affordance, and a plate behind it would draw a box around
+ * something that already has an edge.
+ *
+ * It does not dim when it cannot be used. A presence that greys out looks
+ * like Vowe is unwell rather than like the microphone is unavailable, so the
+ * reason is in the tooltip and the button simply does not respond.
+ */
 .talk {
   position: relative;
-  flex: 0 0 auto;
-  display: flex;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   border: 0;
+  border-radius: 10px;
   background: transparent;
   padding: 0;
-  color: var(--ink-5);
 }
-.talk:hover { color: var(--ink); }
-.talk .hint { font-size: 11.5px; white-space: nowrap; }
+.talk:hover:not(:disabled) { background: var(--hover); }
+.talk.in-voice { background: var(--fill-3); }
+.talk:disabled { cursor: default; }
 
 /*
  * The column starts at the top and grows downwards, like a document.
@@ -1764,15 +2105,18 @@ code.inline {
 .milestone span.rule { flex: 1; height: 1px; background: var(--divider); }
 .milestone .text {
   font-family: var(--mono);
-  font-size: 10px;
+  /*
+   * The size everything else is: a traffic light, a glyph's body, the band's
+   * title. At 10px the chronology was the smallest type in the window and the
+   * hardest thing in it to read, which is backwards — this is the record of
+   * what actually happened.
+   */
+  font-size: var(--chrome-body, 12px);
   letter-spacing: 0.06em;
   color: var(--ink-9);
   white-space: nowrap;
 }
 .milestone .text.failed { color: var(--bad); }
-
-/* The kind of lookup, as a glyph beside its label. */
-.check-icon { flex: 0 0 auto; color: var(--ink-9); }
 
 /*
  * One execution timeline: lookups and thinking, in the order they happened.
@@ -1785,21 +2129,52 @@ code.inline {
 /*
  * The window onto the column.
  *
- * Tall enough for about ten rows on an ordinary window and never the length of
- * the page: the height follows the app's, within bounds, rather than a row
- * count, because rows are not all one line. Short traces take their natural
- * height; long ones scroll inside themselves.
+ * Sixteen rows, and never more than half the page. Stated as a row count
+ * because that is what someone reading a trace is counting; the second bound
+ * is there for a short window, where sixteen rows would be the whole of it.
+ * Short traces take their natural height; long ones scroll inside themselves.
+ *
+ * The count is generous rather than tight because of what is being read
+ * here. A trace is scanned for the shape of what Vowe did — four searches,
+ * then a diff, then a long thought — and a window showing six rows of a
+ * twenty-row investigation is a window you cannot see the shape through.
  *
  * The edge fades are a mask on the scroller, not a gradient drawn over the
  * rows, so they fade into whatever the conversation sits on, catch no clicks,
  * and are only as deep as a fraction of a row. Each one is present only while
  * there is something beyond that edge.
  */
-.exec-viewport { position: relative; min-width: 0; }
+/*
+ * The row, as arithmetic, because the window onto the rows is stated in rows.
+ *
+ * Size, leading, the padding a row carries and the space between two of them
+ * live here and nowhere else — the height below is sixteen of them, and a
+ * height that said `430px` would stop being sixteen the first time any one of
+ * the four moved.
+ */
+.exec-viewport {
+  position: relative;
+  min-width: 0;
+  --exec-size: 12.5px;
+  --exec-leading: 1.5;
+  /* A row's own padding, which is part of how tall a row is. */
+  --exec-row-pad: 1px;
+  --exec-gap: 5px;
+  --exec-row: calc(var(--exec-size) * var(--exec-leading) + var(--exec-row-pad) * 2);
+  --exec-rows: 16;
+}
 .exec-scroll {
   --fade-above: 0px;
   --fade-below: 0px;
-  max-height: clamp(180px, 34vh, 300px);
+  /*
+   * Sixteen rows, or half the page — whichever is less. The second term is
+   * what keeps a short window from handing the whole of itself to the
+   * working and leaving the answer below the fold.
+   */
+  max-height: min(
+    calc(var(--exec-rows) * var(--exec-row) + (var(--exec-rows) - 1) * var(--exec-gap)),
+    50vh
+  );
   overflow-y: auto;
   scrollbar-gutter: stable;
   -webkit-mask-image: linear-gradient(
@@ -1838,7 +2213,27 @@ code.inline {
 .exec-latest:hover { color: var(--ink-3); }
 
 /* A settled investigation, before anyone opens it: one line in the same ink. */
-.settled-investigation { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+/*
+ * No gap: the space under the summary belongs to the trace and travels with
+ * it, so a closed investigation is exactly one line tall rather than a line
+ * and the memory of a gap.
+ */
+.settled-investigation { display: flex; flex-direction: column; min-width: 0; }
+
+/*
+ * The whole trace, opening the way one row of it does.
+ *
+ * The same grid-track disclosure as a thought and as the ribbon — one
+ * movement in the application, not three that happen to look alike.
+ */
+.exec-details {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 220ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 160ms ease;
+}
+.exec-details.open { grid-template-rows: 1fr; opacity: 1; }
+.exec-details-inner { min-height: 0; overflow: hidden; padding-top: 4px; }
 .exec-summary {
   display: inline-flex;
   align-items: center;
@@ -1848,18 +2243,36 @@ code.inline {
   border-radius: 6px;
   background: transparent;
   padding: 1px 8px 1px 6px;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--ink-7);
 }
 .exec-summary:hover { background: var(--hover); color: var(--ink-4); }
 .exec-summary svg { flex: 0 0 auto; color: var(--ink-9); transition: transform 160ms ease; }
 .exec-summary.open svg { transform: rotate(90deg); }
 
+/*
+ * The rows, set apart enough to be counted.
+ *
+ * At three pixels the trace read as one block of small grey text that the eye
+ * had to parse a line at a time. A few more is still a list rather than a
+ * stack of paragraphs, and it is what makes "four searches, then a diff, then
+ * a long thought" something you see rather than something you read.
+ */
 .exec {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin-left: 5px;
+  gap: var(--exec-gap, 5px);
+  /*
+   * Under the caret, and under the summary's own words.
+   *
+   * The rule used to sit at 5px, which put it to the left of everything it
+   * belongs to: the caret above pointed down at nothing. At 11px the rule
+   * runs through the middle of that caret — the summary's left padding plus
+   * half the glyph — and, with its own padding, brings the rows out to
+   * exactly where the summary's text starts. One vertical line through the
+   * caret, the rows, and the words that opened them.
+   */
+  margin-left: 11px;
   padding-left: 5px;
   border-left: 1px solid var(--divider);
 }
@@ -1882,7 +2295,7 @@ code.inline {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  padding: 1px 8px;
+  padding: var(--exec-row-pad, 1px) 8px;
   text-align: left;
 }
 /* Following a lookup opens what it found. Only a lookup that found something. */
@@ -1892,11 +2305,13 @@ button.check-row:hover .target-label { color: var(--ink-4); }
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--exec-size, 12.5px);
+  line-height: var(--exec-leading, 1.5);
   color: var(--ink-6);
 }
+/* Under the label it belongs to, which no longer begins past an icon. */
 .exec-step .check-detail {
-  margin-left: 26px;
+  margin-left: 8px;
   font-size: 11.5px;
   color: var(--ink-8);
 }
@@ -1904,18 +2319,34 @@ button.check-row:hover .target-label { color: var(--ink-4); }
 /*
  * A span of exposed working, in the same language as a lookup.
  *
- * Same scale, same indentation, same muted ink, same icon slot — thinking is
- * an execution event and not an announcement. It had grown a presence mark and
- * a larger face, which made the least certain row in the column the loudest
- * and put Vowe's identity beside a line that is not Vowe speaking.
+ * Same scale, same indentation, same muted ink — thinking is an execution
+ * event and not an announcement. It had grown a presence mark and a larger
+ * face, which made the least certain row in the column the loudest and put
+ * Vowe's identity beside a line that is not Vowe speaking.
+ *
+ * The caret follows the label rather than leading it. In front, it reserved a
+ * column for itself down the whole trace, which every other row then had to
+ * be indented past whether or not it had anything to open — so the one
+ * disclosure in the column set the left edge for all of it. Behind the words
+ * it belongs to the row that actually opens, and every label in the trace
+ * starts at the same place.
  */
 .exec-step.thought { display: flex; flex-direction: column; gap: 2px; }
-.exec-step.thought > .label { padding: 1px 8px; }
+.exec-step.thought > .label { padding: var(--exec-row-pad, 1px) 8px; }
+/*
+ * The rows are smaller than the line that opens them.
+ *
+ * The header is the thing you skip past and the rows are what you came for —
+ * but the rows are also nine of them, and a trace set at the summary's size
+ * competed with the answer underneath it. So the summary takes the larger
+ * face and the trace sits a half point below it, at one size and one line
+ * height for both kinds of row.
+ */
 .exec-step.thought,
 .exec-step.thought > button {
   color: var(--ink-6);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: var(--exec-size, 12.5px);
+  line-height: var(--exec-leading, 1.5);
 }
 .exec-step.thought > button {
   display: flex;
@@ -1925,10 +2356,19 @@ button.check-row:hover .target-label { color: var(--ink-4); }
   border: 0;
   border-radius: 6px;
   background: transparent;
-  padding: 1px 8px;
+  padding: var(--exec-row-pad, 1px) 8px;
 }
-.exec-step.thought > button svg { flex: 0 0 auto; color: var(--ink-9); }
-.exec-step.thought > button:hover { background: var(--hover); color: var(--ink-4); }
+/* Set in from the words it opens, and never wider than them. */
+.exec-step.thought > button svg { flex: 0 0 auto; margin-left: -2px; color: var(--ink-9); }
+/*
+ * Hovering brightens the words and nothing else.
+ *
+ * A wash behind them drew a box the width of the label, which made a row of
+ * the trace look like a button in a list every time the pointer crossed it.
+ * The text coming up is enough to say it can be opened, and it leaves the
+ * column as still as it is when nobody is pointing at it.
+ */
+.exec-step.thought > button:hover { color: var(--ink-4); }
 .exec-step.thought > button svg { transition: transform 160ms ease; }
 .exec-step.thought.open > button svg { transform: rotate(90deg); }
 /* The one counting up is the live state, so it carries the pulse. */
@@ -1941,8 +2381,36 @@ button.check-row:hover .target-label { color: var(--ink-4); }
  * setting exposed reasoning in the answer's size and the answer's white. One
  * step brighter than its label for reading, and still well short of the answer.
  */
+/*
+ * Opening is a movement, not a cut.
+ *
+ * The same disclosure the ribbon uses: a grid track from `0fr` to `1fr`, so
+ * the row grows to whatever the text turns out to be without anyone having to
+ * measure it first, and the reverse plays on the way closed. A height
+ * transition cannot do this — `auto` is not a length — and animating a fixed
+ * height would mean knowing how tall the thought is before it is laid out.
+ *
+ * Short and unhurried rather than quick: a trace is scanned, and a row that
+ * snaps open under the pointer is easy to mistake for one that jumped.
+ */
+.exec-step.thought .thought-details {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 220ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 160ms ease;
+}
+.exec-step.thought.open .thought-details { grid-template-rows: 1fr; opacity: 1; }
+.thought-details-inner { min-height: 0; overflow: hidden; }
+
+/*
+ * Flush with the label that opens it.
+ *
+ * The indent used to clear the caret in front of the row; the caret is behind
+ * the words now, so the inset was holding a column nothing is in. The text
+ * begins exactly where `Thought for 3.4s` begins.
+ */
 .exec .thought-text {
-  margin: 1px 0 4px 26px;
+  margin: 1px 0 4px 8px;
   max-width: 60ch;
   font-size: 12.5px;
   line-height: 1.55;
@@ -2311,6 +2779,15 @@ button.check-row:hover .target-label { color: var(--ink-4); }
 }
 .menu.context { left: 10px; width: 206px; gap: 1px; }
 .menu.destination-menu { left: 44px; width: 274px; }
+/* The one menu that opens downwards, because the `+` it hangs off is on top. */
+.menu.launcher {
+  top: 34px;
+  bottom: auto;
+  left: 12px;
+  width: min(300px, calc(100% - 24px));
+  max-height: 340px;
+  gap: 2px;
+}
 .menu .menu-label {
   padding: 5px 9px 6px;
   font-family: var(--mono);
@@ -2337,6 +2814,139 @@ button.check-row:hover .target-label { color: var(--ink-4); }
 .menu button .title { font-size: 13px; font-weight: 500; color: var(--ink-strong); }
 .menu button .what { font-size: 11.5px; color: var(--ink-6); text-wrap: pretty; }
 .menu button:disabled .title { color: var(--ink-6); }
+
+/*
+ * The object launcher's insides.
+ *
+ * A field and a list of concrete things, on the menu's own surface: this is
+ * the same popover the composer opens, asking a different question. Rows are
+ * `div role="option"` rather than buttons, so `.menu button` does not claim
+ * them and the field keeps focus while the cursor moves.
+ */
+.launcher-field {
+  flex: 0 0 auto;
+  border: 0;
+  border-bottom: 1px solid var(--divider);
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+  padding: 4px 9px 8px;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.launcher-list { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.launcher-entry {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 6px 9px;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.launcher-entry .label { flex: 0 1 auto; min-width: 0; }
+.launcher-entry .detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-8);
+}
+.launcher-entry.is-cursor,
+.launcher-entry:hover { background: var(--hover-strong); }
+.launcher .empty { padding: 8px 9px 10px; font-size: 12.5px; }
+
+/*
+ * Finding a session the panel is not showing.
+ *
+ * Anchored to the project row, and never wider than the panel it hangs in.
+ * A fixed 320px popover inside a 268px column was adding horizontal scroll to
+ * the nav behind it, which shunted every row in the sidebar sideways — an
+ * overlay must not be able to change the layout of what it covers.
+ *
+ * Every rule here is written under `.menu.finder`, because `.menu button`
+ * further up sets `display: flex; align-items: center` and out-specifies a
+ * bare class — which is what turned these rows into centred single lines.
+ */
+.menu.finder {
+  top: 30px;
+  bottom: auto;
+  left: 6px;
+  right: 6px;
+  max-height: 340px;
+  gap: 2px;
+}
+.menu.finder .launcher-list { min-height: 0; overflow-y: auto; }
+.menu.finder .finder-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 7px;
+}
+.menu.finder .finder-row:hover { background: var(--hover-strong); }
+.menu.finder .finder-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 6px 9px;
+  text-align: left;
+}
+.menu.finder .finder-open:hover { background: transparent; }
+.menu.finder .line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+}
+.menu.finder .label { flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: var(--ink-2); }
+/* Against the right edge, so the ages read as a column of their own. */
+.menu.finder .when {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 10px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-9);
+  white-space: nowrap;
+}
+/* Why this one is not in the panel. Absent when it is. */
+.menu.finder .why {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-9);
+}
+
+
+/*
+ * Nothing open.
+ *
+ * Two words and a few real things, not an explanation of the panel. The strip
+ * above already has a `+` in it, so the desk explains itself; what this adds
+ * is somewhere to start.
+ */
+.workbench-empty { gap: 14px; padding-top: 8px; }
+.workbench-empty .quick-open {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 -9px;
+}
+.workbench-empty .small-button { align-self: flex-start; }
 
 .offer {
   display: flex;
@@ -2461,50 +3071,207 @@ button.check-row:hover .target-label { color: var(--ink-4); }
 .workbench {
   grid-row: 1 / -1;
   grid-column: 2;
-  padding-top: var(--chrome-height);
   min-width: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   background: var(--rail);
 }
-/* Taking the pane, it is the only column there is. */
-.session-room.desk-takes-pane .workbench { grid-column: 1; }
+/*
+ * Taking the pane, it is the only column there is — and the band above it
+ * belongs to the session's identity, which is drawn over that same column.
+ * So the strip steps back down under the band here: it shares the band only
+ * when it is a panel beside the conversation, with its own stretch of it.
+ */
+.session-room.desk-takes-pane .workbench {
+  grid-column: 1;
+  padding-top: var(--chrome-height);
+}
 .workbench > * { min-width: var(--desk-width, 380px); }
 .workbench.full { min-width: 0; }
 .workbench.full > * { min-width: 0; }
 
 /*
- * The desk's own header: the first row of the panel, like the sidebar's.
+ * What is open, along the top.
+ *
+ * This replaced a chip strip along the bottom of the panel that named the same
+ * artifacts the header above it already named — two selection systems a panel
+ * apart, one of which was the title. The tab is the name now, so the title is
+ * gone and the strip moved to where a strip of open things belongs. Deleting
+ * the header is also what pays for the strip: the chrome budget did not grow.
  *
  * No inset for the desk toggle, because the toggle is on the band above and
  * not floating over this row any more.
  */
-.workbench-header {
+.workbench-tabs {
+  position: relative;
+  flex: 0 0 auto;
   display: flex;
+  align-items: center;
+  gap: 4px;
+  /*
+   * On the window's band, not under it.
+   *
+   * The panel used to push all of its contents below `--chrome-height`, which
+   * left the strip a full band's height beneath the two panel toggles — two
+   * rows of controls along the top of one window. It is the same row now, so
+   * the tabs, the `+` and both toggles share a baseline.
+   *
+   * The right inset is the band's own: it holds the `+` clear of the desk
+   * control, which floats over this panel at the window's right edge.
+   */
+  height: var(--chrome-height);
+  padding: 0 var(--chrome-content-right) 0 16px;
+}
+/*
+ * Last in the row, against the desk's control — and the same box as it.
+ *
+ * `.icon-button` is 24px, which is the composer's size and not the band's.
+ * Everything standing on this row is `--chrome-control` wide so the toggles,
+ * the `+` and the tabs are one family rather than three near-misses.
+ */
+.tab-launcher {
+  flex: 0 0 var(--chrome-control);
+  width: var(--chrome-control);
+  height: var(--chrome-control);
+}
+
+/*
+ * The scroller, and the horizontal transposition of `.exec-scroll`: two custom
+ * properties at zero, raised to a real distance by a class the component sets
+ * from a measurement. Same mask, same distance, same reason — a fade says
+ * "there is more that way" without drawing a piece of furniture over the tab
+ * it is covering.
+ */
+.tabs {
+  --fade-start: 0px;
+  --fade-end: 0px;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Nothing here may hand a horizontal swipe to the window behind it. */
+  overscroll-behavior-x: contain;
+  /* A 10px bar under a 26px strip is a third of it. The fades say the same. */
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(
+    to right, transparent 0, #000 var(--fade-start),
+    #000 calc(100% - var(--fade-end)), transparent 100%);
+  mask-image: linear-gradient(
+    to right, transparent 0, #000 var(--fade-start),
+    #000 calc(100% - var(--fade-end)), transparent 100%);
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tabs.more-start { --fade-start: 16px; }
+.tabs.more-end { --fade-end: 16px; }
+
+.tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 92px;
+  max-width: 172px;
+  height: 26px;
+  padding: 0 4px 0 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-6);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  /* The mask clips; the ring is drawn tight so an edge tab keeps all of it. */
+  outline-offset: 0;
+}
+.tab:hover { background: var(--hover); color: var(--ink-3); }
+.tab.active {
+  background: var(--chip);
+  border-color: var(--border-3);
+  color: var(--ink-strong);
+}
+.tab-label { flex: 1 1 auto; min-width: 0; }
+/*
+ * Not kept yet: Vowe put this here, and the next thing it shows you takes the
+ * slot back. Italic rather than dimmed — a lighter ink would read as disabled,
+ * and this is frequently the tab you are reading.
+ */
+.tab.preview .tab-label { font-style: italic; }
+
+/*
+ * One trailing slot, two things in it.
+ *
+ * The unseen dot and the close button never need to be visible at the same
+ * moment — activating a tab retires its dot — so they share a box. That is
+ * what keeps the tab's width from changing under the pointer, which matters
+ * more than usual here because `Fading` measures the label against it.
+ */
+.tab-slot {
+  position: relative;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+.tab-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  margin: -2.5px 0 0 -2.5px;
+  border-radius: 50%;
+  background: var(--ask);
+  opacity: 0;
+}
+.tab.unseen .tab-dot { opacity: 1; }
+.tab-close {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-5);
+  opacity: 0;
+  pointer-events: none;
+}
+.tab:hover .tab-close,
+.tab.active .tab-close,
+.tab:focus-within .tab-close { opacity: 1; pointer-events: auto; }
+.tab:hover .tab-dot,
+.tab:focus-within .tab-dot { opacity: 0; }
+.tab-close:hover { background: var(--fill-2); color: var(--ink-2); }
+
+/*
+ * What kind of thing this is, and why it is in front of you.
+ *
+ * What is left of the old header, re-parented under the tabs: the tab carries
+ * the name, and these two lines are the things it deliberately does not.
+ */
+.workbench-note {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
-  padding: 16px 16px 12px 20px;
+  gap: 3px;
+  padding: 2px 16px 10px 20px;
 }
-.workbench-header .titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.workbench-header .title {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.006em;
-}
-.workbench-header .kind {
+.workbench-note .kind {
+  max-width: 100%;
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-8);
 }
-/* Why this is in front of you. Present only when there is a true answer. */
-.workbench-header .because {
-  margin-top: 4px;
-  font-size: 11.5px;
-  color: var(--ink-6);
-}
+.workbench-note .because { font-size: 11.5px; color: var(--ink-6); text-wrap: pretty; }
 
 .workbench-actions { display: flex; align-items: center; gap: 6px; margin: 0 20px 16px; }
 .small-button {
@@ -2760,37 +3527,6 @@ pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height
 .memory-card .text { font-size: 13px; color: var(--ink-2); text-wrap: pretty; }
 .memory-card .when { font-family: var(--mono); font-size: 10px; color: var(--ink-9); }
 
-.desk {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 20px 16px;
-  border-top: 1px solid var(--hairline);
-}
-.desk .items { display: flex; flex-wrap: wrap; gap: 6px; }
-.desk-item {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: 1px solid var(--divider);
-  border-radius: 6px;
-  background: transparent;
-  padding: 3px 9px;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--ink-6);
-}
-.desk-item:hover { color: var(--ink); }
-.desk-item.active {
-  background: var(--chip);
-  border-color: var(--border-3);
-  color: var(--ink-strong);
-}
-.desk-item .new { width: 5px; height: 5px; border-radius: 50%; background: var(--ask); }
-.desk-item .pinned { color: var(--ink-6); }
-
 /* ---------------------------------------------------------- presence studio */
 
 /*
@@ -3020,8 +3756,6 @@ pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height
 /* Hover grows the project orb, as in the design. */
 .presence-project.hoverable { transition: width 320ms cubic-bezier(0.2, 0.7, 0.2, 1), height 320ms cubic-bezier(0.2, 0.7, 0.2, 1); }
 .presence-project.hoverable:hover { width: 208px; height: 208px; }
-.presence-compact.header { width: 34px; height: 34px; transition: width 200ms ease, height 200ms ease; }
-.presence-compact.header:hover { width: 40px; height: 40px; }
 
 /* ----------------------------------------------------------------- sheet */
 

@@ -18,7 +18,7 @@ const withChecks = (checks: InvestigationCheck[]): ConversationEntry => ({
 
 describe('Artifact surfacing — the desk is not a log', () => {
   it('surfaces nothing when nothing was investigated', () => {
-    expect(planSurfacing(BASE)).toEqual({ show: null, suggest: [] });
+    expect(planSurfacing(BASE)).toBeNull();
   });
 
   /**
@@ -40,10 +40,10 @@ describe('Artifact surfacing — the desk is not a log', () => {
         { kind: 'search', label: 'Searched session context', refs: [{ kind: 'repo', path: '/d.ts' }] },
       ]),
     );
-    expect(plan).toEqual({ show: null, suggest: [] });
+    expect(plan).toBeNull();
   });
 
-  it('gives the view to the first thing Vowe actually descended into', () => {
+  it('gives the preview to the first thing Vowe actually descended into', () => {
     const plan = planSurfacing(
       withChecks([
         { kind: 'search', label: 'Searched the repository', refs: [{ kind: 'repo', path: '/noise.ts' }] },
@@ -51,8 +51,9 @@ describe('Artifact surfacing — the desk is not a log', () => {
         { kind: 'open', label: 'Read ask.ts', refs: [{ kind: 'repo', path: '/c.ts' }] },
       ]),
     );
-    expect(plan.show).toEqual({ kind: 'repo', path: '/b.ts' });
-    expect(plan.suggest).toEqual([{ kind: 'repo', path: '/c.ts' }]);
+    // One, not three. Everything else the answer touched stays in the trace,
+    // and becomes a tab only if somebody goes and opens it.
+    expect(plan).toEqual({ kind: 'repo', path: '/b.ts' });
   });
 
   it('counts a diff as something worth looking at', () => {
@@ -61,7 +62,7 @@ describe('Artifact surfacing — the desk is not a log', () => {
         { kind: 'diff', label: 'Inspected the current diff', refs: [{ kind: 'diff', sessionId: 's' }] },
       ]),
     );
-    expect(plan.show).toEqual({ kind: 'diff', sessionId: 's' });
+    expect(plan).toEqual({ kind: 'diff', sessionId: 's' });
   });
 
   it('surfaces a remembered lesson and a symbol, which render as documents', () => {
@@ -70,7 +71,7 @@ describe('Artifact surfacing — the desk is not a log', () => {
         withChecks([
           { kind: 'open', label: 'Consulted project knowledge', refs: [{ kind: 'lesson', projectId: 'p', recordId: 'r' }] },
         ]),
-      ).show,
+      ),
     ).toEqual({ kind: 'lesson', projectId: 'p', recordId: 'r' });
 
     expect(
@@ -78,7 +79,7 @@ describe('Artifact surfacing — the desk is not a log', () => {
         withChecks([
           { kind: 'open', label: 'Checked repository structure', refs: [{ kind: 'symbol', projectId: 'p', nodeId: 'n' }] },
         ]),
-      ).show,
+      ),
     ).toEqual({ kind: 'symbol', projectId: 'p', nodeId: 'n' });
   });
 
@@ -94,23 +95,15 @@ describe('Artifact surfacing — the desk is not a log', () => {
         { kind: 'open', label: 'Read the exchange', refs: [{ kind: 'transcript', sessionId: 's', eventId: 'e' }] },
       ]),
     );
-    expect(plan).toEqual({ show: null, suggest: [] });
+    expect(plan).toBeNull();
   });
 
-  it('never suggests the same address twice', () => {
-    const ref = { kind: 'repo', path: '/a.ts' } as const;
-    const plan = planSurfacing(
-      withChecks([
-        { kind: 'open', label: 'Read a.ts', refs: [ref] },
-        { kind: 'open', label: 'Read a.ts again', refs: [ref] },
-        { kind: 'diff', label: 'Inspected the diff for a.ts', refs: [ref] },
-      ]),
-    );
-    expect(plan.show).toEqual(ref);
-    expect(plan.suggest).toEqual([]);
-  });
-
-  it('bounds the desk tightly, however long the investigation', () => {
+  /**
+   * The bound is the whole policy now: one automatic tab per answer, however
+   * long the investigation was. A background investigation cannot build a
+   * strip of fifteen tabs, because it only ever has one slot to put them in.
+   */
+  it('surfaces one thing however long the investigation', () => {
     const plan = planSurfacing(
       withChecks(
         Array.from({ length: 9 }, (_, i) => ({
@@ -120,6 +113,6 @@ describe('Artifact surfacing — the desk is not a log', () => {
         })),
       ),
     );
-    expect(plan.suggest.length).toBeLessThanOrEqual(2);
+    expect(plan).toEqual({ kind: 'repo', path: '/f0.ts' });
   });
 });

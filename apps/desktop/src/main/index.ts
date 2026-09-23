@@ -26,6 +26,7 @@ import {
   ConservativeMemoryAdmission,
   describeObservedState,
   investigationChronology,
+  listGitFiles,
   AppearanceStore,
   PresenceProfileStore,
   ProjectBriefService,
@@ -42,7 +43,9 @@ import {
   type DecisionRouter,
   type LiveTransport,
   type LiveVoice,
+  type PersistedWorkbench,
   type SemanticInterpreter,
+  type WorkbenchCandidate,
   type TemperamentProfile,
   type VoicePreference,
 } from '@vowe/core';
@@ -782,10 +785,78 @@ function registerIpc(): void {
     (await requireServices()).store.getDeliveriesForSession(sessionId),
   );
 
+  /*
+   * Put a session away, or bring it back.
+   *
+   * The renderer is told afterwards, because the projects panel is a
+   * projection of what the store holds and archiving changes what belongs in
+   * it — without the announcement the list would keep the session until
+   * something else happened to refresh it.
+   */
+  ipcMain.handle(
+    IPC.archiveSession,
+    async (_event, sessionId: string, archived: boolean): Promise<void> => {
+      const services = await requireServices();
+      await services.store.setSessionArchived(sessionId, archived);
+      // The registry is the list the renderer reads; the column is where this
+      // lives. Telling it now is what makes the panel react to the click.
+      services.registry.noteArchived(
+        sessionId,
+        services.store.getSession(sessionId)?.archivedAt ?? null,
+      );
+      broadcastSessions();
+    },
+  );
+
   // The generic artifact open. `ContextNavigator` itself stays off the bridge:
   // the renderer gets display projections, never the read toolset.
   ipcMain.handle(IPC.openArtifact, async (_event, ref: ContextRef) =>
     (await requireServices()).workbench.resolve(ref),
+  );
+
+  /*
+   * Repository files, by name, as addresses.
+   *
+   * The narrowest thing that makes the launcher's search real, and it holds
+   * the same line the open above does: `ContextNavigator` stays on this side,
+   * and what crosses is a path and a name. No file is read to answer this.
+   */
+  ipcMain.handle(
+    IPC.findFiles,
+    async (_event, sessionId: string, query: string): Promise<WorkbenchCandidate[]> => {
+      const services = await requireServices();
+      const cwd = services.registry.get(sessionId)?.cwd ?? null;
+      const found = await listGitFiles(cwd, query, 20);
+      return found.map((relative) => ({
+        /*
+         * Absolute, for the same reason the navigator resolves grep hits
+         * here: `git` prints repository-relative paths, and a ref travels to
+         * a reader whose working directory is not the repository. This is the
+         * one place that still knows which tree the path came from.
+         */
+        ref: { kind: 'repo', path: cwd ? path.resolve(cwd, relative) : relative },
+        // The developer reads the path they know, which is the relative one.
+        label: relative.split('/').pop() || relative,
+        detail: relative.split('/').slice(0, -1).join('/'),
+      }));
+    },
+  );
+
+  /*
+   * The desk, across a session switch and across a restart.
+   *
+   * References and their order, which is all a strip needs to draw itself;
+   * what each tab shows is read back through `openArtifact` when somebody
+   * looks at it.
+   */
+  ipcMain.handle(IPC.getWorkbench, async (_event, sessionId: string) =>
+    (await requireServices()).store.getWorkbenchState(sessionId),
+  );
+  ipcMain.handle(
+    IPC.saveWorkbench,
+    async (_event, sessionId: string, desk: PersistedWorkbench): Promise<void> => {
+      await (await requireServices()).store.setWorkbenchState(sessionId, desk);
+    },
   );
 
   /*

@@ -1,22 +1,16 @@
 import type { ReactElement } from 'react';
 
-import type { AgentSession, PresenceProfile, PresenceState } from '@vowe/core';
+import type { AgentSession } from '@vowe/core';
 
 import { Fading } from '../shell/Fading.js';
 import { RoomIdentity } from '../shell/TopChrome.js';
-import { VowePresence } from '../presence/index.js';
 import { providerName } from '../components/ui.js';
 import { sessionTitle } from '@vowe/core/projections';
 
 interface Props {
   session: AgentSession;
-  presence: PresenceProfile;
-  presenceState: PresenceState;
   observing: boolean;
   inVoice: boolean;
-  voiceUnavailableReason: string | null;
-  activity: number | undefined;
-  onToggleVoice: () => void;
 }
 
 /**
@@ -33,9 +27,11 @@ interface Props {
  * So this identifies context and nothing else: who, on what, where, and
  * whether Vowe is watching. Current worker activity belongs to the timeline.
  *
- * The presence here is the voice entry point. Clicking it joins or ends the
- * call — voice is a state of this room, not a separate product, so there is no
- * modal and nothing to dismiss.
+ * Vowe itself is not here either. The presence used to sit at this title as
+ * the way into a call, which put the one moving thing in the window on the
+ * row that should be stillest, and put Vowe next to the name of the worker's
+ * session rather than next to where you speak to it. It is in the composer
+ * now, beside send — where you are already typing to it.
  *
  * Drawn at the top of the room, on the row the application band occupies. It
  * belongs to the room and not to the window: it starts at the room's left
@@ -43,38 +39,9 @@ interface Props {
  * so opening the projects panel moves the session's name and the session's
  * conversation together. Nothing here knows what is open. See `RoomIdentity`.
  */
-export function SessionHeader({
-  session,
-  presence,
-  presenceState,
-  observing,
-  inVoice,
-  voiceUnavailableReason,
-  activity,
-  onToggleVoice,
-}: Props): ReactElement {
-  const canTalk = voiceUnavailableReason === null;
-
+export function SessionHeader({ session, observing, inVoice }: Props): ReactElement {
   return (
     <RoomIdentity>
-      <button
-        className="talk"
-        type="button"
-        aria-label={inVoice ? 'End the call with Vowe' : 'Talk to Vowe'}
-        title={inVoice ? 'End' : (voiceUnavailableReason ?? 'Talk to Vowe')}
-        disabled={!canTalk}
-        onClick={onToggleVoice}
-      >
-        <VowePresence
-          state={presenceState}
-          profile={presence}
-          size="compact"
-          className="header"
-          activity={activity}
-        />
-        {inVoice && <span className="hint">End</span>}
-      </button>
-
       <div className="stack">
         <Fading as="h1">{sessionTitle(session)}</Fading>
         <Fading className="meta">

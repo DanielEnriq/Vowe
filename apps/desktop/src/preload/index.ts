@@ -8,6 +8,7 @@ import type {
   ConversationChange,
   LiveStatus,
   NormalizedEvent,
+  PersistedWorkbench,
   PresenceProfile,
   ProjectConversationChange,
   TemperamentProfile,
@@ -84,7 +85,14 @@ const api: VoweApi = {
 
   // The SDP offer goes out and the answer comes back; the API key never
   // crosses this boundary in either direction.
+  archiveSession: (sessionId: string, archived: boolean) =>
+    ipcRenderer.invoke(IPC.archiveSession, sessionId, archived),
   openArtifact: (ref: ContextRef) => ipcRenderer.invoke(IPC.openArtifact, ref),
+  findFiles: (sessionId: string, query: string) =>
+    ipcRenderer.invoke(IPC.findFiles, sessionId, query),
+  getWorkbench: (sessionId: string) => ipcRenderer.invoke(IPC.getWorkbench, sessionId),
+  saveWorkbench: (sessionId: string, desk: PersistedWorkbench) =>
+    ipcRenderer.invoke(IPC.saveWorkbench, sessionId, desk),
   getInvestigationSteps: (entryId: string) =>
     ipcRenderer.invoke(IPC.getInvestigationSteps, entryId),
 

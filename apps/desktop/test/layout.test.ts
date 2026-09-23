@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   CHROME_HEIGHT,
   MEASURE_CSS,
+  MEASURE_FILLS_BELOW,
+  MEASURE_FILL_CSS,
   MEASURE_MAX,
   MEASURE_MIN,
   NARROW_PANE,
@@ -13,6 +15,7 @@ import {
   PANEL_RIGHT_MAX,
   PANEL_RIGHT_MIN,
   ROOM_GUTTER,
+  ROOM_OVERHEAD,
   TRAFFIC_LIGHTS,
   TRAFFIC_LIGHT_END,
   TRAFFIC_LIGHT_X,
@@ -20,17 +23,23 @@ import {
   WINDOW_MIN_WIDTH,
   WINDOW_WIDTH,
   measureAt,
+  measureCssFor,
+  measureFills,
 } from '../src/shared/layout.js';
 
 /** What the room has left for the conversation with these panels showing. */
 const room = (window: number, left: boolean, right: boolean): number =>
   window - (left ? PANEL_LEFT : 0) - (right ? PANEL_RIGHT : 0);
 
-/** The width the measure actually needs at this window size, gutters included. */
-const needed = (window: number): number => measureAt(window) + ROOM_GUTTER * 2;
+/** The width the measure actually needs in this state, gutters included. */
+const needed = (window: number, pane: number = window): number =>
+  measureAt(window, pane) + ROOM_GUTTER * 2;
 
 /** Every window width worth asserting about, including both clamp corners. */
 const WIDTHS = [WINDOW_MIN_WIDTH, 1180, 1280, WINDOW_WIDTH, 1512, 1728, 2560];
+
+/** The widths at which the promise is made at all. */
+const WIDE = WIDTHS.filter((width) => !measureFills(width));
 
 describe('Layout — the measure follows the window, never the panels', () => {
   /**
@@ -38,17 +47,43 @@ describe('Layout — the measure follows the window, never the panels', () => {
    * opening a panel cannot change how the text is set — only where it sits.
    */
   it('is the same width in all four panel states, at every window size', () => {
-    for (const width of WIDTHS) {
+    for (const width of WIDE) {
       const widths = new Set(
         [
           [true, true],
           [true, false],
           [false, true],
           [false, false],
-        ].map(() => measureAt(width)),
+        ].map(([left, right]) => measureAt(width, room(width, left!, right!))),
       );
       expect({ width, distinct: widths.size }).toEqual({ width, distinct: 1 });
     }
+  });
+
+  /**
+   * And below the threshold it deliberately is not.
+   *
+   * The promise costs the width of both panels held in reserve, and at these
+   * sizes that reserve is most of the window — a floor-width column with two
+   * panels' worth of nothing beside it. The desk cannot share the pane here
+   * anyway, so the only thing a reflow can come from is the projects panel,
+   * and taking the room is worth more than protecting a line from re-wrapping
+   * when it opens.
+   */
+  it('takes the room instead, once the window is too narrow to promise anything', () => {
+    const width = WINDOW_MIN_WIDTH;
+    expect(measureFills(width)).toBe(true);
+
+    const closed = measureAt(width, room(width, false, false));
+    const open = measureAt(width, room(width, true, false));
+
+    // The whole point: it uses what is there rather than the floor.
+    expect(closed).toBe(width - ROOM_GUTTER * 2);
+    expect(closed).toBeGreaterThan(MEASURE_MIN);
+    // And it does follow the panel, which is the price of that.
+    expect(open).toBeLessThan(closed);
+    // Never past the typographic ceiling, however much room there is.
+    expect(measureAt(1000, 4000)).toBe(MEASURE_MAX);
   });
 
   /**
@@ -79,16 +114,17 @@ describe('Layout — the measure follows the window, never the panels', () => {
         for (const right of [true, false]) {
           // The desk takes the pane below this rather than sharing it.
           if (right && width - (left ? PANEL_LEFT : 0) < NARROW_PANE) continue;
-          expect({ width, left, right, short: needed(width) - room(width, left, right) })
-            .toMatchObject({ short: expect.any(Number) });
-          expect(needed(width)).toBeLessThanOrEqual(room(width, left, right));
+          const pane = room(width, left, right);
+          expect({ width, left, right, short: needed(width, pane) - pane }).toMatchObject({
+            short: expect.any(Number),
+          });
+          expect(needed(width, pane)).toBeLessThanOrEqual(pane);
         }
       }
     }
   });
 
   it('clamps rather than growing without limit', () => {
-    expect(measureAt(400)).toBe(MEASURE_MIN);
     expect(measureAt(4000)).toBe(MEASURE_MAX);
     expect(measureAt(WINDOW_WIDTH)).toBeGreaterThan(MEASURE_MIN);
     expect(measureAt(WINDOW_WIDTH)).toBeLessThan(MEASURE_MAX);
@@ -104,6 +140,9 @@ describe('Layout — the measure follows the window, never the panels', () => {
         PANEL_LEFT + PANEL_RIGHT + ROOM_GUTTER * 2
       }px), ${MEASURE_MAX}px)`,
     );
+    expect(MEASURE_FILL_CSS).toBe(`min(100%, ${MEASURE_MAX}px)`);
+    expect(measureCssFor(MEASURE_FILLS_BELOW)).toBe(MEASURE_CSS);
+    expect(measureCssFor(MEASURE_FILLS_BELOW - 1)).toBe(MEASURE_FILL_CSS);
   });
 
   /**
@@ -111,9 +150,24 @@ describe('Layout — the measure follows the window, never the panels', () => {
    * every size the window is allowed to be — not only at the default.
    */
   it('holds for the projects panel at the narrowest allowed window', () => {
-    expect(needed(WINDOW_MIN_WIDTH)).toBeLessThanOrEqual(
-      room(WINDOW_MIN_WIDTH, true, false),
-    );
+    const pane = room(WINDOW_MIN_WIDTH, true, false);
+    expect(needed(WINDOW_MIN_WIDTH, pane)).toBeLessThanOrEqual(pane);
+    // Filling never fills with something below the floor, because the window
+    // cannot be dragged that narrow in the first place.
+    expect(measureAt(WINDOW_MIN_WIDTH, pane)).toBeGreaterThanOrEqual(MEASURE_MIN);
+  });
+
+  /**
+   * The two thresholds are one threshold.
+   *
+   * The measure starts filling at exactly the window width where the desk
+   * stops being able to sit beside the conversation — which is why filling is
+   * safe: in that regime the desk takes the pane, so the only panel that can
+   * still re-wrap anything is the projects one.
+   */
+  it('starts filling exactly where the desk stops fitting beside the room', () => {
+    expect(MEASURE_FILLS_BELOW).toBe(PANEL_LEFT + NARROW_PANE);
+    expect(MEASURE_FILLS_BELOW).toBe(ROOM_OVERHEAD + MEASURE_MIN);
   });
 
   /**
@@ -125,8 +179,8 @@ describe('Layout — the measure follows the window, never the panels', () => {
     expect(NARROW_PANE).toBe(MEASURE_MIN + ROOM_GUTTER * 2 + PANEL_RIGHT);
     // One pixel wider and they fit; one narrower and they do not.
     const window = PANEL_LEFT + NARROW_PANE;
-    expect(needed(window)).toBeLessThanOrEqual(room(window, true, true));
-    expect(needed(window - 1)).toBeGreaterThan(room(window - 1, true, true));
+    expect(MEASURE_MIN + ROOM_GUTTER * 2).toBeLessThanOrEqual(room(window, true, true));
+    expect(MEASURE_MIN + ROOM_GUTTER * 2).toBeGreaterThan(room(window - 1, true, true));
   });
 
   it('keeps every dragged width inside its own bounds', () => {

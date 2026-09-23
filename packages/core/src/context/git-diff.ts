@@ -148,3 +148,46 @@ function describe(error: unknown): string {
   }
   return error instanceof Error ? error.message : String(error);
 }
+
+/**
+ * Repository file paths, matched by name.
+ *
+ * Paths, never contents. What a file *says* is read by opening it, which keeps
+ * reading material on the one channel that was built to carry it — this
+ * answers with addresses and stops there.
+ *
+ * `--cached --others --exclude-standard` rather than a bare `ls-files`: the
+ * worker may have written a file two minutes ago that has never been staged,
+ * and a search that could not find the thing that was just created would be
+ * useless exactly when it matters most. `--exclude-standard` keeps ignored
+ * files out, so the answer is the repository rather than `node_modules`.
+ *
+ * A blank query returns nothing rather than everything. This is a search, not
+ * a file tree, and the launcher says so.
+ */
+export async function listGitFiles(
+  cwd: string | null,
+  query: string,
+  limit: number,
+  timeoutMs = 10_000,
+): Promise<string[]> {
+  const needle = query.trim().toLowerCase();
+  if (!cwd || !needle) return [];
+  try {
+    const output = await git(
+      ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+      cwd,
+      timeoutMs,
+    );
+    const found: string[] = [];
+    for (const path of output.split('\0')) {
+      if (found.length >= limit) break;
+      if (path && path.toLowerCase().includes(needle)) found.push(path);
+    }
+    return found;
+  } catch {
+    // Not a repository, or git is unavailable. Neither is worth an error: the
+    // launcher simply has nothing to offer from the repository.
+    return [];
+  }
+}

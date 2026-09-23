@@ -43,6 +43,7 @@ export function SettledInvestigation({
 }): ReactElement | null {
   const [open, setOpen] = useState(false);
   const steps = useInvestigationSteps(open ? entryId : null);
+  const grown = useGrown(open && steps !== null);
   const count = receipt.checks.length;
   if (count === 0) return null;
 
@@ -72,11 +73,44 @@ export function SettledInvestigation({
         </span>
       </button>
 
-      {open && rows && (
-        <InvestigationTimeline rows={rows} {...(onOpenRef ? { onOpenRef } : {})} />
-      )}
+      {/*
+        The track is here whether or not it is open, and so is what is in it
+        once it has been read — which is what lets closing be the opening run
+        backwards rather than the trace simply ceasing to exist.
+      */}
+      <div className={`exec-details${grown ? ' open' : ''}`}>
+        <div className="exec-details-inner">
+          {rows && <InvestigationTimeline rows={rows} {...(onOpenRef ? { onOpenRef } : {})} />}
+        </div>
+      </div>
     </div>
   );
+}
+
+/**
+ * Opened, but a frame later than asked.
+ *
+ * A track that grows from nothing to nothing and only then has its content
+ * appear inside it is a jump, not a movement — and the first time a trace is
+ * opened its rows are still being read when the click lands. So the class
+ * that opens the track waits for a frame in which the rows already exist,
+ * which is the only way the growth has something to grow to.
+ *
+ * Closing needs no such care: what is being animated away is already there.
+ */
+function useGrown(ready: boolean): boolean {
+  const [grown, setGrown] = useState(false);
+
+  useEffect(() => {
+    if (!ready) {
+      setGrown(false);
+      return;
+    }
+    const frame = requestAnimationFrame(() => setGrown(true));
+    return () => cancelAnimationFrame(frame);
+  }, [ready]);
+
+  return grown;
 }
 
 /** One decimal below ten seconds; whole seconds above. */

@@ -41,7 +41,14 @@ export function ComposeIcon(): ReactElement {
       strokeLinejoin="round"
       {...stroke}
     >
-      <path d="M12.4 2.6a1.4 1.4 0 0 1 2 2L7 12l-3 1 1-3z" />
+      {/*
+        Centred in its own box, like the rest of the family. Drawn from 2.6 it
+        sat high enough to put the pencil half a pixel above the traffic
+        lights it stands next to — the nib's round cap adds ink at the top
+        that the flat tail does not add at the bottom, so the shape's middle
+        is not the path's middle.
+      */}
+      <path d="M12.4 3a1.4 1.4 0 0 1 2 2L7 12.4l-3 1 1-3z" />
     </svg>
   );
 }
@@ -146,6 +153,42 @@ export function PlusIcon(): ReactElement {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" strokeWidth="1.5" strokeLinecap="round" {...stroke}>
       <path d="M8 3v10M3 8h10" />
+    </svg>
+  );
+}
+
+/** Finding a session that the panel is not currently showing. */
+export function SearchIcon(): ReactElement {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      {...stroke}
+    >
+      <circle cx="7.2" cy="7.2" r="4.2" />
+      <path d="M10.3 10.3 13 13" />
+    </svg>
+  );
+}
+
+/** Putting a session away. Not deleting it — see `ArchiveIcon`'s callers. */
+export function ArchiveIcon(): ReactElement {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...stroke}
+    >
+      <rect x="2.5" y="3" width="11" height="3" rx="1" />
+      <path d="M3.6 6v6a1 1 0 0 0 1 1h6.8a1 1 0 0 0 1-1V6" />
+      <path d="M6.6 8.8h2.8" />
     </svg>
   );
 }

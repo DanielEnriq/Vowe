@@ -127,7 +127,44 @@ export function formatClock(at: string): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+/**
+ * How long ago something happened, in words.
+ *
+ * Written out — "4 minutes ago", not "4 min ago". These appear in prose as
+ * often as in rows ("The latest work finished 2 hours ago:"), and an
+ * abbreviation that reads as a unit symbol in a sentence is the sort of thing
+ * that makes a product sound like a log file.
+ *
+ * It keeps counting in days rather than handing off to a locale date. A date
+ * answers "when", and the question every one of these is asking is "how long
+ * has this been sitting there" — which is also what decides whether a session
+ * is still in the projects panel.
+ */
 export function formatAgo(at: string, now: number = Date.now()): string {
+  const then = Date.parse(at);
+  if (Number.isNaN(then)) return at;
+  const seconds = Math.max(0, Math.round((now - then) / 1000));
+  if (seconds < 60) return since(seconds, 'second');
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return since(minutes, 'minute');
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return since(hours, 'hour');
+  return since(Math.round(hours / 24), 'day');
+}
+
+function since(count: number, unit: string): string {
+  return `${count} ${unit}${count === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * The same age, abbreviated, for somewhere it has to fit.
+ *
+ * A column of ages down the side of a list is read as a column — the eye
+ * wants the number and enough of a unit to tell minutes from hours, and the
+ * rest is width taken from the names beside it. `formatAgo` stays the one to
+ * use in a sentence; this is for a cell.
+ */
+export function formatAgoShort(at: string, now: number = Date.now()): string {
   const then = Date.parse(at);
   if (Number.isNaN(then)) return at;
   const seconds = Math.max(0, Math.round((now - then) / 1000));
@@ -135,8 +172,8 @@ export function formatAgo(at: string, now: number = Date.now()): string {
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes} min ago`;
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} h ago`;
-  return new Date(then).toLocaleDateString();
+  if (hours < 24) return `${hours} hr ago`;
+  return `${Math.round(hours / 24)} d ago`;
 }
 
 export function messageOf(cause: unknown): string {

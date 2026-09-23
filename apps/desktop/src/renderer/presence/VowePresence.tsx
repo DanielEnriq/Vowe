@@ -9,7 +9,7 @@ import {
   type PresenceState,
 } from '@vowe/core/presence';
 
-import { useOnLight } from '../shell/theme.js';
+import { useOnLight, usePrefersReducedMotion } from '../shell/theme.js';
 import { PointCloudOrb } from './PointCloudOrb.js';
 
 interface Props {
@@ -110,19 +110,3 @@ export function VowePresence({
   );
 }
 
-/** The developer's system-wide answer to "how much movement?", watched live. */
-function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(
-    () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
-  );
-
-  useEffect(() => {
-    const query = window.matchMedia?.('(prefers-reduced-motion: reduce)');
-    if (!query) return;
-    const handler = (event: MediaQueryListEvent): void => setReduced(event.matches);
-    query.addEventListener('change', handler);
-    return () => query.removeEventListener('change', handler);
-  }, []);
-
-  return reduced;
-}
