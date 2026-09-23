@@ -6,8 +6,18 @@
  * it means — and every colour comes from the block below rather than from a
  * literal buried in a rule.
  *
- * Dark only. The design is a single quiet dark language and its palette has no
- * light counterpart; inventing one would ship a theme nobody approved.
+ * Two appearances, one design. The dark language is the canonical one and is
+ * declared below as the default; the light one is the same hierarchy under
+ * different illumination — the same surfaces in the same order, the same ink
+ * ramp, the same lines at the same weight, read on paper instead of in the
+ * dark. Every difference between them is a value in the two blocks below and
+ * nowhere else: there is no rule in this file that asks which theme it is in,
+ * and adding one would be the beginning of two designs.
+ *
+ * Which one is live is `data-theme` on the document element, set in
+ * `index.html` from `prefers-color-scheme` before the first frame — which the
+ * main process has already pointed at the stored preference. See
+ * `product/appearance.ts`.
  */
 
 :root {
@@ -16,21 +26,30 @@
   /*
    * Top chrome geometry, in one place.
    *
-   * The window has two chrome slots — one per panel — and everything that has
-   * to line up with them is derived from these four numbers rather than
-   * re-guessed per surface. A slot is a fixed box at a fixed inset; the
-   * reserve is the room a header must leave so its own content clears one.
+   * One band across the top of the window, and these are all of its numbers.
+   * What replaced was a set of per-surface compensations — a reserve the
+   * session header left on its right, a different one the sidebar left on its
+   * left, a `clear-titlebar` inset four surfaces each applied differently —
+   * each of which was a guess about where the macOS traffic lights are. None
+   * of them is needed once the band is a row of its own: nothing below it has
+   * to clear anything, because nothing below it is beside anything.
    *
-   * `--chrome-top` is the only value that differs between windowed and
-   * fullscreen, and it differs for exactly one real reason: macOS puts traffic
-   * lights in that space in a window and does not in fullscreen. Every other
-   * measurement follows from it, so there is no second set of offsets to keep
-   * in step.
+   * Exactly one value differs between windowed and fullscreen, and it differs
+   * for the only reason that is actually true: macOS holds space for its own
+   * controls in a window and does not in fullscreen. See `--chrome-left`.
    */
-  --chrome-slot: 26px;
+  --chrome-height: 56px;
   --chrome-gutter: 14px;
-  --chrome-top: 46px;
-  --chrome-reserve: calc(var(--chrome-gutter) * 2 + var(--chrome-slot));
+  --chrome-control: 26px;
+  --chrome-gap: 16px;
+  /*
+   * What macOS is holding at the top left.
+   *
+   * Three 12px buttons with 8px between them, from `trafficLightPosition`'s
+   * x of 18 — so they end at 70 — plus deliberate breathing room before the
+   * application's own first control begins.
+   */
+  --traffic-lights: 86px;
 
   /* Layers, back to front. */
   --app: #08090a;
@@ -58,12 +77,30 @@
   --ink-10: #55565c;
   --ink-11: #4f5158;
 
+  /*
+   * Fills, lightest first.
+   *
+   * A wash rather than a surface: these sit *on* whichever layer they land on
+   * instead of replacing it, which is why they are alphas and not colours.
+   * `--hover` and `--hover-strong` are the same mechanism reserved for the
+   * two interaction states, and are kept separate so a resting chip and a
+   * hovered row cannot quietly become the same value.
+   */
+  --fill-1: rgba(255, 255, 255, 0.028);
+  --fill-2: rgba(255, 255, 255, 0.07);
+  --fill-3: rgba(255, 255, 255, 0.12);
+  /* The user's own turn. Its own token because it is a design decision. */
+  --user-turn: rgba(255, 255, 255, 0.032);
+
   /* Lines. */
   --hairline: rgba(255, 255, 255, 0.055);
   --divider: rgba(255, 255, 255, 0.06);
   --border: rgba(255, 255, 255, 0.09);
   --border-2: rgba(255, 255, 255, 0.1);
   --border-3: rgba(255, 255, 255, 0.14);
+  --border-4: rgba(255, 255, 255, 0.2);
+  /* The one emphatic edge: what says "this swatch is the one you chose". */
+  --ring: rgba(255, 255, 255, 0.55);
   --hover: rgba(255, 255, 255, 0.035);
   --hover-strong: rgba(255, 255, 255, 0.055);
 
@@ -72,31 +109,188 @@
   --good: #55c08a;
   --attention: #e4a94c;
   --on-attention: #241703;
+  /*
+   * The same amber, said in text.
+   *
+   * On a dark surface these are one colour and this is the same value. On
+   * paper they cannot be: a fill wants the amber to stay amber, and a word
+   * wants enough of it against white to be read. Two tokens rather than one
+   * washed-out compromise serving both.
+   */
+  --attention-ink: #e4a94c;
+  --attention-hover: #eeb55b;
+  /* Prose inside the amber offer, which is neither the fill nor the page. */
+  --attention-text: #dfd6c4;
   --attention-line: rgba(228, 169, 76, 0.28);
   --attention-wash: rgba(228, 169, 76, 0.045);
   --ask: #8fb0e8;
   --bad: #c4736a;
   --warn: #e4c07a;
   --idle: #8e8e94;
+  /* What Vowe's presence is lit with. The ribbon borrows it for its edge. */
+  --lit: #f3f7ff;
+
+  /* Applied colour that is neither ink nor a layer. */
+  --badge: #2a2c32;
+  --control: #8a8d95;
+  --selection: rgba(180, 196, 255, 0.22);
+  --scrim: rgba(0, 0, 0, 0.45);
+  --scroll-thumb: rgba(255, 255, 255, 0.03);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.08);
+  --diff-add: rgba(16, 185, 129, 0.16);
+  --diff-remove: rgba(244, 63, 94, 0.16);
+  /* The voice stage's floor, and the disc drawn where WebGL could not run. */
+  --stage-wash: rgba(146, 162, 186, 0.085);
+  --stage-wash-2: rgba(146, 162, 186, 0.02);
+  --fallback-core: rgba(235, 242, 255, 0.5);
+  --fallback-body: rgba(120, 132, 145, 0.18);
 
   --font: 'Schibsted Grotesk', -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
-  /* Geometry the design specifies rather than implies. */
-  --sidebar: 252px;
+  /*
+   * Geometry the design specifies rather than implies.
+   *
+   * `--measure`, `--room-gutter` and the two panel widths are set on `.app`
+   * by the shell, from `shared/layout.ts`. They are not declared here,
+   * because a second copy of a number that has to satisfy an arithmetic
+   * relationship is how the relationship stops holding. The fallbacks below
+   * exist only so a stylesheet opened on its own still looks like itself.
+   */
   /* How far the text dissolves for. One distance, so every fade matches. */
   --fade: 2.4em;
-  /*
-   * The reading measure, and the width the room is allowed to become.
-   *
-   * Wider than it was, because the shell now genuinely gives the centre back
-   * the width a closed panel was holding: at the old 880px a developer who
-   * shut both panels got two empty gutters instead of a wider column, which
-   * read as the phantom columns the layout was accused of.
-   */
-  --measure: 1100px;
-  --measure-narrow: 860px;
   --shadow-menu: 0 18px 40px rgba(0, 0, 0, 0.55);
+}
+
+/*
+ * The same application, under different light.
+ *
+ * Nothing here is a second design. Every token above has exactly one
+ * counterpart below, in the same order and doing the same job, and the
+ * relationships the dark palette states are the ones this one preserves:
+ *
+ *   rail  <  pane  <  surface  <  selected      — recessive to insistent
+ *   ink-bright  >  ink  >  ink-6  >  ink-11     — said to barely said
+ *
+ * What inverts is not the order but the direction contrast runs in. On a dark
+ * surface a thing steps forward by getting lighter, so the rail is darker than
+ * the room and an elevated surface is lighter than both. On paper it steps
+ * forward by getting *denser*, so the rail is a grey beside a white room, code
+ * sits on a tint rather than on a lift, and every line is dark ink at a low
+ * alpha instead of white ink at one. Same weight, the other way up.
+ *
+ * The neutrals are warm — a trace of yellow through the greys — because a
+ * pure-white, blue-grey light theme is the one every application has, and the
+ * dark language this is a translation of is not a cold one either.
+ *
+ * Only colour is here. No geometry, no type, no spacing: switching appearance
+ * must not move a single pixel, and the way that is guaranteed is that there
+ * is nothing in this block that could.
+ */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  /* Layers, back to front. */
+  --app: #e5e2dc;
+  --rail: #f0eeea;
+  --pane: #faf9f7;
+  --surface: #f0ede6;
+  --field: #ffffff;
+  --menu: #ffffff;
+  --selected: #e7e3db;
+  --chip: #e9e5de;
+  /*
+   * White, and only here.
+   *
+   * `--chip-strong` is the segmented control's chosen pill, which sits in a
+   * track recessed into the panel. In the dark palette that pill is lighter
+   * than its track; the faithful translation is not "darker" but "the other
+   * way from the track", which on paper is the page's own white. Everywhere
+   * else a chosen thing is denser than what it sits on, which is `--chip`.
+   */
+  --chip-strong: #ffffff;
+
+  /*
+   * Ink, most present first.
+   *
+   * Thirteen steps, as above, and the same shape: three near-black tones for
+   * what is being said, a long middle for what supports it, and a compressed
+   * tail for what is barely there. The tail is where light themes usually go
+   * wrong — grey-on-white at the alpha that worked on black is unreadable —
+   * so the quiet end stops at around 3:1 rather than continuing to fade, and
+   * the secondary and trace steps hold 4.5:1 on `--pane`.
+   */
+  --ink-bright: #121417;
+  --ink-strong: #181b1f;
+  --ink: #23262b;
+  --ink-2: #2e3238;
+  --ink-3: #3f434a;
+  --ink-4: #52565d;
+  --ink-5: #5e626a;
+  --ink-6: #6b6f77;
+  --ink-7: #72767e;
+  --ink-8: #767a82;
+  --ink-9: #7e828a;
+  --ink-10: #8b8f97;
+  --ink-11: #9a9ea6;
+
+  /* Fills. Dark ink at a low alpha, which is the same wash upside down. */
+  --fill-1: rgba(18, 22, 30, 0.035);
+  --fill-2: rgba(18, 22, 30, 0.07);
+  --fill-3: rgba(18, 22, 30, 0.1);
+  --user-turn: rgba(18, 22, 30, 0.05);
+
+  /* Lines. */
+  --hairline: rgba(18, 22, 30, 0.08);
+  --divider: rgba(18, 22, 30, 0.09);
+  --border: rgba(18, 22, 30, 0.12);
+  --border-2: rgba(18, 22, 30, 0.14);
+  --border-3: rgba(18, 22, 30, 0.18);
+  --border-4: rgba(18, 22, 30, 0.24);
+  --ring: rgba(18, 22, 30, 0.5);
+  --hover: rgba(18, 22, 30, 0.04);
+  --hover-strong: rgba(18, 22, 30, 0.06);
+
+  /*
+   * Meaning, at the luminance paper needs.
+   *
+   * Hue is identity here and is kept: blue is still Vowe talking and amber is
+   * still the worker. What changes is that a colour which was carrying its
+   * contrast by being brighter than the surface now has to carry it by being
+   * darker — so each one is deepened and slightly desaturated, rather than
+   * the same swatch dropped onto white where it would read as highlighter.
+   */
+  --good: #1c7a54;
+  --attention: #cf8c1c;
+  --on-attention: #2a1b02;
+  --attention-ink: #8a5810;
+  --attention-hover: #bb7d12;
+  --attention-text: #5c4715;
+  --attention-line: rgba(168, 112, 20, 0.32);
+  --attention-wash: rgba(207, 140, 28, 0.09);
+  --ask: #2f63c4;
+  --bad: #ad3628;
+  --warn: #92650b;
+  --idle: #8b8e95;
+  --lit: #3b4552;
+
+  /* Applied colour that is neither ink nor a layer. */
+  --badge: #e2ded6;
+  --control: #6b6f77;
+  --selection: rgba(58, 110, 205, 0.2);
+  /* Still dark: a scrim is the absence of the window, not a pale film. */
+  --scrim: rgba(22, 25, 31, 0.3);
+  --scroll-thumb: rgba(18, 22, 30, 0.13);
+  --scroll-thumb-hover: rgba(18, 22, 30, 0.24);
+  --diff-add: rgba(15, 133, 93, 0.14);
+  --diff-remove: rgba(198, 48, 58, 0.12);
+  --stage-wash: rgba(96, 112, 136, 0.07);
+  --stage-wash-2: rgba(96, 112, 136, 0.02);
+  --fallback-core: rgba(96, 112, 136, 0.45);
+  --fallback-body: rgba(60, 70, 84, 0.16);
+
+  /* A shadow on paper is a shadow, not a hole. */
+  --shadow-menu: 0 16px 34px rgba(22, 26, 34, 0.16);
 }
 
 * { box-sizing: border-box; }
@@ -119,7 +313,13 @@ body {
 
 button { font: inherit; color: inherit; cursor: pointer; }
 textarea, input { font: inherit; color: inherit; }
-::selection { background: rgba(180, 196, 255, 0.22); }
+/*
+ * Said, not guessed. Left to the browser this is derived from `color-scheme`,
+ * which lands somewhere different in each appearance and in neither case on
+ * the step of the ink ramp the rest of the quiet text uses.
+ */
+::placeholder { color: var(--ink-8); opacity: 1; }
+::selection { background: var(--selection); }
 
 /*
  * A scrollbar sits a shade above whatever it is on, and no more.
@@ -136,13 +336,13 @@ textarea, input { font: inherit; color: inherit; }
  */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--scroll-thumb);
   border-radius: 6px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--scroll-thumb-hover);
   background-clip: content-box;
 }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -171,66 +371,231 @@ textarea, input { font: inherit; color: inherit; }
 
 /* ------------------------------------------------------------------ shell */
 
+/*
+ * Two rows: the application band, then everything else.
+ *
+ * The band is a sibling of the body rather than something inside it, which is
+ * the whole of this model — a room's identity is on the window, not in the
+ * room, so it cannot move sideways when a panel opens or need a different
+ * inset depending on what is above it.
+ */
+/*
+ * One grid for the whole window: two columns, two rows.
+ *
+ * The sidebar spans both rows, which is the entire point — its surface reaches
+ * the top of the window and the band is drawn *over* it, so there is no
+ * boundary between the window's chrome and the panel's content because they
+ * are the same surface. A separate chrome row stacked above the panel is what
+ * produced a rule straight through the sidebar.
+ *
+ * The background is the room's, so the band above the room matches the room
+ * beneath it in the same way the band above the sidebar matches the sidebar.
+ * `--app` remains the backdrop behind the window itself.
+ */
 .app {
   position: relative;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: var(--left-column, 0px) minmax(0, 1fr);
+  grid-template-rows: var(--chrome-height) minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
-  background: var(--app);
+  background: var(--pane);
+  transition: grid-template-columns 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
-/* No traffic lights to clear, so the chrome row sits where the window edge is. */
-.app.fullscreen { --chrome-top: 14px; }
+/* A dragged edge follows the pointer; it does not ease behind it. */
+.app.resizing { transition: none; }
 
 /*
- * The drag strip, and nothing else.
+ * The only thing fullscreen changes.
  *
- * The window's controls are the real macOS ones; this only gives the top of
- * the window somewhere to be dragged by. No application control lives here —
- * one that did would vanish into the menu bar's hover region in fullscreen.
+ * In a window macOS puts its three buttons at the top left and the
+ * application begins after them. In fullscreen they are gone and the space is
+ * the application's, so the band's content starts at the ordinary gutter.
+ * Real window state, reported by the main process — not a guess from a media
+ * query, and not a second layout.
  */
-.titlebar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 1;
-  height: 28px;
-  -webkit-app-region: drag;
+.app { --chrome-left: var(--traffic-lights); }
+.app.fullscreen { --chrome-left: var(--chrome-gutter); }
+
+/*
+ * Where the band's own controls end, on each side.
+ *
+ * Not a placement — a clearance. A room's identity is placed by the room (see
+ * `.room-identity`), and these exist only so that a room whose column starts
+ * at the window's edge does not slide its title underneath the window's
+ * buttons. When the panel is open its width already carries the title past
+ * them and neither of these is reached.
+ */
+.app {
+  --chrome-content-left: calc(var(--chrome-left) + var(--chrome-control) + var(--chrome-gap));
+  --chrome-content-right: calc(var(--chrome-gutter) + var(--chrome-control) + var(--chrome-gap));
 }
 
 /*
- * The panel controls: overlay chrome, at one coordinate, in both states.
+ * The application band.
  *
- * `position: fixed` is the whole point. These are not laid out by the shell,
- * so the column under them can be the panel's width or nothing at all and the
- * control does not move by a pixel — the panel animates underneath it. It also
- * means neither of them can reserve a strip of width, which is what a rail
- * mounted in the row would have done.
+ * Draggable, because this is the top of the window and that is what the top of
+ * a window does; the controls inside it opt out. One height, always: it does
+ * not know or care which room is open, whether a panel is out, or how long a
+ * title is.
  *
- * The coordinate is the window's, from the chrome variables: a stable inset
- * that clears the traffic lights in a window and sits high in fullscreen where
- * there are none. Same x, same y, same hit box, open or closed.
+ * It holds the window's controls and nothing else. The three surfaces below
+ * run to `y = 0` underneath it, and the open room's identity sits on this row
+ * inside the room's own column — so the band must not intercept what is
+ * beneath it. `pointer-events: none` with the controls opted back in is the
+ * whole of that: a draggable region is an OS-level rectangle rather than a
+ * hit test, so the window is still dragged by this band, and the identity's
+ * own buttons subtract themselves from the region with `no-drag`.
+ */
+.top-chrome {
+  grid-row: 1;
+  grid-column: 1 / -1;
+  /*
+   * Positioned so the `z-index` below is not load-bearing on this element
+   * happening to be a grid item — which is the only other thing that would
+   * make it apply.
+   */
+  position: relative;
+  /* Above the sidebar, which follows it in the document and spans this row. */
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--chrome-gap);
+  min-width: 0;
+  padding-left: var(--chrome-left);
+  padding-right: var(--chrome-gutter);
+  /*
+   * No boundary of its own. A rule here spanned the whole window and so cut
+   * across the sidebar, which owns that part of the surface. Where a boundary
+   * genuinely belongs — under the session's identity — the room draws it, over
+   * the room's own width. See `.session-room`.
+   */
+  -webkit-app-region: drag;
+  pointer-events: none;
+  /* Only on entering or leaving fullscreen, and only the left inset. */
+  transition: padding-left 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.top-chrome button { -webkit-app-region: no-drag; }
+
+.chrome-controls,
+.chrome-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: auto;
+}
+/* The desk's control sits against the window's right edge, not the room's. */
+.chrome-actions { margin-left: auto; }
+/*
+ * What the open room is — placed by the room, on the band's row.
+ *
+ * This is the correction the pass was for. The identity used to be a flex
+ * item inside the band, so its x came from where the window's controls
+ * happened to end; the room it named began somewhere else entirely, and
+ * opening the projects panel moved the room out from under its own title.
+ *
+ * Now it is the first row of the room's grid. Its left edge is the room's
+ * left edge, and the inset below is the same `--room-gutter` the room's body
+ * uses, so the title sits directly above the content it names. Nothing here
+ * mentions the panel: when the panel opens, the room's column moves and this
+ * moves with it, because it *is* the room. When the desk opens, the room's
+ * left edge does not move, so neither does this.
+ *
+ * The one thing that is not the room's gutter is the floor under it. A room
+ * whose column starts at the window's left edge would put its title
+ * underneath the traffic lights and the panel toggle, so the inset is at
+ * least far enough to clear them — a clearance, reached only when there is no
+ * panel to carry the title past them anyway, and never a panel-width offset.
+ *
+ * Its height is the band's, so the room's body starts at exactly the height
+ * it always did, and a room with no identity leaves the row empty rather than
+ * closing it up. Vertical position does not depend on anything.
+ */
+.room-identity {
+  grid-row: 1;
+  grid-column: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+  padding-left: max(var(--room-gutter, 40px), calc(var(--chrome-content-left) - var(--left-column, 0px)));
+  padding-right: max(var(--room-gutter, 40px), calc(var(--chrome-content-right) - var(--right-column, 0px)));
+  /*
+   * Over the surface behind it, which matters in the one case where the desk
+   * has taken the whole pane and is itself running up to the roof.
+   */
+  position: relative;
+  z-index: 1;
+  /* The same glide the panel's column takes, so the two move as one thing. */
+  transition: padding-left 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.app.resizing .room-identity { transition: none; }
+/*
+ * The band above is one draggable rectangle, including the part over this
+ * row. Anything here that can be clicked takes itself out of it.
+ */
+.room-identity button { -webkit-app-region: no-drag; }
+.room-identity .stack {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+.room-identity h1 {
+  margin: 0;
+  flex: 0 1 auto;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.014em;
+  color: var(--ink-bright);
+}
+.room-identity .meta {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--ink-8);
+}
+.room-identity .meta .path { color: var(--ink-9); }
+.room-identity .state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  color: var(--ink-6);
+}
+
+/*
+ * The panel controls, on the band.
+ *
+ * Ordinary items in the band's flex row — not fixed, not absolute, not
+ * reserving a column anywhere. Their position comes from the band's own
+ * geometry and from nothing else, which is what makes it independent of
+ * whether the panel they move is open: the body below changes width, the
+ * control does not move.
+ *
+ * Same box, same glyph family, same stroke, same hit target in both states.
+ * Whether the panel is showing is said by `aria-expanded` and by the panel
+ * being there.
  */
 .panel-toggle {
-  position: fixed;
-  top: var(--chrome-top);
-  z-index: 6;
-  width: var(--chrome-slot);
-  height: var(--chrome-slot);
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--chrome-control);
+  height: var(--chrome-control);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   background: transparent;
   color: var(--ink-7);
-  -webkit-app-region: no-drag;
-  /* Only the appearance moves. Position is not animated because it never changes. */
   transition: color 180ms ease, background 180ms ease;
 }
-.panel-toggle.left { left: var(--chrome-gutter); }
-.panel-toggle.right { right: var(--chrome-gutter); }
 .panel-toggle:hover { background: var(--selected); color: var(--ink); }
 .panel-toggle.open { color: var(--ink-5); }
 
@@ -333,30 +698,48 @@ textarea, input { font: inherit; color: inherit; }
  * toggles are fixed and the resize handle is absolute, so this row has exactly
  * the two tracks it says it has and nothing reserves a third.
  */
-.body {
-  position: relative;
-  flex: 1;
+/*
+ * The rooms, placed rather than flowed.
+ *
+ * Every child of the shell is placed explicitly or taken out of flow — the
+ * band and the sidebar by their own rules, the resize handle absolutely, the
+ * new-session sheet fixed. Nothing may auto-place, because an implicit row
+ * would be a third band nobody asked for.
+ */
+/*
+ * The room reaches the roof, like the panel beside it.
+ *
+ * `grid-row: 1 / -1`, so the room's surface runs from `y = 0` and the band
+ * sits on it rather than above it. Its own two rows are then the band's
+ * height and everything else: the identity goes in the first, the body in the
+ * second, and a room with no identity leaves the first empty. That is what
+ * makes the title the room's — it is in the room's column by construction,
+ * and no rule anywhere adds a panel width to it.
+ */
+.app > main {
+  grid-row: 1 / -1;
+  grid-column: 2;
+  min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--left-column, 0px) minmax(0, 1fr);
   /*
-   * One row, as tall as the window and no taller. A grid's implicit row is
-   * sized to its content, which made the room as tall as the conversation and
-   * left the conversation nothing to scroll.
+   * The rows are the shell's and are stated once, here; the columns are the
+   * room's own business — one for most rooms, two for the ones with a panel.
+   * Declaring a column track here as well would out-specify those and is the
+   * whole reason it is absent.
    */
-  grid-template-rows: minmax(0, 1fr);
-  overflow: hidden;
-  transition: grid-template-columns 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  grid-template-rows: var(--chrome-height) minmax(0, 1fr);
 }
-/* A dragged edge follows the pointer; it does not ease behind it. */
-.body.resizing { transition: none; }
 
 .pane {
-  flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
   background: var(--pane);
+}
+/* The body of a one-column room: the row under the identity, and all of it. */
+.pane > .scroll,
+.studio-stage {
+  grid-row: 2;
+  grid-column: 1;
 }
 
 /* ---------------------------------------------------------------- sidebar */
@@ -370,15 +753,30 @@ textarea, input { font: inherit; color: inherit; }
  * without the contents spilling into the room.
  */
 .sidebar {
+  grid-column: 1;
+  /*
+   * Both rows. The panel is one surface running the full height of the
+   * window, and the chrome band sits on it rather than above it; `PROJECTS`
+   * begins lower because of this inset, not because anything is stacked over
+   * it. Nothing is painted to hide a line — there is no line.
+   */
+  grid-row: 1 / -1;
+  padding-top: var(--chrome-height);
   min-width: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   background: var(--rail);
-  transition: opacity 200ms ease;
+  /*
+   * The same duration the column collapses over. At 200ms the rail reached
+   * full transparency ~80ms before the panel finished leaving, which showed
+   * up as the band's left portion changing colour early — the one place the
+   * continuous surface was visibly not continuous.
+   */
+  transition: opacity 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .sidebar.closed { opacity: 0; pointer-events: none; }
-.sidebar > * { min-width: var(--panel-width, var(--sidebar)); }
+.sidebar > * { min-width: var(--panel-width, var(--panel-left, 268px)); }
 
 /*
  * Clears the traffic lights in a window; in fullscreen there are none to
@@ -389,19 +787,16 @@ textarea, input { font: inherit; color: inherit; }
   align-items: center;
   gap: 2px;
   /*
-   * The panel's own header shares the chrome row: same top edge, same height,
-   * with its content starting where the slot ends. That is what makes the
-   * toggle read as belonging to this panel when it is open, without the
-   * toggle having to live inside it and travel with it.
+   * The first row of the panel, and nothing more.
+   *
+   * It used to share the window's chrome row, which meant reserving space on
+   * its left for a control that is not the panel's and taking its top inset
+   * from where the traffic lights are. The band above owns both of those now,
+   * so this is just a heading over a list: a stable y, the same in every
+   * window state.
    */
-  min-height: var(--chrome-slot);
-  /*
-   * The left inset is the panel's clearance for the window's own toggle, which
-   * is fixed above this row in both states. Reserving it here is padding
-   * inside the panel and not a column in the shell.
-   */
-  padding: var(--chrome-top) 8px 8px var(--chrome-reserve);
-  -webkit-app-region: no-drag;
+  min-height: 30px;
+  padding: 14px 8px 6px 16px;
 }
 
 .eyebrow {
@@ -444,10 +839,16 @@ textarea, input { font: inherit; color: inherit; }
   border: 0;
   padding: 0;
 }
-.resize-handle.left { left: calc(var(--left-column, 0px) - 4px); }
-.resize-handle.right { right: calc(var(--right-column, 0px) - 4px); }
-/* Only while it is being dragged, and only as a hint that it is. */
-.resize-handle.active { background: rgba(143, 176, 232, 0.12); }
+/* Below the band: the edge is between the panel and the room, not the chrome. */
+.resize-handle.left { top: var(--chrome-height); left: calc(var(--left-column, 0px) - 4px); }
+.resize-handle.right { top: var(--chrome-height); right: calc(var(--right-column, 0px) - 4px); }
+/*
+ * Nothing is drawn, not even while it is being dragged.
+ *
+ * A tint under the pointer was still a line appearing at the boundary — the
+ * one thing this edge is not supposed to have. The cursor already says the
+ * edge is draggable, and it says it at exactly the moment it is true.
+ */
 
 .project-row {
   position: relative;
@@ -508,7 +909,7 @@ textarea, input { font: inherit; color: inherit; }
   min-width: 18px;
   padding: 0 5px;
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--fill-2);
   color: var(--ink-4);
   font-size: 10.5px;
   font-weight: 600;
@@ -516,7 +917,14 @@ textarea, input { font: inherit; color: inherit; }
   text-align: center;
 }
 
-.session-list { display: flex; flex-direction: column; padding-left: 19px; }
+/*
+ * The sessions sit under their project, and are read as being under it.
+ *
+ * The indent is what says so — there is no rail and no bracket — so it is a
+ * step the eye catches rather than the smallest offset that technically
+ * differs from the row above.
+ */
+.session-list { display: flex; flex-direction: column; padding-left: 28px; }
 
 .session-row {
   position: relative;
@@ -609,7 +1017,7 @@ textarea, input { font: inherit; color: inherit; }
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: #2a2c32;
+  background: var(--badge);
   color: var(--ink-2);
   font-size: 11.5px;
   font-weight: 600;
@@ -625,29 +1033,18 @@ textarea, input { font: inherit; color: inherit; }
 
 /* ----------------------------------------------------------- pane headers */
 
-.pane-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  padding: 22px var(--chrome-reserve) 0 40px;
-}
-.pane-header.clear-titlebar { padding-top: 56px; }
-.pane-header h1 {
-  margin: 0;
-  flex: 0 1 auto;
-  font-size: 19px;
-  font-weight: 600;
-  letter-spacing: -0.018em;
-}
-.pane-header .meta { font-size: 12px; color: var(--ink-6); }
-.pane-header .meta .path { color: var(--ink-9); }
-
+/*
+ * No pane header.
+ *
+ * A room's identity is on the application band, so a room begins with its
+ * content. What was here was a second title bar inside the first, which is
+ * why it needed a `clear-titlebar` variant and a reserve on its right.
+ */
 .scroll { flex: 1; min-height: 0; overflow-y: auto; }
 
 /* ----------------------------------------------------------- project room */
 
-.room { padding: 0 40px 8px; }
+.room { padding: 0 var(--room-gutter, 40px) 8px; }
 /*
  * The room grows with the window. The ceiling is generous rather than tight
  * because the shell now hands back the width a closed panel was holding, and
@@ -703,7 +1100,7 @@ textarea, input { font: inherit; color: inherit; }
   align-self: flex-start;
   color: var(--ink-5);
   font-size: 12.5px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+  border-bottom: 1px solid var(--border-4);
 }
 .link-button:disabled { color: var(--ink-10); cursor: default; }
 
@@ -731,7 +1128,7 @@ textarea, input { font: inherit; color: inherit; }
   text-transform: uppercase;
   color: var(--ink-7);
 }
-.section h2.attention { color: var(--attention); }
+.section h2.attention { color: var(--attention-ink); }
 .quiet-line { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
 /* An ordinary quiet state should not occupy a card's worth of room. */
 .quiet-line.spare { padding: 14px 0 2px; }
@@ -768,7 +1165,7 @@ textarea, input { font: inherit; color: inherit; }
   font-weight: 600;
   letter-spacing: -0.01em;
 }
-.attention-card .waiting { font-size: 11.5px; color: var(--attention); }
+.attention-card .waiting { font-size: 11.5px; color: var(--attention-ink); }
 .attention-card p {
   margin: 0;
   padding-left: 17px;
@@ -801,7 +1198,7 @@ textarea, input { font: inherit; color: inherit; }
   color: var(--on-attention);
   font-weight: 600;
 }
-.button.primary:hover { background: #eeb55b; }
+.button.primary:hover { background: var(--attention-hover); }
 
 .work-row {
   display: grid;
@@ -816,7 +1213,7 @@ textarea, input { font: inherit; color: inherit; }
   padding: 10px 14px 11px;
   text-align: left;
 }
-.work-row:hover { background: rgba(255, 255, 255, 0.028); }
+.work-row:hover { background: var(--hover); }
 .work-row .name {
   display: flex;
   align-items: center;
@@ -838,11 +1235,11 @@ textarea, input { font: inherit; color: inherit; }
   letter-spacing: -0.008em;
 }
 .work-row .state { font-size: 11.5px; color: var(--ink-5); white-space: nowrap; }
-.work-row .state.waiting { color: var(--attention); }
+.work-row .state.waiting { color: var(--attention-ink); }
 /* Two lines of current activity is context; six is the task pasted again. */
 .work-row .note {
   padding-left: 17px;
-  color: #9a9ca3;
+  color: var(--ink-5);
   font-size: 12.5px;
   line-height: 1.5;
 }
@@ -927,7 +1324,7 @@ textarea, input { font: inherit; color: inherit; }
   padding: 4px 0;
   text-align: left;
 }
-.recent-row:hover { background: rgba(255, 255, 255, 0.028); }
+.recent-row:hover { background: var(--hover); }
 .recent-row .name { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .recent-row .name .label {
   flex: 1;
@@ -1011,6 +1408,11 @@ textarea, input { font: inherit; color: inherit; }
  * conversation the width back instead of leaving a gutter where the panel was.
  * The desk's toggle is fixed chrome and its resize handle is absolute, so this
  * row also has exactly the tracks it declares.
+ *
+ * The change of width is not animated. The desk is a place you put something,
+ * not a drawer: it either holds what you are looking at or it does not, and a
+ * quarter of a second of the conversation reflowing on the way there is time
+ * spent watching furniture move. It snaps.
  */
 .session-room {
   position: relative;
@@ -1018,101 +1420,67 @@ textarea, input { font: inherit; color: inherit; }
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--right-column, 0px);
-  /* Bounded for the same reason as `.body`: the conversation scrolls, not the room. */
-  grid-template-rows: minmax(0, 1fr);
+  /*
+   * The rows are the shell's, from `.app > main`: the band's height and then
+   * everything else. The identity takes the first row of the left column and
+   * the conversation the second; the desk takes both, so its surface reaches
+   * the roof exactly as the projects panel does.
+   */
   background: var(--pane);
-  transition: grid-template-columns 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  /*
+   * Where the measure sits, as a number rather than as an alignment.
+   *
+   * Declared here and not on `.app` because `var()` inside a custom property
+   * is substituted where the property is *declared*, and `--right-column` is
+   * only set on this element. This computes what `justify-content: center`
+   * would — half the room left over — but as a length, so it can be
+   * transitioned. Centring cannot be.
+   */
+  --measure-offset: max(
+    0px,
+    calc(
+      (
+        100vw - var(--left-column, 0px) - var(--right-column, 0px) -
+          var(--room-gutter, 40px) * 2 - var(--measure, clamp(480px, calc(100vw - 700px), 920px))
+      ) / 2
+    )
+  );
 }
 /* Too narrow to hold both, so the desk is the room and there is no second track. */
 .session-room.desk-takes-pane {
   grid-template-columns: minmax(0, 1fr);
-  transition: none;
 }
 .conversation-column {
+  grid-row: 2;
+  grid-column: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /*
+   * The session's own boundary, and the only horizontal rule in the window.
+   *
+   * It is drawn here, on the conversation's column, which is the only thing
+   * it is true of: it begins at the centre room's left edge and ends at the
+   * desk's, so it crosses neither panel. The Project Room and the Studio have
+   * never had one and still do not — and when the desk takes the pane there
+   * is no conversation column, so there is no line either.
+   */
+  border-top: 1px solid var(--hairline);
 }
 
 /*
- * A fixed height, whatever is open.
- *
- * Opening the sidebar or the workbench changes how much width this has; it
- * must not change how tall it is. Nothing here wraps — the metadata row is
- * `nowrap` and every child sets `min-width: 0` so it truncates instead of
- * pushing a second line and moving the divider down.
+ * The presence, which is the session's and sits beside its title.
  */
-/*
- * Room for the rail on the right. The control is fixed to the window, so the
- * header keeps clear of it rather than the other way round — which is what
- * lets a long title ellipsize instead of running underneath it.
- */
-.session-header {
-  flex: 0 0 auto;
-  height: 68px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 0 var(--chrome-reserve) 0 28px;
-  border-bottom: 1px solid var(--hairline);
-  overflow: hidden;
-}
-/*
- * With the projects panel away the window's toggle sits over this row instead
- * of over the panel, so the row makes the same clearance on its left that the
- * panel's own header does. Without it the toggle lands on the voice presence.
- */
-.session-header.clear-titlebar {
-  height: 88px;
-  padding-top: 22px;
-  padding-left: var(--chrome-reserve);
-  align-items: center;
-}
-.session-header .identity {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  overflow: hidden;
-}
-/* Shrinks and fades; the metadata beside it keeps its size. */
-.session-header h1 {
-  margin: 0;
-  flex: 0 1 auto;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.016em;
-}
-/* Where and whether, on one line under the title. Context, not activity. */
-.session-header .where {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.06em;
-  color: var(--ink-8);
-}
-.session-header .state {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-  color: var(--ink-6);
-}
-.session-header .talk { flex: 0 0 auto; }
-
 .talk {
   position: relative;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
   border: 0;
   background: transparent;
   padding: 0;
-  margin-top: 1px;
   color: var(--ink-5);
 }
 .talk:hover { color: var(--ink); }
@@ -1126,14 +1494,74 @@ textarea, input { font: inherit; color: inherit; }
  * layout decides, and any bottom-anchored rule inside it would press the live
  * turn against the composer. Here the turns simply follow the question.
  */
+/*
+ * Everything set to the reading measure, in one rule.
+ *
+ * The conversation, the composer, the ribbon and the worker offer are one
+ * column as far as the eye is concerned, so they are one declaration: the same
+ * width, the same position, and the same glide when that position changes.
+ * Four copies of it is how the composer ended up on a different measure from
+ * the thread above it, more than once.
+ *
+ * Placed by a margin rather than by `justify-content: center`. The two put the
+ * column in exactly the same place; the difference is that a margin is a
+ * length and an alignment is not, so a margin can be transitioned. That is the
+ * whole trick here — the panel arrives at once, and the column takes a moment
+ * to settle into the room it left.
+ */
+.conversation-measure,
+.ribbon,
+.composer,
+.offer {
+  width: min(var(--measure, clamp(480px, calc(100vw - 700px), 920px)), 100%);
+  /*
+   * Never squeezed, not even for a frame.
+   *
+   * These are flex items, and a flex item shrinks when its margin and its
+   * width no longer fit. That is exactly the state the glide passes through:
+   * the panel snaps, so the room is already narrow while the margin is still
+   * most of the way over — so for the length of the animation the column was
+   * being compressed, and every line in the thread re-wrapped and then
+   * un-wrapped. The width is the measure; it is not negotiable, and the
+   * surplus is dealt with as overflow rather than as reflow.
+   */
+  flex-shrink: 0;
+  margin-left: var(--measure-offset, 0px);
+  /*
+   * Same duration and curve as the projects panel's own column, so a left
+   * toggle moves the panel edge and the column together — and a right toggle,
+   * which snaps, leaves the column gliding into the room on its own.
+   */
+  transition: margin-left 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+/* A width being dragged follows the pointer; it does not ease behind it. */
+.app.resizing .conversation-measure,
+.app.resizing .ribbon,
+.app.resizing .composer,
+.app.resizing .offer,
+.session-room.resizing .conversation-measure,
+.session-room.resizing .ribbon,
+.session-room.resizing .composer,
+.session-room.resizing .offer { transition: none; }
+
 .conversation {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 30px 40px 0;
+  padding: 30px var(--room-gutter, 40px) 0;
+  /*
+   * Clipped sideways, never scrollable sideways.
+   *
+   * Mid-glide the column is still out where the room used to be, which is past
+   * this box's new right edge. `clip` takes that off without the scroll
+   * container an `auto` would imply — a horizontal scrollbar flickering in and
+   * out on every panel toggle. Nothing here is meant to be reachable by
+   * scrolling sideways.
+   */
+  overflow-x: clip;
   display: flex;
   align-items: flex-start;
-  justify-content: center;
+  justify-content: flex-start;
 }
 /*
  * The column finishes before the composer begins.
@@ -1143,15 +1571,22 @@ textarea, input { font: inherit; color: inherit; }
  * measure rather than a margin on the dock so the space scrolls with the
  * conversation and the final turn is never left under the composer.
  */
+/*
+ * One width, whatever is open.
+ *
+ * This carried a second, narrower measure for "the workbench is open", which
+ * is precisely the thing that made opening a panel re-wrap the conversation:
+ * every line in the thread was re-set the moment a panel moved, including the
+ * ones already on screen and already read. The room's arithmetic means it
+ * never has to — see `shared/layout.ts`. The text is set once and stays set;
+ * what a panel changes is where the column sits, not how wide it is.
+ */
 .conversation-measure {
-  width: 100%;
-  max-width: var(--measure);
   padding-bottom: 24px;
   display: flex;
   flex-direction: column;
   gap: 30px;
 }
-.conversation-measure.with-workbench { max-width: var(--measure-narrow); }
 
 /*
  * Two kinds of thing in one column, and they should not look alike.
@@ -1182,7 +1617,7 @@ textarea, input { font: inherit; color: inherit; }
 }
 .turn p {
   margin: 0;
-  font-size: 15.5px;
+  font-size: 13px;
   line-height: 1.62;
   color: var(--ink-strong);
   text-wrap: pretty;
@@ -1209,7 +1644,7 @@ textarea, input { font: inherit; color: inherit; }
   max-width: 62%;
   padding: 8px 13px 9px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.032);
+  background: var(--user-turn);
 }
 .turn.user .message-body p,
 .turn.user .message-body .markdown {
@@ -1426,7 +1861,7 @@ code.inline {
   gap: 3px;
   margin-left: 5px;
   padding-left: 5px;
-  border-left: 1px solid rgba(255, 255, 255, 0.07);
+  border-left: 1px solid var(--divider);
 }
 .exec-step {
   min-width: 0;
@@ -1434,9 +1869,15 @@ code.inline {
 }
 .exec-step.check {
   display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-self: flex-start;
+  max-width: 100%;
+}
+.exec-step.check .check-row {
+  display: flex;
   align-items: center;
   gap: 10px;
-  align-self: flex-start;
   max-width: 100%;
   border: 0;
   border-radius: 6px;
@@ -1445,14 +1886,19 @@ code.inline {
   text-align: left;
 }
 /* Following a lookup opens what it found. Only a lookup that found something. */
-button.exec-step.check:hover { background: var(--hover); }
-button.exec-step.check:hover .target-label { color: var(--ink-4); }
+button.check-row:hover { background: var(--hover); }
+button.check-row:hover .target-label { color: var(--ink-4); }
 .exec-step .target-label {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   font-size: 13px;
   color: var(--ink-6);
+}
+.exec-step .check-detail {
+  margin-left: 26px;
+  font-size: 11.5px;
+  color: var(--ink-8);
 }
 
 /*
@@ -1512,7 +1958,7 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
   font-size: 11.5px;
   color: var(--ink-6);
 }
-.interrupted .mark { color: var(--attention); }
+.interrupted .mark { color: var(--attention-ink); }
 .unheard {
   margin: 0;
   font-size: 14px;
@@ -1532,6 +1978,14 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
  * docked above the composer.
  */
 .turn.live { gap: 8px; }
+/*
+ * The turn, still alive: Vowe's mark under the newest thing in the region.
+ * Level with the byline's mark, so the eye reads it as the same identity at
+ * work rather than as one more trace row. The label appears only while the
+ * reply is being written; during the investigation the trace says it all.
+ */
+.live-tail { display: flex; align-items: center; gap: 8px; min-height: 20px; margin-top: 2px; }
+.live-tail .label { font-size: 12.5px; color: var(--ink-7); }
 
 /* One body renderer, so a settled answer looks exactly like the arriving one. */
 .message-body > .markdown > :first-child { margin-top: 0; }
@@ -1553,22 +2007,23 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
  * bottom, the top one in the colour Vowe's presence is lit with. It arrives
  * once — a short rise — and then holds still.
  */
-.ribbon-lane { padding: 18px 40px 0; display: flex; justify-content: center; }
+.ribbon-lane {
+  padding: 18px var(--room-gutter, 40px) 0;
+  display: flex;
+  justify-content: flex-start;
+}
 .ribbon {
-  --ribbon-accent: #f3f7ff;
+  --ribbon-accent: var(--lit);
   position: relative;
-  width: 100%;
-  max-width: var(--measure);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.022);
+  background: var(--fill-1);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--ribbon-accent) 11%, transparent),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.03);
+    inset 0 -1px 0 var(--fill-1);
   overflow: hidden;
   animation: ribbon-arrive 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
-.ribbon-lane.with-workbench .ribbon { max-width: var(--measure-narrow); }
-.ribbon.needs-decision { --ribbon-accent: var(--attention); }
+.ribbon.needs-decision { --ribbon-accent: var(--attention-ink); }
 @keyframes ribbon-arrive {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
@@ -1655,7 +2110,7 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
 .ribbon-brief p.changed { color: var(--ink-2); }
 .ribbon-brief .activity { color: var(--ink-6); }
 .ribbon-brief p.calm { color: var(--ink-6); }
-.ribbon-brief p.needs { color: var(--attention); }
+.ribbon-brief p.needs { color: var(--attention-ink); }
 .ribbon-brief .verified {
   margin: 0;
   padding: 0;
@@ -1735,15 +2190,13 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
  */
 .composer-dock {
   flex: 0 0 auto;
-  padding: 18px 40px 20px;
+  padding: 18px var(--room-gutter, 40px) 20px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
 }
 .composer {
   position: relative;
-  width: 100%;
-  max-width: var(--measure);
   display: flex;
   flex-direction: column;
   /*
@@ -1757,8 +2210,10 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
   border-radius: 16px;
   background: var(--field);
 }
-.composer.narrow { max-width: var(--measure-narrow); }
-.composer.to-worker { border-color: rgba(228, 169, 76, 0.4); background: var(--attention-wash); }
+.composer.to-worker {
+  border-color: color-mix(in srgb, var(--attention) 40%, transparent);
+  background: var(--attention-wash);
+}
 .composer textarea {
   border: 0;
   outline: none;
@@ -1788,7 +2243,7 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
   padding: 3px 6px 3px 7px;
   border: 1px solid var(--border-2);
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.028);
+  background: var(--fill-1);
   font-family: var(--mono);
   font-size: 10.5px;
   color: var(--ink-3);
@@ -1806,7 +2261,7 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #85878e;
+  color: var(--ink-6);
 }
 .round-button:hover { background: var(--hover-strong); color: var(--ink-3); }
 .round-button:disabled { color: var(--ink-11); cursor: default; background: transparent; }
@@ -1820,11 +2275,11 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #9a9ca3;
+  color: var(--ink-5);
   font-size: 12px;
 }
 .destination:hover { background: var(--hover-strong); }
-.destination.to-worker { color: var(--attention); }
+.destination.to-worker { color: var(--attention-ink); }
 
 .send {
   width: 28px;
@@ -1835,7 +2290,7 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
   justify-content: center;
   border: 0;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--fill-3);
   color: var(--ink-strong);
 }
 .send.to-worker { background: var(--attention); color: var(--on-attention); }
@@ -1884,8 +2339,6 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
 .menu button:disabled .title { color: var(--ink-6); }
 
 .offer {
-  width: 100%;
-  max-width: var(--measure);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1893,10 +2346,9 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
   padding: 9px 12px;
   border: 1px solid var(--attention-line);
   border-radius: 10px;
-  background: rgba(228, 169, 76, 0.05);
+  background: var(--attention-wash);
 }
-.offer.narrow { max-width: var(--measure-narrow); }
-.offer span { flex: 1; min-width: 0; font-size: 12.5px; color: #dfd6c4; text-wrap: pretty; }
+.offer span { flex: 1; min-width: 0; font-size: 12.5px; color: var(--attention-text); text-wrap: pretty; }
 .offer button {
   flex: 0 0 auto;
   height: 26px;
@@ -1926,7 +2378,7 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
   border: 0;
   background: transparent;
   padding: 0;
-  color: #85878e;
+  color: var(--ink-6);
   font-size: 11.5px;
   white-space: nowrap;
   font-family: var(--font);
@@ -1947,8 +2399,8 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
   overflow: hidden;
   background: radial-gradient(
     66% 72% at 50% 42%,
-    rgba(146, 162, 186, 0.085),
-    rgba(146, 162, 186, 0.02) 46%,
+    var(--stage-wash),
+    var(--stage-wash-2) 46%,
     transparent 74%
   );
 }
@@ -1968,7 +2420,7 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
   font-size: 9.5px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: #5a5c64;
+  color: var(--ink-10);
 }
 .voice-caption p {
   margin: 0;
@@ -1998,36 +2450,41 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
  * The desk fills the column it was given, and clips — the mirror of the
  * projects panel, including the missing divider. Its width is dragged from its
  * own edge and lives in `--right-column`; nothing here fixes a percentage.
+ *
+ * And the mirror in the other axis too. Both rows of the room's grid, so the
+ * desk is one surface running the full height of the window with the band
+ * sitting on it, exactly like the panel on the other side. Its contents begin
+ * lower because of the inset below and not because anything is stacked over
+ * them: there is no top-right band, no second colour above the desk, and so
+ * no horizontal cut across the right of the window to hide.
  */
 .workbench {
+  grid-row: 1 / -1;
+  grid-column: 2;
+  padding-top: var(--chrome-height);
   min-width: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   background: var(--rail);
 }
+/* Taking the pane, it is the only column there is. */
+.session-room.desk-takes-pane .workbench { grid-column: 1; }
 .workbench > * { min-width: var(--desk-width, 380px); }
 .workbench.full { min-width: 0; }
 .workbench.full > * { min-width: 0; }
 
 /*
- * The desk's own header, which is where its close control lives.
+ * The desk's own header: the first row of the panel, like the sidebar's.
  *
- * Top inset from `--chrome-top` so that control sits in the same chrome row as
- * the sidebar's collapse and as the rail that replaces it — one vertical
- * rhythm across the window, kept as the boundary moves rather than by pinning
- * anything to a coordinate.
+ * No inset for the desk toggle, because the toggle is on the band above and
+ * not floating over this row any more.
  */
 .workbench-header {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  /*
-   * The right inset is this panel's clearance for the window's own desk
-   * toggle, which is fixed above this row in both states — padding inside the
-   * panel, never a column in the room.
-   */
-  padding: var(--chrome-top) var(--chrome-reserve) 12px 20px;
+  padding: 16px 16px 12px 20px;
 }
 .workbench-header .titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .workbench-header .title {
@@ -2064,8 +2521,8 @@ button.exec-step.check:hover .target-label { color: var(--ink-4); }
 }
 .small-button:hover { background: var(--hover-strong); }
 .small-button.on {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: var(--fill-3);
+  border-color: var(--border-4);
   color: var(--ink-strong);
 }
 
@@ -2103,7 +2560,7 @@ pre.code .gutter {
   color: var(--ink-9);
   user-select: none;
 }
-pre.code .line.focus { background: rgba(143, 176, 232, 0.1); }
+pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparent); }
 
 /*
  * A file's change as two panes, after Magic UI's Code Comparison.
@@ -2138,7 +2595,7 @@ pre.code .line.focus { background: rgba(143, 176, 232, 0.1); }
   min-width: 0;
   padding: 6px 10px;
   border-bottom: 1px solid var(--divider);
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--fill-1);
   color: var(--ink-6);
 }
 .code-comparison .side-head svg { flex: 0 0 auto; }
@@ -2178,9 +2635,9 @@ pre.code .line.focus { background: rgba(143, 176, 232, 0.1); }
   box-sizing: border-box;
   white-space: pre;
 }
-.side-code .line.add { background: rgba(16, 185, 129, 0.16); }
-.side-code .line.remove { background: rgba(244, 63, 94, 0.16); }
-.side-code .line.gap { color: var(--ink-9); background: rgba(255, 255, 255, 0.025); font-style: italic; }
+.side-code .line.add { background: var(--diff-add); }
+.side-code .line.remove { background: var(--diff-remove); }
+.side-code .line.gap { color: var(--ink-9); background: var(--fill-1); font-style: italic; }
 .code-comparison .vs {
   display: none;
   position: absolute;
@@ -2261,7 +2718,10 @@ pre.code .line.focus { background: rgba(143, 176, 232, 0.1); }
 }
 .markdown hr { border: 0; border-top: 1px solid var(--divider); margin: 16px 0; }
 /* Not an anchor: a document being read as evidence does not navigate. */
-.markdown .md-link { color: var(--ask); border-bottom: 1px solid rgba(143, 176, 232, 0.35); }
+.markdown .md-link {
+  color: var(--ask);
+  border-bottom: 1px solid color-mix(in srgb, var(--ask) 35%, transparent);
+}
 .markdown table {
   width: 100%;
   margin: 0 0 10px;
@@ -2274,7 +2734,7 @@ pre.code .line.focus { background: rgba(143, 176, 232, 0.1); }
   text-align: left;
   vertical-align: top;
 }
-.markdown th { color: var(--ink-2); font-weight: 600; background: rgba(255, 255, 255, 0.02); }
+.markdown th { color: var(--ink-2); font-weight: 600; background: var(--fill-1); }
 .markdown img { max-width: 100%; }
 
 .raw-evidence { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
@@ -2314,28 +2774,33 @@ pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--divider);
   border-radius: 6px;
   background: transparent;
   padding: 3px 9px;
   font-family: var(--mono);
   font-size: 10.5px;
-  color: #8a8d95;
+  color: var(--ink-6);
 }
 .desk-item:hover { color: var(--ink); }
 .desk-item.active {
-  background: #23252a;
+  background: var(--chip);
   border-color: var(--border-3);
   color: var(--ink-strong);
 }
 .desk-item .new { width: 5px; height: 5px; border-radius: 50%; background: var(--ask); }
-.desk-item .pinned { color: #8a8d95; }
+.desk-item .pinned { color: var(--ink-6); }
 
 /* ---------------------------------------------------------- presence studio */
 
-.studio { flex: 1; min-width: 0; display: flex; background: var(--pane); }
+/*
+ * The studio keeps its two columns, on the shell's model: the stage under the
+ * identity, and its panel as a right-hand surface that runs to the roof and
+ * clears the band with an inset of its own — the same arrangement as the
+ * desk, for the same reason.
+ */
+.studio { min-width: 0; grid-template-columns: minmax(0, 1fr) 352px; background: var(--pane); }
 .studio-stage {
-  flex: 1;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
@@ -2343,7 +2808,6 @@ pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height
   flex-direction: column;
   padding: 24px 28px 24px;
 }
-.studio-stage.clear-titlebar { padding-top: 56px; }
 .studio-stage .identity { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .studio-stage .identity .summary {
   font-family: var(--mono);
@@ -2394,12 +2858,12 @@ pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height
 }
 
 .studio-panel {
-  flex: 0 0 352px;
+  grid-row: 1 / -1;
+  grid-column: 2;
   min-width: 0;
   overflow-y: auto;
-  border-left: 1px solid var(--hairline);
   background: var(--rail);
-  padding: 22px 22px 28px;
+  padding: calc(var(--chrome-height) + 22px) 22px 28px;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -2434,7 +2898,7 @@ pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height
   right: -3px;
   top: -3px;
   height: 52px;
-  border: 1px solid rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--ring);
   border-radius: 11px;
 }
 
@@ -2443,7 +2907,7 @@ pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height
   gap: 2px;
   padding: 2px;
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--hover-strong);
 }
 .segmented button {
   position: relative;
@@ -2464,7 +2928,7 @@ pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--border-4);
   padding: 0;
 }
 .accent.on { outline: 2px solid var(--ask); outline-offset: 2px; }
@@ -2481,7 +2945,7 @@ pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height
 .slider-row .named .value { font-family: var(--mono); font-size: 10.5px; color: var(--ink-8); }
 .slider-row input[type='range'] {
   width: 100%;
-  accent-color: #8a8d95;
+  accent-color: var(--control);
   background: transparent;
 }
 
@@ -2529,8 +2993,8 @@ pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height
   border-radius: 50%;
   background: radial-gradient(
     circle at 42% 36%,
-    rgba(235, 242, 255, 0.5),
-    rgba(120, 132, 145, 0.18) 45%,
+    var(--fallback-core),
+    var(--fallback-body) 45%,
     transparent 70%
   );
 }
@@ -2568,7 +3032,7 @@ pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrim);
 }
 .sheet {
   width: min(560px, calc(100vw - 80px));

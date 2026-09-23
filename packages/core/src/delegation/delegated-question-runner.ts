@@ -583,7 +583,7 @@ export class DelegatedQuestionRunner {
             ...(input.sources ? { sources: input.sources } : {}),
             ...(input.limit !== undefined ? { limit: input.limit } : {}),
           });
-          recorder.searched(input.sources, hits);
+          recorder.searched(input.query, input.sources, hits);
           return hits;
         }),
       openContext: async (input) =>

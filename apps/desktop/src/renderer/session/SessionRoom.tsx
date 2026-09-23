@@ -32,6 +32,13 @@ import { EMPTY_WORKBENCH, workbenchReducer, deskHasUnseen } from '../state/workb
 import { planSurfacing } from '../state/artifact-surfacing.js';
 import { useActivityImpulse } from '../presence/index.js';
 import { PanelToggle } from '../shell/PanelToggle.js';
+import { RoomActions } from '../shell/TopChrome.js';
+import {
+  PANEL_RIGHT,
+  PANEL_RIGHT_CLOSE_AT,
+  PANEL_RIGHT_MAX,
+  PANEL_RIGHT_MIN,
+} from '../../shared/layout.js';
 import { Workbench } from '../workbench/Workbench.js';
 import { Composer, type Attachment } from './Composer.js';
 import { Conversation } from './Conversation.js';
@@ -45,7 +52,6 @@ interface Props {
   presenceState: PresenceState;
   userName: string;
   voiceUnavailableReason: string | null;
-  sidebarOpen: boolean;
   /** The pane is too narrow to hold a reading measure beside the workbench. */
   narrow: boolean;
 }
@@ -63,7 +69,6 @@ export function SessionRoom({
   presenceState,
   userName,
   voiceUnavailableReason,
-  sidebarOpen,
   narrow,
 }: Props): ReactElement {
   const { observing, notes } = useObservationStatus(session.id);
@@ -236,11 +241,13 @@ export function SessionRoom({
      * `minmax(0, 1fr)` for the conversation and the desk's width — or nothing
      * at all — for the desk. A closed desk is a column of zero, so the
      * conversation takes the width back rather than leaving a gutter where the
-     * panel used to be; and the desk's toggle is fixed chrome above this, so
+     * panel used to be; and the desk's toggle lives on the band above, so
      * neither state reserves a strip for it.
      */
     <main
-      className={`session-room${workbenchTakesPane ? ' desk-takes-pane' : ''}`}
+      className={`session-room${workbenchTakesPane ? ' desk-takes-pane' : ''}${
+        deskResizing ? ' resizing' : ''
+      }`}
       style={
         {
           '--right-column': `${deskColumn}px`,
@@ -248,20 +255,23 @@ export function SessionRoom({
         } as CSSProperties
       }
     >
+      {/*
+        The room's first row, and outside the branch below, because which
+        session this is does not stop being true when the desk takes the pane.
+      */}
+      <SessionHeader
+        session={session}
+        presence={presence}
+        presenceState={presenceState}
+        observing={observing}
+        inVoice={inVoice}
+        voiceUnavailableReason={voiceUnavailableReason}
+        activity={inVoice ? undefined : thinkingActivity}
+        onToggleVoice={toggleVoice}
+      />
+
       {!workbenchTakesPane && (
         <div className="conversation-column">
-          <SessionHeader
-            session={session}
-            presence={presence}
-            presenceState={presenceState}
-            observing={observing}
-            inVoice={inVoice}
-            voiceUnavailableReason={voiceUnavailableReason}
-            clearTitlebar={!sidebarOpen}
-            activity={inVoice ? undefined : thinkingActivity}
-            onToggleVoice={toggleVoice}
-          />
-
           {inVoice ? (
             <VoiceStage
               presence={presence}
@@ -279,11 +289,7 @@ export function SessionRoom({
           ) : (
             <>
               {checkpoint && (
-                <ReturnCheckpoint
-                  checkpoint={checkpoint}
-                  presence={presence}
-                  workbenchOpen={workbench.open && !narrow}
-                />
+                <ReturnCheckpoint checkpoint={checkpoint} presence={presence} />
               )}
               <Conversation
                 entries={thread.entries}
@@ -292,7 +298,6 @@ export function SessionRoom({
                 presence={presence}
                 userName={userName}
                 providerLabel={providerName(session.provider)}
-                workbenchOpen={workbench.open && !narrow}
                 investigating={asking || investigation.active}
                 live={investigation}
                 activity={thinkingActivity}
@@ -301,7 +306,6 @@ export function SessionRoom({
               <Composer
                 session={session}
                 providerLabel={providerName(session.provider)}
-                narrow={workbench.open && !narrow}
                 busy={asking}
                 viewing={viewing}
                 attachments={attachments}
@@ -352,26 +356,24 @@ export function SessionRoom({
 
       {/*
         The desk's control, mirroring the projects panel's: one button, both
-        states, fixed to the window. It opens the desk even when the desk is
-        empty, because "show me what we are looking at" is a question with an
-        answer even when the answer is "nothing yet".
+        states, on the same band at the same baseline. It opens the desk even
+        when the desk is empty, because "show me what we are looking at" is a
+        question with an answer even when the answer is "nothing yet".
       */}
-      <PanelToggle
-        side="right"
-        open={workbench.open}
-        unseen={deskHasUnseen(workbench)}
-        label={workbench.open ? 'Close workbench' : 'Open workbench'}
-        onToggle={() => dispatch({ type: 'setOpen', open: !workbench.open })}
-      />
+      <RoomActions>
+        <PanelToggle
+          side="right"
+          open={workbench.open}
+          unseen={deskHasUnseen(workbench)}
+          label={workbench.open ? 'Close workbench' : 'Open workbench'}
+          onToggle={() => dispatch({ type: 'setOpen', open: !workbench.open })}
+        />
+      </RoomActions>
     </main>
   );
 }
 
 /** Where the desk sits when nothing has moved it, and how far it may go. */
-const DESK_DEFAULT = 380;
-const DESK_MIN = 320;
-const DESK_MAX = 620;
-const DESK_CLOSE_AT = 180;
 
 /**
  * The desk's width, dragged from its own edge.
@@ -382,7 +384,7 @@ const DESK_CLOSE_AT = 180;
  * right edge, because that is the edge this panel is attached to.
  */
 function useDeskResize(onClose: () => void) {
-  const [width, setWidth] = useState(DESK_DEFAULT);
+  const [width, setWidth] = useState(PANEL_RIGHT);
   const [resizing, setResizing] = useState(false);
   const frame = useRef<number | null>(null);
 
@@ -397,13 +399,13 @@ function useDeskResize(onClose: () => void) {
         if (frame.current) cancelAnimationFrame(frame.current);
         frame.current = requestAnimationFrame(() => {
           const fromRight = window.innerWidth - moved.clientX;
-          if (fromRight < DESK_CLOSE_AT) {
+          if (fromRight < PANEL_RIGHT_CLOSE_AT) {
             stop();
-            setWidth(DESK_MIN);
+            setWidth(PANEL_RIGHT_MIN);
             onClose();
             return;
           }
-          setWidth(Math.max(DESK_MIN, Math.min(DESK_MAX, fromRight)));
+          setWidth(Math.max(PANEL_RIGHT_MIN, Math.min(PANEL_RIGHT_MAX, fromRight)));
         });
       };
 

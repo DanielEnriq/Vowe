@@ -29,7 +29,6 @@ interface Props {
   presence: PresenceProfile;
   userName: string;
   providerLabel: string;
-  workbenchOpen: boolean;
   /** An ask is in flight; Vowe is looking into it right now. */
   investigating: boolean;
   /** The work as it happens: lookups, exposed working, the answer being written. */
@@ -62,7 +61,6 @@ export function Conversation({
   presence,
   userName,
   providerLabel,
-  workbenchOpen,
   investigating,
   live,
   activity,
@@ -100,7 +98,7 @@ export function Conversation({
 
   return (
     <div className="conversation" ref={scroller}>
-      <div className={`conversation-measure${workbenchOpen ? ' with-workbench' : ''}`}>
+      <div className="conversation-measure">
         {timeline.length === 0 && !investigating && (
           <div className="empty-block">
             <h2>Nothing said yet</h2>

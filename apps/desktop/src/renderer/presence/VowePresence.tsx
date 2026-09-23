@@ -9,6 +9,7 @@ import {
   type PresenceState,
 } from '@vowe/core/presence';
 
+import { useOnLight } from '../shell/theme.js';
 import { PointCloudOrb } from './PointCloudOrb.js';
 
 interface Props {
@@ -55,9 +56,11 @@ export function VowePresence({
   const host = useRef<HTMLSpanElement | null>(null);
   const orb = useRef<PointCloudOrb | null>(null);
   const reducedMotion = usePrefersReducedMotion();
+  // The application's appearance, not Vowe's. The profile is untouched by it.
+  const onLight = useOnLight();
   const [failed, setFailed] = useState(false);
 
-  const visuals = resolvePresenceVisuals(state, profile, size, { reducedMotion });
+  const visuals = resolvePresenceVisuals(state, profile, size, { reducedMotion, onLight });
   // What the orb should start with, without making the mount depend on props.
   const visualsRef = useRef(visuals);
   visualsRef.current = visuals;

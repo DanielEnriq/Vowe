@@ -89,9 +89,10 @@ describe('InvestigationReceipt — what Vowe actually checked', () => {
     expect(receipt).toBeDefined();
     expect(receipt!.checks.map((check) => check.kind)).toEqual(['search', 'open', 'diff']);
     expect(receipt!.checks.map((check) => check.label)).toEqual([
-      'Searched session context',
-      'Reviewed worker activity',
-      'Inspected the current diff',
+      'Looking for step',
+      // Opened from the search's own hits, so it carries the search's reason.
+      'Reading the worker update about step',
+      'Inspecting the current diff',
     ]);
     // The search's hits belong to the search; the diff's ref to the diff.
     expect(receipt!.checks[0]!.refs.length).toBeGreaterThan(1);
@@ -117,9 +118,9 @@ describe('InvestigationReceipt — what Vowe actually checked', () => {
     const labels = result.entry.investigation!.checks.map((check) => check.label);
 
     expect(labels).toEqual([
-      'Searched the repository',
+      'Looking for absorb',
       'Read registry.ts:12',
-      'Inspected the diff for src/live.ts',
+      'Inspecting src/live.ts changes',
     ]);
     // No implementation syntax leaks into something a person reads.
     for (const label of labels) {
@@ -141,7 +142,7 @@ describe('InvestigationReceipt — what Vowe actually checked', () => {
     const checks = result.entry.investigation!.checks;
 
     expect(checks.map((check) => check.label)).toEqual([
-      'Searched session context',
+      'Looking for nothingmatchesthis',
       'Checked recent observed work',
     ]);
     expect(checks[0]!.refs).toEqual([]);
@@ -261,9 +262,8 @@ describe('InvestigationReceipt — what Vowe actually checked', () => {
     const entries = restarted.getConversation(TEST_SESSION);
 
     expect(answerOf(entries).investigation!.checks).toHaveLength(1);
-    expect(answerOf(entries).investigation!.checks[0]!.label).toBe(
-      'Searched session context',
-    );
+    expect(answerOf(entries).investigation!.checks[0]!.label).toBe('Looking for step');
+    expect(answerOf(entries).investigation!.checks[0]!.detail).toBe('2 matching items');
     const older = entries.find((entry) => entry.text.startsWith('An older answer'))!;
     expect(older.investigation).toBeUndefined();
     expect(older.role).toBe('companion_answer');

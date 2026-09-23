@@ -7,6 +7,8 @@ import {
   resolvePresenceVisuals,
 } from '@vowe/core/presence';
 
+import { useOnLight } from '../shell/theme.js';
+
 /**
  * Vowe, at conversation size.
  *
@@ -60,10 +62,12 @@ export function VoweMark({
    * vocabulary rather than invented here: `thinking` is thinking, and writing
    * an answer is Vowe speaking.
    */
+  const onLight = useOnLight();
   const visuals = resolvePresenceVisuals(
     state === 'idle' ? 'idle' : state === 'answering' ? 'speaking' : 'thinking',
     profile,
     'signature',
+    { onLight },
   );
 
   const measured = typeof activity === 'number' && Number.isFinite(activity)
@@ -103,17 +107,34 @@ export function VoweMark({
   // preference and by reduced motion — all of which `speed` already carries.
   const period = 1.6 / Math.max(0.15, visuals.speed);
 
+  /*
+   * Which of the material's two colours the points are drawn in.
+   *
+   * The orb's answer, at this size. On a dark page the points are the lit
+   * colour over a wash of the shadow one — light added to the surface. On
+   * paper that is a field of white dots on white, so the two swap roles: the
+   * points are the material's own body colour, laid on the page as ink, and
+   * the wash beneath them is fainter still. Neither colour is invented here
+   * and neither material is substituted; this is the same tonal inversion the
+   * orb makes when it stops adding its light and starts being seen in it.
+   */
+  const dotColor = onLight ? visuals.colorB : visuals.colorA;
+  const dotAlpha = onLight
+    ? clamp01(visuals.opacity * 0.92)
+    : clamp01(visuals.opacity * visuals.gain);
+
   const style: CSSProperties & Record<string, string | number> = {
-    // Lit points over the material's shadow colour: the orb's two colours,
-    // doing the same two jobs. The body is a wash and not a disc — it is what
-    // the unlit side of the sphere contributes, not the mark itself.
-    '--mark-dot': withAlpha(visuals.colorA, clamp01(visuals.opacity * visuals.gain)),
-    '--mark-body': withAlpha(visuals.colorB, 0.16),
+    '--mark-dot': withAlpha(dotColor, dotAlpha),
+    '--mark-body': withAlpha(visuals.colorB, onLight ? 0.08 : 0.16),
     '--mark-grid': `${grid.toFixed(2)}px`,
     '--mark-row': `${rowSkew.toFixed(2)}px`,
     '--mark-dot-size': `${dot.toFixed(2)}px`,
-    // The state's shading gain and the developer's light response, together.
-    '--mark-bright': visuals.bright.toFixed(3),
+    /*
+     * The state's shading gain and the developer's light response, together —
+     * and reflected about 1 on paper, because there the mark is dark and more
+     * shading means a denser mark rather than a brighter one.
+     */
+    '--mark-bright': (onLight ? 2 - visuals.bright : visuals.bright).toFixed(3),
     /*
      * The ring, at the strength the state asks for.
      *
@@ -121,7 +142,7 @@ export function VoweMark({
      * which is the design's own decision about that state rather than this
      * component's.
      */
-    '--mark-halo': withAlpha(visuals.colorA, clamp01(visuals.halo * 0.8)),
+    '--mark-halo': withAlpha(dotColor, clamp01(visuals.halo * 0.8)),
     '--mark-halo-size': `${(visuals.halo * 5).toFixed(2)}px`,
     // Deformation depth, as a scale the disc breathes through, plus whatever
     // real activity the state lets reach it.

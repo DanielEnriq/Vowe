@@ -74,6 +74,24 @@ export interface LiveInvestigation {
   beat: number;
 }
 
+/**
+ * Where the turn as a whole is — distinct from anything happening inside it.
+ *
+ * Two levels, kept apart on purpose. Inside the trace, `Thinking · Ns` is a
+ * single reasoning span that is open right now; it is one row among lookups
+ * and says nothing about the turn. Out here the question is only whether the
+ * turn is still alive and what it is doing at the largest grain: gathering
+ * (`investigating`), writing the reply (`answering`), or done (`finished`).
+ * A turn can be investigating for a minute while no reasoning span is open at
+ * all, which is exactly why the two must not share a word.
+ */
+export type TurnPhase = 'investigating' | 'answering' | 'finished';
+
+export function turnPhase(state: LiveInvestigation): TurnPhase {
+  if (!state.active || state.settledEntryId !== null) return 'finished';
+  return state.answer.length > 0 ? 'answering' : 'investigating';
+}
+
 export const QUIET: LiveInvestigation = {
   active: false,
   steps: [],

@@ -20,7 +20,6 @@ export interface Attachment {
 interface Props {
   session: AgentSession | null;
   providerLabel: string;
-  narrow: boolean;
   busy: boolean;
   /** What the workbench is showing, so it can be attached explicitly. */
   viewing: Attachment | null;
@@ -47,7 +46,6 @@ interface Props {
 export function Composer({
   session,
   providerLabel,
-  narrow,
   busy,
   viewing,
   attachments,
@@ -88,7 +86,7 @@ export function Composer({
 
   return (
     <div className="composer-dock">
-      <div className={`composer${narrow ? ' narrow' : ''}${toWorker ? ' to-worker' : ''}`}>
+      <div className={`composer${toWorker ? ' to-worker' : ''}`}>
         {attachments.length > 0 && (
           <div className="chips">
             {attachments.map((attachment) => (
@@ -244,7 +242,7 @@ export function Composer({
       </div>
 
       {offer && (
-        <div className={`offer${narrow ? ' narrow' : ''}`}>
+        <div className="offer">
           <span>
             This reads like an instruction for {providerLabel}. Vowe will not pass it on
             unless you say so.

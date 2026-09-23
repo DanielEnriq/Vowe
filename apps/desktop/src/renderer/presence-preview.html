@@ -3,6 +3,30 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <!--
+      The appearance, before the first frame.
+
+      The main process has already handed the stored preference to Electron's
+      `nativeTheme`, so by the time this runs `prefers-color-scheme` is the
+      resolved answer — including `system`, which keeps following macOS. This
+      turns it into the attribute the stylesheet keys off, synchronously in the
+      head, which is what makes launching in light mode not a flash of dark.
+
+      It stays subscribed for the same reason: with the preference on `system`,
+      macOS switching itself at dusk arrives here as a media query change and
+      nowhere else.
+    -->
+    <script>
+      (function () {
+        var query = window.matchMedia('(prefers-color-scheme: light)');
+        var apply = function () {
+          document.documentElement.dataset.theme = query.matches ? 'light' : 'dark';
+        };
+        apply();
+        query.addEventListener('change', apply);
+      })();
+    </script>
     <title>Vowe Presence — preview</title>
   </head>
   <body>

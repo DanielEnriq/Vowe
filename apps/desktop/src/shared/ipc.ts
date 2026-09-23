@@ -1,5 +1,6 @@
 import type {
   AgentSession,
+  AppearanceSetting,
   ContextRef,
   ConversationChange,
   ConversationDelivery,
@@ -184,6 +185,17 @@ export interface VoweApi {
   /** One appearance for one Vowe, shared by every place it is drawn. */
   getPresenceProfile(): Promise<PresenceProfile>;
   setPresenceProfile(profile: PresenceProfile): Promise<PresenceProfile>;
+
+  /**
+   * Dark, light, or whatever the machine is.
+   *
+   * The renderer sets the *preference* and reads the resolved appearance from
+   * `prefers-color-scheme`, which the main process drives through Electron's
+   * `nativeTheme`. Nothing hands the resolved theme across this boundary: it
+   * would be stale the moment macOS switched itself at dusk.
+   */
+  getAppearance(): Promise<AppearanceSetting>;
+  setAppearance(setting: AppearanceSetting): Promise<AppearanceSetting>;
 
   /**
    * How Vowe behaves, kept deliberately apart from how it looks.
@@ -406,6 +418,8 @@ export const IPC = {
   setUserProfile: 'vowe:profile:set',
   getPresenceProfile: 'vowe:presence:get',
   setPresenceProfile: 'vowe:presence:set',
+  getAppearance: 'vowe:appearance:get',
+  setAppearance: 'vowe:appearance:set',
   openArtifact: 'vowe:artifact:open',
   getInvestigationSteps: 'vowe:investigation:steps',
   getDeliveries: 'vowe:session:deliveries',
