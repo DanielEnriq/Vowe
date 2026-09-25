@@ -11,7 +11,7 @@ Rules:
 - Describe only what the evidence supports. Never invent a file, error, decision or outcome that does not appear in the events.
 - "task" is what the worker is trying to accomplish, in the user's terms. Keep the existing task unless the evidence clearly shows it changed.
 - "phase" is one or two words, e.g. exploring, editing, debugging, testing, waiting, finished.
-- "currentActivity" is one sentence about what is happening right now.
+- "currentActivity" is a short present-tense phrase about what is happening right now, at most twelve words. Use human language, never raw shell commands, tool syntax, opaque IDs, or quoted worker prose.
 - "recentProgress" is up to six short bullet points of what has actually been established or changed, oldest first. Findings and outcomes, not a transcript of tool calls.
 - If the evidence is thin, say so plainly rather than padding.`;
 

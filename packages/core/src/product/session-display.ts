@@ -119,7 +119,17 @@ export function sessionTitle(session: AgentSession): string {
   for (const candidate of candidates) {
     const text = plainText(candidate);
     if (!text || GENERATED_LABEL.test(text)) continue;
-    return conciseTitle(text) ?? text;
+    /*
+     * The cut is the answer or there isn't one. `?? text` used to sit here,
+     * which quietly put the whole 160-character sentence back on screen for
+     * exactly the candidates `conciseTitle` could make nothing of — a bare
+     * identifier, a line that is all parenthetical — so the one contract the
+     * title has held everywhere except where it was least able to cope. A
+     * session with no nameable task falls through to the directory below,
+     * which is short, true, and reads like a name.
+     */
+    const concise = conciseTitle(text);
+    if (concise) return concise;
   }
 
   const directory = lastSegment(session.cwd);
@@ -129,8 +139,14 @@ export function sessionTitle(session: AgentSession): string {
 
 /** What this session is doing right now, or `null` when nothing observed it. */
 export function sessionActivity(session: AgentSession): string | null {
+  const value = session.semanticState?.currentActivity;
+  if (value && /^(?:Failed:|Nothing observed yet\.)\s*$/.test(value)) return null;
+  // Older persisted heuristics may contain execution residue. Do not promote
+  // it into activity while waiting for the next interpretation pass.
+  if (value && (/^(?:Ran:|Running (?:[A-Z_]+=|(?:pnpm|npm|python\d*|node|rg|find|git|cat|sed|text\()\b)|Command (?:finished|failed):)/i.test(value)
+    || /\$\(|```|\btools\.\w+|\*\*/.test(value))) return null;
   const text = plainText(
-    session.semanticState?.currentActivity,
+    value,
     DEFAULT_ACTIVITY_LIMIT,
   );
   return text || null;

@@ -18,6 +18,7 @@ import type {
 } from '../../workbench/persisted.js';
 import type {
   AgentSession,
+  MeaningfulUpdate,
   SemanticProvenance,
   SemanticState,
   SessionCapabilities,
@@ -193,6 +194,17 @@ export function toSemanticState(row: Row): SemanticState {
       key,
     ),
     lastMeaningfulUpdate: str(row['last_meaningful_update']),
+    // Nullable since v8; a row written before it genuinely had neither.
+    currentUnderstanding: strOrNull(row['current_understanding'] ?? null),
+    meaningfulUpdates:
+      row['meaningful_updates_json'] === null ||
+      row['meaningful_updates_json'] === undefined
+        ? []
+        : parse<MeaningfulUpdate[]>(
+            row['meaningful_updates_json'],
+            'semantic_states',
+            key,
+          ),
     source: str(row['source']) as SemanticState['source'],
     provenance: parse<SemanticProvenance>(
       row['provenance_json'],
@@ -340,6 +352,9 @@ export function toWindowNote(row: Row): WindowNote {
   }
   if (row['notable_change'] !== null) {
     note.notableChange = str(row['notable_change']);
+  }
+  if (row['understanding'] !== null && row['understanding'] !== undefined) {
+    note.understanding = str(row['understanding']);
   }
   return note;
 }

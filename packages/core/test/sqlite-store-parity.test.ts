@@ -37,6 +37,8 @@ function semantic(overrides: Partial<SemanticState> = {}): SemanticState {
     currentActivity: 'reading the replay path',
     recentProgress: ['found the insertion function'],
     lastMeaningfulUpdate: '2026-02-11T09:05:00.000Z',
+    currentUnderstanding: null,
+    meaningfulUpdates: [],
     source: 'heuristic',
     provenance: { eventIds: ['a', 'b'], throughSeq: 12 },
     updatedAt: '2026-02-11T09:05:00.000Z',

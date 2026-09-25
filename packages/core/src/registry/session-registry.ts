@@ -3,7 +3,13 @@ import { randomUUID } from 'node:crypto';
 
 import type { AgentAdapter, InstructionResult, LaunchOptions, Unsubscribe } from '../types/adapter.js';
 import type { NormalizedEvent } from '../types/events.js';
-import type { AgentSession } from '../types/session.js';
+import type { WorkerActivity } from '../product/worker-activity.js';
+import {
+  MEANINGFUL_UPDATE_LIMIT,
+  type AgentSession,
+  type MeaningfulUpdate,
+  type SemanticState,
+} from '../types/session.js';
 import type { ProjectService } from '../projects/project-service.js';
 import type { EventStore } from '../store/event-store.js';
 import {
@@ -410,11 +416,131 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
   ): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session || !state) return;
+    const current = session.semanticState;
+    const newerActivity = current && this.store.getEventsByIds(sessionId, current.provenance.eventIds)
+      .some((event) => event.seq > state.provenance.throughSeq);
+    // The observer may have published while the semantic model was in flight.
+    // This pass owns activity/progress, never the observer's carried fields.
+    const next: AgentSession = { ...session, semanticState: {
+      ...state,
+      ...(newerActivity ? { currentActivity: current.currentActivity, phase: current.phase, provenance: current.provenance } : {}),
+      currentUnderstanding: session.semanticState?.currentUnderstanding ?? state.currentUnderstanding,
+      meaningfulUpdates: session.semanticState?.meaningfulUpdates ?? state.meaningfulUpdates,
+      ...(current && Date.parse(current.lastMeaningfulUpdate) > Date.parse(state.lastMeaningfulUpdate)
+        ? { lastMeaningfulUpdate: current.lastMeaningfulUpdate } : {}),
+    } };
+    this.sessions.set(sessionId, next);
+    await this.store.appendSemanticState(sessionId, next.semanticState!);
+    this.emit('session:updated', next);
+  }
+
+  /**
+   * Publish what a worker is doing right now.
+   *
+   * Synchronous, and deliberately not persisted. This is called from the event
+   * lane, which must never wait on anything, and it fires as often as a worker
+   * touches a file — a history row per tool call would be a great many writes
+   * to record something nobody will ever read back. It survives a restart well
+   * enough anyway: `reconcile` carries the in-memory state into
+   * `sessions.semantic_state_json` on its next pass, as one overwritten row.
+   *
+   * Returns whether anything changed, so the caller can tell a real transition
+   * from the same label arriving again.
+   */
+  applyActivitySignal(sessionId: string, activity: WorkerActivity): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session) return false;
+
+    const previous = session.semanticState;
+    if (previous?.currentActivity === activity.label) return false;
+
+    const state: SemanticState = {
+      /*
+       * A session discovered a moment ago has no semantic state, and waiting
+       * for the debounced interpretation pass would leave it blank for fifteen
+       * seconds — exactly when someone is most likely to be looking at it. So
+       * the fast path seeds one rather than declining to say anything.
+       */
+      ...(previous ?? emptySemanticState(session)),
+      currentActivity: activity.label,
+      phase: activity.phase,
+      provenance: { eventIds: activity.eventIds, throughSeq: previous?.provenance.throughSeq ?? 0 },
+      updatedAt: new Date().toISOString(),
+    };
+
+    const next: AgentSession = { ...session, semanticState: state };
+    this.sessions.set(sessionId, next);
+    this.emit('session:updated', next);
+    return true;
+  }
+
+  /**
+   * Fold what the observer understood into the session's live state.
+   *
+   * This is the join between the two pipelines. Observation produces notes and
+   * knows nothing about sessions; the registry holds sessions and knows nothing
+   * about windows; this is where a note becomes something the product can show.
+   *
+   * Persisted, unlike the activity signal: one write per interpreted window or
+   * checkpoint is the right rate for something a developer reads after looking
+   * away, and it is how understanding survives a restart.
+   */
+  async applyObserverState(
+    sessionId: string,
+    observed: {
+      understanding: string | null;
+      durableUpdate: MeaningfulUpdate | null;
+    },
+  ): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+
+    const previous = session.semanticState ?? emptySemanticState(session);
+    const updates = [...previous.meaningfulUpdates];
+    if (observed.durableUpdate) {
+      // Re-interpreting a window replaces its update rather than repeating it:
+      // the note id is the identity, so a checkpoint and the canonical note
+      // that follows do not both end up in the list.
+      const at = updates.findIndex((item) => item.id === observed.durableUpdate!.id);
+      if (at >= 0) updates.splice(at, 1);
+      updates.push(observed.durableUpdate);
+    }
+
+    const state: SemanticState = {
+      ...previous,
+      ...(observed.understanding ? { currentUnderstanding: observed.understanding } : {}),
+      meaningfulUpdates: updates.slice(-MEANINGFUL_UPDATE_LIMIT),
+      ...(observed.durableUpdate ? { lastMeaningfulUpdate: observed.durableUpdate.at } : {}),
+      updatedAt: new Date().toISOString(),
+    };
+
     const next: AgentSession = { ...session, semanticState: state };
     this.sessions.set(sessionId, next);
     await this.store.appendSemanticState(sessionId, state);
     this.emit('session:updated', next);
   }
+}
+
+/**
+ * The state a session has before anything has interpreted it.
+ *
+ * Every field says plainly that nothing is known yet, rather than guessing. It
+ * exists so the two publish paths above can write one field without having to
+ * invent the rest.
+ */
+function emptySemanticState(session: AgentSession): SemanticState {
+  return {
+    task: session.task,
+    phase: 'no activity yet',
+    currentActivity: 'Nothing observed yet.',
+    recentProgress: [],
+    lastMeaningfulUpdate: session.lastActivityAt,
+    currentUnderstanding: null,
+    meaningfulUpdates: [],
+    source: 'heuristic',
+    provenance: { eventIds: [], throughSeq: 0 },
+    updatedAt: new Date(0).toISOString(),
+  };
 }
 
 function describeWhyNoControl(session: AgentSession): string {

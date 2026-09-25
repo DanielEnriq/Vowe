@@ -321,11 +321,13 @@ export class SqliteEventStore implements EventStore {
       this.run(
         `INSERT INTO semantic_states (
            session_id, ord, task, phase, current_activity, recent_progress_json,
-           last_meaningful_update, source, provenance_json, updated_at)
+           last_meaningful_update, current_understanding, meaningful_updates_json,
+           source, provenance_json, updated_at)
          SELECT :sessionId,
                 COALESCE((SELECT MAX(ord) FROM semantic_states WHERE session_id = :sessionId), 0) + 1,
                 :task, :phase, :currentActivity, :recentProgress,
-                :lastMeaningfulUpdate, :source, :provenance, :updatedAt`,
+                :lastMeaningfulUpdate, :currentUnderstanding, :meaningfulUpdates,
+                :source, :provenance, :updatedAt`,
         {
           sessionId,
           task: rows.text(state.task),
@@ -333,6 +335,8 @@ export class SqliteEventStore implements EventStore {
           currentActivity: state.currentActivity,
           recentProgress: JSON.stringify(state.recentProgress),
           lastMeaningfulUpdate: state.lastMeaningfulUpdate,
+          currentUnderstanding: rows.text(state.currentUnderstanding ?? null),
+          meaningfulUpdates: JSON.stringify(state.meaningfulUpdates ?? []),
           source: state.source,
           provenance: JSON.stringify(state.provenance),
           updatedAt: state.updatedAt,
@@ -802,11 +806,12 @@ export class SqliteEventStore implements EventStore {
     this.run(
       `INSERT INTO window_notes (
          id, session_id, ord, window_id, window_index, summary,
-         current_activity, notable_change, refs_json, investigated, created_at)
+         understanding, current_activity, notable_change, refs_json,
+         investigated, created_at)
        SELECT :id, :sessionId,
               COALESCE((SELECT MAX(ord) FROM window_notes
                          WHERE session_id = :sessionId), 0) + 1,
-              :windowId, :windowIndex, :summary, :currentActivity,
+              :windowId, :windowIndex, :summary, :understanding, :currentActivity,
               :notableChange, :refs, :investigated, :createdAt
        WHERE true
        -- One note per window. Re-noting a window replaces its note rather than
@@ -815,6 +820,7 @@ export class SqliteEventStore implements EventStore {
          id               = excluded.id,
          window_index     = excluded.window_index,
          summary          = excluded.summary,
+         understanding    = excluded.understanding,
          current_activity = excluded.current_activity,
          notable_change   = excluded.notable_change,
          refs_json        = excluded.refs_json,
@@ -826,6 +832,7 @@ export class SqliteEventStore implements EventStore {
         windowId: note.windowId,
         windowIndex: note.windowIndex,
         summary: note.summary,
+        understanding: rows.text(note.understanding),
         currentActivity: rows.text(note.currentActivity),
         notableChange: rows.text(note.notableChange),
         refs: JSON.stringify(note.refs),

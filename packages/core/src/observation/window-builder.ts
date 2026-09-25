@@ -58,6 +58,19 @@ export class WindowBuilder {
     return this.open.length;
   }
 
+  /**
+   * The unclosed tail itself.
+   *
+   * Read-only, and it does not close anything. A live checkpoint needs to see
+   * what the worker has done since the last window without cutting a window
+   * early — closing one on a clock would make the same trace produce different
+   * windows depending on how fast it was read, which is exactly what the
+   * `flush` comment above refuses to do.
+   */
+  get pending(): readonly NormalizedEvent[] {
+    return this.open;
+  }
+
   /** Highest sequence the builder has seen, closed or still open. */
   get seenThroughSeq(): number {
     return this.open.length ? this.open[this.open.length - 1]!.seq : this.lastClosedSeq;

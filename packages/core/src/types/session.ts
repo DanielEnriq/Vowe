@@ -6,6 +6,8 @@
  * and capabilities are all discovered at runtime.
  */
 
+import type { ContextRef } from '../context/refs.js';
+
 /**
  * Coarse, provider-independent lifecycle state.
  *
@@ -145,13 +147,55 @@ export interface AgentSession {
   semanticState: SemanticState | null;
 }
 
+/**
+ * One thing that changed what the developer should believe about a worker.
+ *
+ * Durable in a way `currentActivity` is not: activity is replaced constantly
+ * and nobody scrolls back through it, whereas these accumulate and are meant to
+ * be readable after looking away. Every one carries the refs of the evidence it
+ * was drawn from, so a claim can always be descended into.
+ */
+export interface MeaningfulUpdate {
+  /** The note or anchoring event id, so a recompute yields the same item. */
+  id: string;
+  text: string;
+  at: string;
+  refs: ContextRef[];
+}
+
+/** How many durable updates are worth carrying. Beyond this it is a log. */
+export const MEANINGFUL_UPDATE_LIMIT = 5;
+
 export interface SemanticState {
   task: string | null;
   /** e.g. exploring, editing, running, debugging, testing, waiting. */
   phase: string;
   currentActivity: string;
+  /**
+   * Raw recent progress, from the deterministic interpreter.
+   *
+   * The floor, not the product contract: these are event summaries, and what a
+   * developer reads is `meaningfulUpdates`. Kept because the companion's
+   * model-free description and the question prompts are built on it.
+   */
   recentProgress: string[];
   lastMeaningfulUpdate: string;
+  /**
+   * Where the work stands, as the observer currently understands it.
+   *
+   * Present-state orientation rather than history — one to three sentences
+   * about what is done and what is unresolved. What happened earlier lives in
+   * `meaningfulUpdates`, where it keeps its evidence.
+   *
+   * `null` whenever no observation model has interpreted this session. There is
+   * deliberately no deterministic stand-in: unlike an activity label, there is
+   * no honest prose a rule could produce for "what does this worker believe
+   * now?", and inventing one would be the first step in a chain that ends with
+   * a confident wrong answer.
+   */
+  currentUnderstanding: string | null;
+  /** Newest last, capped. Only what should change a developer's mental model. */
+  meaningfulUpdates: MeaningfulUpdate[];
   source: 'heuristic' | 'llm';
   /**
    * Which observed evidence produced this state. Required on every write so a

@@ -118,6 +118,15 @@ export interface ObserveWindowInput {
   cwd: string | null;
   /** The window being interpreted. */
   window: ObserverWindowSlice;
+  /**
+   * What the observer currently understands about this worker, if anything.
+   *
+   * The continuity that makes this observation rather than summarisation. It is
+   * one evolving statement rather than a growing pile of window summaries,
+   * because an understanding that has to be reassembled from its own history
+   * every time is not an understanding.
+   */
+  currentUnderstanding: string | null;
   /** The last few notes, oldest first. Not the whole history. */
   recentNotes: WindowNote[];
   /** Older notes the decision router judged relevant, if any. */
@@ -131,7 +140,19 @@ export interface ObserveWindowInput {
 /** What the model may return. Identity, refs and bookkeeping stay ours. */
 export interface WindowObservation {
   summary: string;
+  /**
+   * The rewritten understanding of where the work stands.
+   *
+   * Replaces the previous one rather than extending it, and is meant to be
+   * read on its own: present state and what is unresolved, not a history. What
+   * happened belongs in `notableChange`, where it keeps its evidence.
+   */
+  understanding?: string;
   currentActivity?: string;
+  /**
+   * A durable update: something that should change what the developer believes
+   * about this worker. Absent for ordinary progress, which is most portions.
+   */
   notableChange?: string;
   /** Refs the model chose to cite, in string form. */
   refs?: string[];

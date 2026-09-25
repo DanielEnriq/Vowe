@@ -34,8 +34,14 @@ export function recordObservationTool(capture: ObservationCapture) {
   return betaZodTool({
     name: 'record_observation',
     description:
-      'Report your updated understanding of this portion of the work. Call this exactly once, when you are done looking.',
+      'Report what changed in your understanding of this worker. Call this exactly once, when you are done looking.',
     inputSchema: z.object({
+      understanding: z
+        .string()
+        .optional()
+        .describe(
+          'Where the work stands now, rewritten so it reads on its own without the previous version. One to three short sentences, about sixty words: present state and what is unresolved, not a history of how it got here. Restate it unchanged if nothing changed.',
+        ),
       summary: z
         .string()
         .describe(
@@ -49,12 +55,13 @@ export function recordObservationTool(capture: ObservationCapture) {
         .string()
         .optional()
         .describe(
-          'Something a person would actually want to know: a milestone, a change of approach, a surprise, a stall, a repeated failure, a completion. Omit for ordinary progress.',
+          'A durable update: something that should materially change what the engineer believes about this worker — a finding, a change of approach, a result, a stall, a repeated failure, a completion. OMIT IT for ordinary progress. Most portions warrant none, and omitting it is the expected outcome rather than a failure. Never repeat an update you have already given.',
         ),
       refs: RefsField,
     }),
     run: async (input) => {
       const observation: WindowObservation = { summary: input.summary };
+      if (input.understanding) observation.understanding = input.understanding;
       if (input.currentActivity) observation.currentActivity = input.currentActivity;
       if (input.notableChange) observation.notableChange = input.notableChange;
       if (input.refs?.length) observation.refs = input.refs;

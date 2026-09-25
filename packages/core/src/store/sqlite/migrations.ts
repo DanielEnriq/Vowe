@@ -361,6 +361,27 @@ const SESSION_ARCHIVE = `
 ALTER TABLE sessions ADD COLUMN archived_at TEXT;  -- NULL => key ABSENT
 `;
 
+/**
+ * What the observer understands, and the few things it decided were worth
+ * telling the developer.
+ *
+ * Added beside the interpreted state rather than in a table of their own: they
+ * are written by the same pass, read by the same projection and meaningless
+ * apart from it, so a separate table would buy a join and nothing else.
+ *
+ * Both are nullable and both degrade: a row written before this migration
+ * reads back as "no understanding, no updates", which is exactly true of it.
+ *
+ * `window_notes.understanding` is the same fact one level down — the note is
+ * where the understanding is durable, and the semantic state is where it is
+ * current.
+ */
+const OBSERVER_UNDERSTANDING = `
+ALTER TABLE semantic_states ADD COLUMN current_understanding   TEXT;  -- NULL => null (key PRESENT)
+ALTER TABLE semantic_states ADD COLUMN meaningful_updates_json TEXT;  -- NULL => []
+ALTER TABLE window_notes    ADD COLUMN understanding           TEXT;  -- NULL => key ABSENT
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -396,6 +417,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 7,
     name: '007_session_archive',
     up: (db) => db.exec(SESSION_ARCHIVE),
+  },
+  {
+    version: 8,
+    name: '008_observer_understanding',
+    up: (db) => db.exec(OBSERVER_UNDERSTANDING),
   },
 ];
 

@@ -12,6 +12,8 @@
  */
 export * from './worker-milestones.js';
 export * from './shell.js';
+export * from './worker-activity.js';
+export * from './observer-state.js';
 export * from './evidence.js';
 export * from './investigation-chronology.js';
 export * from './attention.js';

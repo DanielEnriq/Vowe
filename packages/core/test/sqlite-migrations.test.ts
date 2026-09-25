@@ -174,6 +174,60 @@ describe('schema migrations', () => {
     expect('origin' in entry!).toBe(false);
   });
 
+  it('reads a semantic state written before the observer understood anything', async () => {
+    const root = await temporaryRoot();
+    buildDatabaseAt(root, 7);
+
+    // A v7 Vowe: semantic states exist, understanding does not.
+    const before = new DatabaseSync(databasePath(root));
+    before
+      .prepare(
+        `INSERT INTO semantic_states (
+           session_id, ord, task, phase, current_activity, recent_progress_json,
+           last_meaningful_update, source, provenance_json, updated_at)
+         VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        TEST_SESSION,
+        'Fix the reconnect regression',
+        'testing',
+        'Running the test suite',
+        JSON.stringify(['ran the suite']),
+        '2026-02-11T09:05:00.000Z',
+        'heuristic',
+        JSON.stringify({ eventIds: [], throughSeq: 4 }),
+        '2026-02-11T09:05:00.000Z',
+      );
+    before.close();
+
+    const store = await openStore(root);
+    const [state] = store.getSemanticHistory(TEST_SESSION);
+
+    // The honest reading of a row that predates the field: nothing was
+    // understood, and nothing durable was said. Not a throw, and not a guess.
+    expect(state!.currentActivity).toBe('Running the test suite');
+    expect(state!.currentUnderstanding).toBeNull();
+    expect(state!.meaningfulUpdates).toEqual([]);
+
+    // And the new capability writes on top of the old row.
+    await store.appendSemanticState(TEST_SESSION, {
+      ...state!,
+      currentUnderstanding: 'The suite passes; liveness is unresolved.',
+      meaningfulUpdates: [
+        {
+          id: 'note-1',
+          text: 'The focused normalization tests pass.',
+          at: '2026-02-11T09:06:00.000Z',
+          refs: [{ kind: 'trace', sessionId: TEST_SESSION, startSeq: 1, endSeq: 4 }],
+        },
+      ],
+    });
+
+    const reloaded = store.getSession(TEST_SESSION)!.semanticState!;
+    expect(reloaded.currentUnderstanding).toBe('The suite passes; liveness is unresolved.');
+    expect(reloaded.meaningfulUpdates[0]!.refs).toHaveLength(1);
+  });
+
   it('is a no-op the second time it runs', async () => {
     const root = await temporaryRoot();
     const first = await openStore(root);

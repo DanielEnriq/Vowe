@@ -1,10 +1,11 @@
 import type { RepoIndexState, RepoIndexStatus } from '../knowledge/project-knowledge.js';
-import { isActiveSession } from '../projects/project.js';
 import type { EventStore } from '../store/event-store.js';
-import type { AgentSession, SessionStatus } from '../types/session.js';
+import type { AgentSession, MeaningfulUpdate, SessionStatus } from '../types/session.js';
+import type { NormalizedEvent } from '../types/events.js';
 import { attentionFor, type AttentionItem } from './attention.js';
+import { liveObserverState } from './observer-state.js';
 import { selectProjectSignal, type ProjectSignal } from './project-signal.js';
-import { sessionActivity, sessionTitle } from './session-display.js';
+import { sessionTitle } from './session-display.js';
 
 /**
  * What is happening in one repository, in one read.
@@ -57,6 +58,9 @@ export interface ProjectSessionSummary {
 
   status: SessionStatus;
   currentActivity: string | null;
+  currentUnderstanding: string | null;
+  latestDevelopment: MeaningfulUpdate | null;
+  attention: AttentionItem | null;
 
   provider: string;
   branch: string | null;
@@ -125,24 +129,22 @@ export class ProjectBriefService {
   async get(projectId: string): Promise<ProjectBrief> {
     const sessions = [...this.sessionsFor(projectId)].sort(byMostRecent);
 
-    const needsAttention: AttentionItem[] = [];
-    for (const session of sessions) {
-      needsAttention.push(
-        ...attentionFor(session, projectId, this.store.getEvents(session.id)),
-      );
-    }
+    const events = new Map(sessions.map((session) => [session.id, this.store.getEvents(session.id)]));
+    const summaries = new Map(sessions.map((session) => [session.id,
+      projectSessionSummary(session, events.get(session.id)!, projectId),
+    ]));
+    const needsAttention = sessions.flatMap((session) =>
+      attentionFor(session, projectId, events.get(session.id)!));
     needsAttention.sort(
       (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
     );
-    const waiting = new Set(needsAttention.map((item) => item.sessionId));
-
     const active = sessions
-      .filter(isActiveSession)
-      .map((session) => summarize(session, waiting));
+      .filter((session) => isCurrentProjectWork(session, summaries.get(session.id)!.needsAttention))
+      .map((session) => summaries.get(session.id)!);
     const recent = sessions
-      .filter((session) => !isActiveSession(session))
+      .filter((session) => !isCurrentProjectWork(session, summaries.get(session.id)!.needsAttention))
       .slice(0, this.recentLimit)
-      .map((session) => summarize(session, waiting));
+      .map((session) => summaries.get(session.id)!);
 
     const latestSignal = selectProjectSignal(
       sessions.map((session) => session.id),
@@ -161,6 +163,7 @@ export class ProjectBriefService {
       knowledge,
       updatedAt: newestOf([
         ...sessions.map((session) => session.lastActivityAt),
+        ...sessions.map((session) => session.semanticState?.updatedAt),
         ...needsAttention.map((item) => item.createdAt),
         latestSignal?.at,
         knowledge.updatedAt,
@@ -230,19 +233,30 @@ function detailLinesFor(
   return [];
 }
 
-function summarize(
+/** A worker between turns belongs in Recently unless a person can act on it. */
+export function isCurrentProjectWork(session: Pick<AgentSession, 'status'>, needsAttention = false): boolean {
+  return session.status === 'working' || session.status === 'starting' || needsAttention;
+}
+
+/** Shared orientation for the room and Project Ask; interpretation stays in core. */
+export function projectSessionSummary(
   session: AgentSession,
-  waiting: Set<string>,
+  events: readonly NormalizedEvent[],
+  projectId?: string,
 ): ProjectSessionSummary {
+  const observer = liveObserverState(session, events, projectId);
   return {
     sessionId: session.id,
     title: sessionTitle(session),
     status: session.status,
-    currentActivity: sessionActivity(session),
+    currentActivity: observer.currentActivity,
+    currentUnderstanding: observer.currentUnderstanding,
+    latestDevelopment: observer.recentMeaningfulUpdates.at(-1) ?? null,
+    attention: observer.attention,
     provider: session.provider,
     branch: session.branch ?? null,
     lastActivityAt: session.lastActivityAt,
-    needsAttention: waiting.has(session.id),
+    needsAttention: observer.attention !== null,
   };
 }
 

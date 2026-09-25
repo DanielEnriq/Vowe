@@ -18,15 +18,21 @@ import type {
  */
 export const OBSERVER_SYSTEM = `You are following a software engineer's coding agent as it works, over a long session, one portion of its trace at a time.
 
-You are given your recent understanding of the work and a new portion of the trace. Update your understanding: what happened in this portion, what changed, what the worker appears to be doing now, and whether anything notable occurred.
+You are given your current understanding of this worker and new evidence. The question you are answering is never "summarize these events". It is: **what changed in my understanding of this worker?**
 
 Rules:
 - Describe only what the trace supports. Never invent a file, error, command, decision or outcome that does not appear in the evidence you were given.
-- You are continuing, not starting over. Do not restate what earlier notes already established; say what is different now.
-- "summary" is a short paragraph of prose — what a colleague watching over the engineer's shoulder would say happened. Findings and consequences, not a list of tool calls.
-- "currentActivity" is one sentence about what the worker is doing as of the end of this portion.
-- "notableChange" is for something a person would actually want to know: a milestone, a change of approach, a surprising discovery, a stall, a repeated failure, a completion. Leave it out when the answer is "ordinary progress".
+- You are continuing, not starting over. Do not restate what you already understood; say what is different now.
+- Never put an opaque identifier, a tool name or tool syntax in anything you write. A person reads this, not a trace.
 - If the evidence is thin, say so plainly rather than padding.
+
+What to report:
+- "understanding" is where the work stands *now*, rewritten so it reads on its own without the previous version. One to three short sentences, about sixty words. Present state and what is unresolved — not a history of how it got here. If your understanding did not change, restate it unchanged.
+- "summary" is a short paragraph of prose about this portion — what a colleague watching over the engineer's shoulder would say happened. Findings and consequences, not a list of tool calls.
+- "currentActivity" is one sentence about what the worker is doing as of the end of this portion.
+- "notableChange" is a durable update: something that should materially change what the engineer believes about this worker. A finding, a change of approach, a result, a stall, a repeated failure, a completion.
+  Omit it for ordinary progress. **Most portions warrant no durable update, and omitting it is the expected outcome, not a failure.** "The worker read several files and made changes" is not a durable update. "The worker found that session histories branch through parent ids and is preserving that structure in provenance" is.
+  Do not repeat a durable update you have already given, in other words.
 
 Tools:
 - Call surface_update when you believe a development may be worth bringing to the human's attention. It does NOT speak to them — it proposes, and a separate policy decides. Give a concrete message, say why it matters now, and cite references. Do not call it for routine progress.
@@ -50,6 +56,17 @@ export function renderObserverPrompt(input: ObserveWindowInput): string {
     );
   }
 
+  /*
+   * The understanding goes first, and above the note history on purpose. It is
+   * the thing being updated; the notes below it are how it was arrived at, and
+   * a model given them in the other order tends to write another note instead
+   * of revising what it knows.
+   */
+  if (input.currentUnderstanding) {
+    parts.push('', 'What you currently understand about this worker:');
+    parts.push(`  ${input.currentUnderstanding}`);
+  }
+
   if (input.relevantOlderNotes.length) {
     parts.push('', 'Earlier in this session, and possibly relevant:');
     for (const note of input.relevantOlderNotes) {
@@ -61,9 +78,11 @@ export function renderObserverPrompt(input: ObserveWindowInput): string {
     parts.push('', 'Your understanding so far, oldest first:');
     for (const note of input.recentNotes) {
       parts.push(`  [window ${note.windowIndex}] ${note.summary}`);
-      if (note.notableChange) parts.push(`      notable: ${note.notableChange}`);
+      if (note.notableChange) {
+        parts.push(`      durable update already given: ${note.notableChange}`);
+      }
     }
-  } else {
+  } else if (!input.currentUnderstanding) {
     parts.push('', 'You have not observed this session before. This is the beginning.');
   }
 

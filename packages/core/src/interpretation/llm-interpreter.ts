@@ -59,12 +59,16 @@ export class LlmSemanticInterpreter implements SemanticInterpreter {
       return {
         task: update.task ?? input.session.task,
         phase: update.phase || heuristic.phase,
-        currentActivity: update.currentActivity || heuristic.currentActivity,
+        currentActivity: update.currentActivity?.trim() || heuristic.currentActivity,
         recentProgress: update.recentProgress?.length
           ? update.recentProgress
           : heuristic.recentProgress,
         lastMeaningfulUpdate:
           update.lastMeaningfulUpdate || heuristic.lastMeaningfulUpdate,
+        // Both belong to the observer, which runs in the other pipeline. This
+        // one carries them forward and never invents or clears them.
+        currentUnderstanding: input.previous?.currentUnderstanding ?? null,
+        meaningfulUpdates: input.previous?.meaningfulUpdates ?? [],
         source: this.source,
         provenance: provenanceFor(input.events),
         updatedAt: new Date().toISOString(),
