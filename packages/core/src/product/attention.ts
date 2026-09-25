@@ -122,7 +122,7 @@ function isAnswered(
   request: NormalizedEvent,
   answeredAt: Map<string, number>,
 ): boolean {
-  const toolUseId = stringDetail(request, 'toolUseId');
+  const toolUseId = correlationId(request);
   if (!toolUseId) return false;
   const latest = answeredAt.get(toolUseId);
   return latest !== undefined && latest > request.seq;
@@ -132,7 +132,7 @@ function isAnswered(
 function lastSeqByToolUse(events: NormalizedEvent[]): Map<string, number> {
   const seen = new Map<string, number>();
   for (const event of events) {
-    const toolUseId = stringDetail(event, 'toolUseId');
+    const toolUseId = correlationId(event);
     if (!toolUseId) continue;
     const current = seen.get(toolUseId);
     if (current === undefined || event.seq > current) seen.set(toolUseId, event.seq);
@@ -143,4 +143,9 @@ function lastSeqByToolUse(events: NormalizedEvent[]): Map<string, number> {
 function stringDetail(event: NormalizedEvent, key: string): string | null {
   const value = event.detail?.[key];
   return typeof value === 'string' && value ? value : null;
+}
+
+/** The adapters' existing call/result correlation fields. */
+function correlationId(event: NormalizedEvent): string | null {
+  return stringDetail(event, 'toolUseId') ?? stringDetail(event, 'toolCallId') ?? stringDetail(event, 'callId');
 }

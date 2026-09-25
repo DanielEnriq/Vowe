@@ -12,6 +12,19 @@
 export type NormalizedEventKind =
   | 'session_started'
   | 'agent_message'
+  /**
+   * The worker's own reasoning, as the provider recorded it.
+   *
+   * Supporting evidence, never a source of truth about what a session is
+   * doing. Most providers expose nothing here, and the ones that do expose it
+   * unevenly, so observation, interpretation and milestones all ignore this
+   * kind on purpose. It is carried so a person can read it and so an
+   * investigation can cite it — nothing further depends on it.
+   *
+   * Its absence says nothing. `capabilities.reasoning` is what distinguishes
+   * "did not think" from "we cannot see it".
+   */
+  | 'agent_reasoning'
   | 'user_instruction'
   | 'tool_started'
   | 'tool_finished'

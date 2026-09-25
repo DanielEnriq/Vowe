@@ -6,6 +6,7 @@ export * from './attention.js';
 export * from './project-signal.js';
 export * from './project-brief.js';
 export * from './worker-milestones.js';
+export * from './shell.js';
 export * from './return-brief.js';
 export * from './evidence.js';
 export * from './investigation-chronology.js';

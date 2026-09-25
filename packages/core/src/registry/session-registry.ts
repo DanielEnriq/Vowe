@@ -62,6 +62,25 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
     this.adapters.set(adapter.provider, adapter);
   }
 
+  /** Every provider Vowe is currently attached to, in registration order. */
+  providers(): string[] {
+    return [...this.adapters.keys()];
+  }
+
+  /**
+   * The providers that can actually start a new session on this machine.
+   *
+   * Both halves matter and they are different questions: the adapter has to
+   * implement launching at all, and its CLI has to be present to do it. A
+   * provider that answers no to either is simply not offered, which is why
+   * nothing downstream has to name a provider to find one.
+   */
+  launchCapableProviders(): string[] {
+    return [...this.adapters.values()]
+      .filter((adapter) => adapter.launchSession && (adapter.canLaunch?.() ?? true))
+      .map((adapter) => adapter.provider);
+  }
+
   /** Rehydrate previously known sessions, then begin discovering. */
   async start(): Promise<void> {
     for (const stored of this.store.listSessions()) {
@@ -247,6 +266,13 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
         provider,
         'launchSession',
         'this provider cannot start sessions',
+      );
+    }
+    if (adapter.canLaunch?.() === false) {
+      throw new CapabilityUnsupportedError(
+        provider,
+        'launchSession',
+        'this provider can start sessions, but its command-line tool was not found on this machine',
       );
     }
     const session = await adapter.launchSession(options);

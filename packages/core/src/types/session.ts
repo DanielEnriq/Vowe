@@ -57,6 +57,30 @@ export interface SessionCapabilities {
   interrupt: boolean;
   /** We can restart/continue the session after it has stopped. */
   resume: boolean;
+  /**
+   * We can start a brand-new session with this session's provider.
+   *
+   * A property of the provider rather than of this particular session, but it
+   * is reported here because it is environment-bound: an adapter whose CLI is
+   * not installed cannot launch anything, however well documented its flags.
+   */
+  launch: boolean;
+  /**
+   * The worker's own reasoning is recorded *and readable by us*.
+   *
+   * False covers three different situations that look identical from outside,
+   * and deliberately does not distinguish them: the provider records no
+   * reasoning, or records it and we chose not to carry it, or records it in a
+   * form we cannot read (an encrypted blob, a bare signature). What the
+   * product needs from this flag is only ever the same question — may a
+   * surface claim that an empty reasoning area means the worker did not think?
+   * It may not.
+   *
+   * Reasoning is *supporting evidence only*. Nothing in observation,
+   * interpretation or milestones may depend on it, because most providers do
+   * not offer it and Vowe has to understand those sessions just as well.
+   */
+  reasoning: boolean;
 }
 
 export interface AgentSession {
@@ -149,4 +173,6 @@ export const NO_CAPABILITIES: SessionCapabilities = {
   sendInstruction: false,
   interrupt: false,
   resume: false,
+  launch: false,
+  reasoning: false,
 };

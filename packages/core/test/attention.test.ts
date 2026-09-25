@@ -22,6 +22,13 @@ const asked: EventSpec = {
 };
 
 describe('Needs You — admission', () => {
+  it.each(['toolUseId', 'toolCallId', 'callId'])('clears answered requests correlated by %s', (key) => {
+    const items = attentionFor(testSession(), PROJECT, trace([
+      { kind: 'session_waiting', detail: { [key]: 'request', awaitingHuman: true } },
+      { kind: 'tool_finished', detail: { [key]: 'request' } },
+    ]));
+    expect(items).toEqual([]);
+  });
   it('admits a permission request', () => {
     const items = attentionFor(
       testSession({ status: 'working' }),
