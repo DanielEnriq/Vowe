@@ -43,6 +43,12 @@ const context = {
 };
 
 describe('Navigation', () => {
+  it('keeps a project conversation and its history anchor inside the project', () => {
+    const route = { kind: 'project', projectId: PROJECT.id, view: 'conversation', entryId: 'question-1' } as const;
+    expect(reconcileRoute(route, context)).toBe(route);
+    expect(projectOf(route, context)).toBe(PROJECT.id);
+    expect(reconcileRoute({ kind: 'project', projectId: PROJECT.id }, context)).toEqual({ kind: 'project', projectId: PROJECT.id });
+  });
   it('keeps a route that still points at something', () => {
     const route = { kind: 'session', sessionId: 'b' } as const;
     expect(reconcileRoute(route, context)).toBe(route);
@@ -80,6 +86,6 @@ describe('Navigation', () => {
   });
 
   it('counts only live work in the badge', () => {
-    expect(activeCount('git:abc', context.sessions)).toBe(2);
+    expect(activeCount('git:abc', context.sessions)).toBe(1);
   });
 });

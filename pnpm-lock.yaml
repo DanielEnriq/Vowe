@@ -20,6 +20,12 @@ importers:
       '@vowe/adapter-claude-code':
         specifier: workspace:*
         version: link:../../packages/adapter-claude-code
+      '@vowe/adapter-codex':
+        specifier: workspace:*
+        version: link:../../packages/adapter-codex
+      '@vowe/adapter-pi':
+        specifier: workspace:*
+        version: link:../../packages/adapter-pi
       '@vowe/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -87,6 +93,54 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.277
         version: 0.3.277(@anthropic-ai/sdk@0.127.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.30.0(zod@4.6.5))(zod@4.6.5)
+      '@vowe/adapter-kit':
+        specifier: workspace:*
+        version: link:../adapter-kit
+      '@vowe/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.3
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/adapter-codex:
+    dependencies:
+      '@vowe/adapter-kit':
+        specifier: workspace:*
+        version: link:../adapter-kit
+      '@vowe/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.3
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/adapter-kit:
+    dependencies:
+      '@vowe/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.3
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/adapter-pi:
+    dependencies:
+      '@vowe/adapter-kit':
+        specifier: workspace:*
+        version: link:../adapter-kit
       '@vowe/core':
         specifier: workspace:*
         version: link:../core

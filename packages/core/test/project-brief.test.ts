@@ -98,8 +98,8 @@ describe('ProjectBrief — active and recent', () => {
 
     const brief = await service.get(PROJECT);
 
-    expect(brief.active.map((s) => s.sessionId)).toEqual(['c', 'a']);
-    expect(brief.recent.map((s) => s.sessionId)).toEqual(['b', 'd']);
+    expect(brief.active.map((s) => s.sessionId)).toEqual(['a']);
+    expect(brief.recent.map((s) => s.sessionId)).toEqual(['b', 'c', 'd']);
   });
 
   it('caps the recent list', async () => {
@@ -132,6 +132,8 @@ describe('ProjectBrief — active and recent', () => {
           currentActivity: 'Reading the retry backoff',
           recentProgress: [],
           lastMeaningfulUpdate: '2026-02-11T09:00:00.000Z',
+          currentUnderstanding: null,
+          meaningfulUpdates: [],
           source: 'heuristic',
           provenance: { eventIds: [], throughSeq: 0 },
           updatedAt: '2026-02-11T09:00:00.000Z',
@@ -304,7 +306,7 @@ describe('ProjectBrief — Needs You wiring', () => {
     const brief = await service.get(PROJECT);
 
     expect(brief.needsAttention).toEqual([]);
-    expect(brief.headline).toBe('Everything is moving.');
+    expect(brief.headline).toBe("Everything's quiet.");
   });
 });
 

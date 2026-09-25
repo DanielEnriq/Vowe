@@ -16,7 +16,7 @@ import {
 } from '../state/composer.js';
 import { Fading } from '../shell/Fading.js';
 import { ChevronDownIcon, CloseIcon, DiffIcon, FileIcon, PlusIcon, SendIcon } from '../shell/icons.js';
-import { VowePresence } from '../presence/index.js';
+import { VoweMark } from './VoweMark.js';
 
 export interface Attachment {
   ref: ContextRef;
@@ -44,7 +44,7 @@ interface Props {
   presenceState: PresenceState;
   inVoice: boolean;
   voiceUnavailableReason: string | null;
-  /** Real work, when something measured it. See `VowePresence`. */
+  /** Real work, when something measured it. See `VoweMark`. */
   activity: number | undefined;
   onToggleVoice: () => void;
 }
@@ -249,12 +249,18 @@ export function Composer({
             onPointerLeave={stopDwell}
             onBlur={stopDwell}
           >
-            <VowePresence
-              state={presenceState}
-              profile={presence}
-              size="signature"
-              activity={orbActivity}
-            />
+            {/*
+              The same mark the conversation wears, not a second Vowe.
+
+              This was the full `VowePresence` orb, which put a WebGL context
+              in the composer to draw fourteen pixels — and drew them as a
+              different object from the one at the head of every answer a few
+              lines above it. Two renderings of one identity, side by side,
+              is one more than there is identity. The mark reads from the same
+              table the orb does, so nothing about how Vowe looks changed;
+              what changed is that the room now says it once.
+            */}
+            <VoweMark profile={presence} state={presenceState} activity={orbActivity} />
           </button>
 
           <span className="shortcut">↩</span>

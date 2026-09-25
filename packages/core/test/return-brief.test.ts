@@ -140,6 +140,8 @@ describe('returnBrief', () => {
           currentActivity: 'Running the full suite',
           recentProgress: [],
           lastMeaningfulUpdate: '',
+          currentUnderstanding: null,
+          meaningfulUpdates: [],
           source: 'llm',
           provenance: { eventIds: [], throughSeq: 0 },
           updatedAt: '2026-09-22T12:30:00.000Z',

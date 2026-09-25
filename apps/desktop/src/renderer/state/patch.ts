@@ -34,12 +34,37 @@ export interface ComparedLine {
    */
   kind: 'context' | 'change' | 'gap';
   text: string;
+  /**
+   * Where this line is in the file, counting from one — its own file, so the
+   * before side counts in the old one and the after side in the new one, and
+   * the two sides disagree wherever a change has added or removed anything
+   * above them. That disagreement is the point: it is what tells you a line
+   * moved rather than merely changed.
+   *
+   * Absent on a gap, which is not a line in either file but the space where
+   * lines were skipped.
+   */
+  line?: number;
 }
+
+/**
+ * `@@ -12,7 +12,9 @@ heading`.
+ *
+ * The two starts are where the hunk begins in each file; the counts are how
+ * many lines it covers, which this does not need because it counts them as it
+ * reads them. The heading is whatever git put after the closing `@@`.
+ */
+const HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/;
 
 export function parsePatch(patch: string): FileComparison[] {
   const files: FileComparison[] = [];
   let file: FileComparison | null = null;
   let inHunk = false;
+  // Where the current hunk is in each file. Set at every `@@`, so they need no
+  // resetting between files: a file's first hunk sets them before any line of
+  // it is read.
+  let beforeNo = 1;
+  let afterNo = 1;
 
   for (const line of patch.split('\n')) {
     // The resolver's own marker, appended after the byte ceiling. Whatever
@@ -55,21 +80,35 @@ export function parsePatch(patch: string): FileComparison[] {
     if (!file) continue;
 
     if (line.startsWith('@@')) {
+      const hunk = HUNK.exec(line);
       if (file.before.length > 0 || file.after.length > 0) {
-        const heading = line.replace(/^@@[^@]*@@ ?/, '');
+        const heading = hunk ? hunk[3]! : line.replace(/^@@[^@]*@@ ?/, '');
         file.before.push({ kind: 'gap', text: heading });
         file.after.push({ kind: 'gap', text: heading });
+      }
+      /*
+       * A header this cannot read leaves the counters where they were rather
+       * than guessing. Numbering that is wrong by a known offset is a worse
+       * answer than numbering that simply carries on — and `git` has emitted
+       * this shape unchanged for twenty years, so the fallback is for patches
+       * that were never `git`'s.
+       */
+      if (hunk) {
+        beforeNo = Number(hunk[1]);
+        afterNo = Number(hunk[2]);
       }
       inHunk = true;
       continue;
     }
 
     if (inHunk) {
-      if (line.startsWith('+')) file.after.push({ kind: 'change', text: line.slice(1) });
-      else if (line.startsWith('-')) file.before.push({ kind: 'change', text: line.slice(1) });
-      else if (line.startsWith(' ')) {
-        file.before.push({ kind: 'context', text: line.slice(1) });
-        file.after.push({ kind: 'context', text: line.slice(1) });
+      if (line.startsWith('+')) {
+        file.after.push({ kind: 'change', text: line.slice(1), line: afterNo++ });
+      } else if (line.startsWith('-')) {
+        file.before.push({ kind: 'change', text: line.slice(1), line: beforeNo++ });
+      } else if (line.startsWith(' ')) {
+        file.before.push({ kind: 'context', text: line.slice(1), line: beforeNo++ });
+        file.after.push({ kind: 'context', text: line.slice(1), line: afterNo++ });
       }
       // `\ No newline at end of file`, and the empty string after the final
       // newline, belong to neither side.

@@ -68,6 +68,18 @@ export class ScriptedObserver implements ObservationLlm {
 
     const observation: WindowObservation = {
       summary: `Window ${input.window.windowIndex}: ${events.length} events (${shape}).`,
+      /*
+       * Continuity, stated deterministically.
+       *
+       * It restates present state rather than appending to what it was given,
+       * because that is the contract the real observer is held to: an
+       * understanding is where the work stands now, not a log of how it got
+       * here. A stub that grew by a clause per window would pass a continuity
+       * assertion while modelling the failure the prompt exists to prevent.
+       */
+      understanding: input.currentUnderstanding
+        ? `Through window ${input.window.windowIndex}: ${edits.length} edit(s) and ${failures.length} failing test run(s) in this portion. Continuing from what was already understood.`
+        : `Through window ${input.window.windowIndex}: ${edits.length} edit(s) and ${failures.length} failing test run(s). Nothing was understood about this worker before.`,
       currentActivity: events[events.length - 1]?.summary ?? 'nothing observed',
     };
 

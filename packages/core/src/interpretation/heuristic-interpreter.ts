@@ -1,3 +1,4 @@
+import { PHASE_BY_KIND, workerActivity } from '../product/worker-activity.js';
 import type { NormalizedEvent } from '../types/events.js';
 import type { SemanticState } from '../types/session.js';
 import {
@@ -6,21 +7,6 @@ import {
   type SemanticInterpreter,
 } from './semantic-interpreter.js';
 
-const PHASE_BY_KIND: Partial<Record<NormalizedEvent['kind'], string>> = {
-  session_started: 'starting',
-  user_instruction: 'reading the request',
-  agent_message: 'explaining',
-  tool_started: 'exploring',
-  tool_finished: 'exploring',
-  command_started: 'running commands',
-  command_finished: 'running commands',
-  file_changed: 'editing',
-  test_started: 'testing',
-  test_finished: 'testing',
-  permission_requested: 'waiting for permission',
-  session_waiting: 'waiting',
-  session_finished: 'finished',
-};
 
 /**
  * Deterministic interpretation. Always available, needs no credentials, and
@@ -40,12 +26,28 @@ export class HeuristicInterpreter implements SemanticInterpreter {
       null;
     const now = new Date().toISOString();
 
+    /*
+     * The same derivation the fast path publishes between interpretation
+     * passes. Calling it here rather than falling back to the last event's raw
+     * summary means the two halves of observation never disagree about what a
+     * worker is doing — and it is why a debounced pass can no longer overwrite
+     * a specific label with a generic one.
+     */
+    const activity = workerActivity(events);
+
     return {
       task: session.task,
-      phase: last ? (PHASE_BY_KIND[last.kind] ?? 'working') : 'no activity yet',
-      currentActivity: last ? last.summary : 'Nothing observed yet.',
+      phase:
+        activity?.phase ??
+        (last ? (PHASE_BY_KIND[last.kind] ?? 'working') : 'no activity yet'),
+      currentActivity: activity?.label ?? input.previous?.currentActivity ?? '',
       recentProgress: progressFrom(events),
       lastMeaningfulUpdate: last?.at ?? session.lastActivityAt,
+      // The deterministic interpreter reaches no understanding and records no
+      // durable updates; both belong to the observer. Whatever it established
+      // is carried through untouched so a heuristic pass never erases it.
+      currentUnderstanding: input.previous?.currentUnderstanding ?? null,
+      meaningfulUpdates: input.previous?.meaningfulUpdates ?? [],
       source: this.source,
       provenance: provenanceFor(events),
       updatedAt: now,
@@ -55,6 +57,9 @@ export class HeuristicInterpreter implements SemanticInterpreter {
 
 /** The most recent distinct things that actually happened, oldest first. */
 function progressFrom(events: NormalizedEvent[], limit = 6): string[] {
+  // `agent_reasoning` is not here on purpose: what a session is doing has to
+  // be derivable from what it did, so that a provider which records no
+  // thinking is understood exactly as well as one that does.
   const interesting = new Set<NormalizedEvent['kind']>([
     'agent_message',
     'file_changed',

@@ -4,7 +4,7 @@ import type { AgentSession } from '@vowe/core';
 
 import { Fading } from '../shell/Fading.js';
 import { RoomIdentity } from '../shell/TopChrome.js';
-import { providerName } from '../components/ui.js';
+import { ProviderGlyph, providerName } from '../components/ui.js';
 import { sessionTitle } from '@vowe/core/projections';
 
 interface Props {
@@ -45,6 +45,14 @@ export function SessionHeader({ session, observing, inVoice }: Props): ReactElem
       <div className="stack">
         <Fading as="h1">{sessionTitle(session)}</Fading>
         <Fading className="meta">
+          {/*
+            The mark sits before the name rather than replacing it. There is
+            room for both here, and the header is where someone confirms what
+            they are looking at — the sidebar is where they recognise it.
+          */}
+          <span className="provider-mark">
+            <ProviderGlyph provider={session.provider} size={13} />
+          </span>
           {[providerName(session.provider), session.branch]
             .filter(Boolean)
             .join(' · ')}

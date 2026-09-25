@@ -116,6 +116,8 @@ describe('Title signal — what is worth naming', () => {
         currentActivity: 'writing components',
         recentProgress: [],
         lastMeaningfulUpdate: '2026-09-22T09:00:00.000Z',
+        currentUnderstanding: null,
+        meaningfulUpdates: [],
         source: 'llm',
         provenance: { eventIds: [], throughSeq: 1 },
         updatedAt: '2026-09-22T09:00:00.000Z',
@@ -386,5 +388,38 @@ describe('Concise titles — the floor under the contract', () => {
       }),
     );
     expect(shown.length).toBeLessThanOrEqual(MAX_TITLE_CHARS);
+  });
+
+  /*
+   * The half the bound above missed: a candidate `conciseTitle` can make
+   * nothing of used to be returned whole, so the one case least able to
+   * cope was the one case the contract did not cover.
+   */
+  it('bounds it for a candidate there is no concise title in', () => {
+    const shown = sessionTitle(
+      testSession({
+        cwd: '/Users/dev/projects/vowe',
+        displayLabel: null,
+        task: '(a very long aside about the work that is entirely parenthetical and therefore names nothing at all)',
+      }),
+    );
+    expect(shown).toBe('vowe');
+  });
+
+  it('never shows a name outside the contract, whatever it was given', () => {
+    const tasks = [
+      '(nothing but an aside)',
+      '<pasted_content id="aa28">',
+      'Refactor the desktop application layout architecture and then re-verify every pixel of it',
+      'a'.repeat(300),
+      '',
+    ];
+    for (const task of tasks) {
+      const shown = sessionTitle(
+        testSession({ cwd: '/Users/dev/projects/vowe', displayLabel: null, task }),
+      );
+      expect(shown.length).toBeLessThanOrEqual(MAX_TITLE_CHARS);
+      expect(shown.split(' ').length).toBeLessThanOrEqual(MAX_TITLE_WORDS);
+    }
   });
 });

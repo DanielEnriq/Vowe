@@ -105,11 +105,11 @@ function thinkingBlock(index: number, deltas: string[]): string {
   );
 }
 
-function toolUseBlock(index: number, name: string, input: unknown): string {
+function toolUseBlock(index: number, name: string, input: unknown, id = `toolu_${index}`): string {
   return (
     sse('content_block_start', {
       index,
-      content_block: { type: 'tool_use', id: `toolu_${index}`, name, input: {} },
+      content_block: { type: 'tool_use', id, name, input: {} },
     }) +
     sse('content_block_delta', {
       index,
@@ -160,6 +160,29 @@ const TOOLS: ReadOnlyToolset = {
 };
 
 describe('Investigation streaming — the request boundary', () => {
+  it('keeps retrieved evidence and executes the answer tool once before writing', async () => {
+    const captured: Captured = { bodies: [] };
+    let searches = 0;
+    const llm = client(captured, [
+      [messageStart() + toolUseBlock(0, 'search_context', { query: 'observer state' }) + messageStop('tool_use')],
+      [messageStart() + toolUseBlock(0, 'record_answer', { spokenAnswer: 'Both paths share state.', refs: ['repo:observer.ts'] }, 'toolu_answer') + messageStop('tool_use')],
+      [messageStart() + textBlock(0, ['The observer and semantic pass share state.']) + messageStop('end_turn')],
+    ]);
+    const result = await llm.investigate(INPUT, {
+      ...TOOLS,
+      searchContext: async () => { searches += 1; return { hits: [] }; },
+    });
+    expect(searches).toBe(1);
+    expect(captured.bodies).toHaveLength(3);
+    const search = (captured.bodies[0]!.tools as Array<{ name: string; input_schema: unknown }>)
+      .find((tool) => tool.name === 'search_context');
+    expect(JSON.stringify(search!.input_schema)).toContain('observations');
+    expect((captured.bodies[2]!.messages as Array<{ role: string }>).map((turn) => turn.role))
+      .toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
+    expect(result.spokenAnswer).toBe('Both paths share state.');
+    expect(result.fullAnswer).toBe('The observer and semantic pass share state.');
+    expect(result.refs).toEqual([{ kind: 'repo', path: 'observer.ts' }]);
+  });
   it('sends stream: true on every round of the investigation', async () => {
     const captured: Captured = { bodies: [] };
     const llm = client(captured, [
@@ -207,6 +230,13 @@ describe('Investigation streaming — the request boundary', () => {
     expect(looking?.tool_choice).toBeUndefined();
     expect(writing?.tool_choice).toEqual({ type: 'none' });
     expect(Array.isArray(writing?.tools)).toBe(true);
+    const history = writing?.messages as Array<{ role: string; content: Array<{ type: string; name?: string; tool_use_id?: string; content?: string }> }>;
+    expect(history.map((turn) => turn.role)).toEqual(['user', 'assistant', 'user']);
+    expect(history[1]!.content.filter((block) => block.type === 'tool_use')).toHaveLength(1);
+    expect(history[1]!.content[0]!.name).toBe('record_answer');
+    expect(history[2]!.content).toEqual([{
+      type: 'tool_result', tool_use_id: 'toolu_0', content: 'Recorded. Now write the full answer.',
+    }]);
   });
 });
 

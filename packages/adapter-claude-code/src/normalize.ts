@@ -1,6 +1,19 @@
 import type { AdapterEvent, NormalizedEventKind } from '@vowe/core';
+import {
+  TEST_COMMAND,
+  asString,
+  baseName,
+  firstLine,
+  oneLine,
+  truncate,
+  withOrdinals,
+} from '@vowe/adapter-kit';
 
-import type { ClaudeRecord, TranscriptLine } from './transcript.js';
+import type { TranscriptLine } from './transcript.js';
+
+// Re-exported because `adapter.ts` and the package index have always taken
+// them from here. The definitions are shared now; the names are unchanged.
+export { firstLine, oneLine, truncate };
 
 /**
  * Record types that are pure CLI bookkeeping: UI mode flips, cost counters,
@@ -30,7 +43,6 @@ const IGNORED_RECORD_TYPES = new Set([
 
 const FILE_WRITING_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit']);
 const WAITING_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
-const TEST_COMMAND = /\b(pytest|jest|vitest|mocha|go test|cargo test|npm (run )?test|pnpm (run )?test|yarn test|rspec|phpunit|gradle test|mvn test|tox|ctest)\b/;
 
 interface PendingTool {
   name: string;
@@ -61,6 +73,12 @@ export class TranscriptNormalizer {
 
   /** May produce zero, one or several events for a single record. */
   normalize(line: TranscriptLine): AdapterEvent[] {
+    // One record, several events: each needs its own physical identity
+    // or the store keeps the first and drops its siblings.
+    return withOrdinals(this.normalizeRecord(line));
+  }
+
+  private normalizeRecord(line: TranscriptLine): AdapterEvent[] {
     const { record } = line;
     const type = record.type ?? 'unknown';
     if (IGNORED_RECORD_TYPES.has(type)) return [];
@@ -347,31 +365,6 @@ function compactInput(
     return { file_path: asString(input.file_path) };
   }
   return {};
-}
-
-function asString(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
-
-export function firstLine(text: string, limit = 180): string {
-  const line = text.split('\n').find((candidate) => candidate.trim()) ?? '';
-  return truncate(line.trim().replace(/\s+/g, ' '), limit);
-}
-
-/** Collapse a multi-line value into one readable line. */
-export function oneLine(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
-}
-
-export function truncate(text: string, limit: number): string {
-  if (text.length <= limit) return text;
-  return `${text.slice(0, limit - 1)}…`;
-}
-
-function baseName(filePath: string): string {
-  if (!filePath) return 'a file';
-  const parts = filePath.split('/');
-  return parts[parts.length - 1] || filePath;
 }
 
 function stripPrefix(label: string): string {

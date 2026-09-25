@@ -28,6 +28,8 @@ export interface ObservationServiceOptions {
   policy: CommunicationPolicy;
   router?: DecisionRouter;
   windowPolicy?: Partial<WindowPolicy>;
+  /** How often a live checkpoint may refresh understanding. 0 disables it. */
+  checkpointMs?: number;
   /** Passed straight through to every runner this service owns. */
   runs?: VoweRunRecorder;
   /**
@@ -110,6 +112,22 @@ export class ObservationService extends EventEmitter<ObservationEvents> {
         getSession: (id) => this.options.registry.get(id),
         onError: (scope, error) => this.onError(`observer:${sessionId}:${scope}`, error),
         onNote: (note) => this.emit('note', note),
+        /*
+         * The join between the two pipelines.
+         *
+         * Observation produces notes and holds no session; the registry holds
+         * sessions and knows nothing about windows. This service already has
+         * both, so this is where a note becomes something the product can
+         * show, and it is the only place that wiring exists.
+         */
+        onUnderstanding: (understanding) => {
+          void this.options.registry
+            .applyObserverState(understanding.sessionId, {
+              understanding: understanding.understanding,
+              durableUpdate: understanding.durableUpdate,
+            })
+            .catch((error) => this.onError(`understanding:${sessionId}`, error));
+        },
         onSurfaceUpdate: (update) => {
           void this.decide(update).catch((error) =>
             this.onError(`policy:${sessionId}`, error),
@@ -117,6 +135,9 @@ export class ObservationService extends EventEmitter<ObservationEvents> {
         },
         ...(this.options.router ? { router: this.options.router } : {}),
         ...(this.options.windowPolicy ? { policy: this.options.windowPolicy } : {}),
+        ...(this.options.checkpointMs !== undefined
+          ? { checkpointMs: this.options.checkpointMs }
+          : {}),
         ...(this.options.runs ? { runs: this.options.runs } : {}),
       });
       this.runners.set(sessionId, runner);
@@ -197,6 +218,17 @@ export class ObservationService extends EventEmitter<ObservationEvents> {
   /** Process everything recorded so far, including the open tail. For replay. */
   async catchUpNow(sessionId: string): Promise<void> {
     await this.runners.get(sessionId)?.catchUp({ closeTail: true });
+  }
+
+  /**
+   * Refresh understanding from the open tail now, without closing a window.
+   *
+   * The timer inside the runner is what drives this in production. This is for
+   * the caller that wants the answer immediately — a test, a replay, or a
+   * developer opening a session that has been quiet since its last window.
+   */
+  async checkpointNow(sessionId: string): Promise<void> {
+    await this.runners.get(sessionId)?.checkpointNow();
   }
 
   // ----------------------------------------------------------------- private

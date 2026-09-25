@@ -141,7 +141,14 @@ export class OpenAiLiveTransport implements LiveTransport {
       // feature that is supposed to degrade quietly when it is unavailable.
       const { SidebandWS } = await import('openai/resources/live/sideband/ws');
       const socket = new SidebandWS(client, { session_id: liveSessionId });
-      return new OpenAiSideband(liveSessionId, socket, this.onError);
+      const sideband = new OpenAiSideband(liveSessionId, socket, this.onError);
+      try {
+        await sideband.ready();
+        return sideband;
+      } catch (error) {
+        await sideband.close();
+        throw error;
+      }
     } catch (error) {
       // A conversation we cannot observe is degraded, not broken. The user can
       // still talk to Vo; they just will not get proactive updates.
@@ -193,6 +200,32 @@ class OpenAiSideband implements LiveSideband {
     });
 
     this.socket.on('error', (error) => this.onError('live:socket', error));
+    this.socket.on('close', (_code, reason) => {
+      for (const listener of this.listeners) listener({ type: 'session.closed', reason });
+    });
+  }
+
+  /** Constructing SidebandWS only starts a handshake; it is not an attachment. */
+  ready(): Promise<void> {
+    const socket = this.socket.socket;
+    if (socket.readyState === 1) return Promise.resolve();
+    if (socket.readyState > 1) return Promise.reject(new Error('Voice context connection is closed.'));
+    return new Promise((resolve, reject) => {
+      const done = (error?: Error) => {
+        clearTimeout(timeout);
+        socket.off('open', opened);
+        socket.off('error', failed);
+        socket.off('close', closed);
+        if (error) reject(error); else resolve();
+      };
+      const opened = () => done();
+      const failed = () => done(new Error('Could not connect Vowe to the voice conversation.'));
+      const closed = () => done(new Error('Voice context connection closed during setup.'));
+      const timeout = setTimeout(() => done(new Error('Voice context connection timed out.')), 10000);
+      socket.once('open', opened);
+      socket.once('error', failed);
+      socket.once('close', closed);
+    });
   }
 
   on(listener: (event: LiveServerEvent) => void): Unsubscribe {

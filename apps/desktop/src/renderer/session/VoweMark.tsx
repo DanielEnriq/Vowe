@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactElement } from 'react';
 
-import type { PresenceProfile } from '@vowe/core';
+import type { PresenceProfile, PresenceState } from '@vowe/core';
 import {
   presenceColumns,
   presenceRows,
@@ -40,11 +40,19 @@ import { useOnLight } from '../shell/theme.js';
  * project hero, the voice stage, the studio — rather than beside every line it
  * says.
  */
-export type VoweMarkState = 'idle' | 'thinking' | 'answering';
-
 interface Props {
   profile: PresenceProfile;
-  state?: VoweMarkState;
+  /**
+   * Presence's own state, not a vocabulary of this component's.
+   *
+   * There used to be three values here — idle, thinking, answering — which
+   * this mapped onto presence's eight on the way to the table. That was fine
+   * while the only caller was a byline, which is one of those three. It stops
+   * being fine the moment something with a real state has to draw itself this
+   * way: the composer's control is listening, or unavailable, or asking for
+   * attention, and none of those survive a squash into three.
+   */
+  state?: PresenceState;
   /** Real, normalized execution activity, when something measured it. */
   activity?: number | undefined;
   className?: string;
@@ -58,17 +66,11 @@ export function VoweMark({
 }: Props): ReactElement {
   /*
    * Resolved from the same table the orb uses, at the same size, so a profile
-   * change moves both together. The state is mapped onto presence's own
-   * vocabulary rather than invented here: `thinking` is thinking, and writing
-   * an answer is Vowe speaking.
+   * change moves both together — and now from the same state, with nothing
+   * translated on the way in.
    */
   const onLight = useOnLight();
-  const visuals = resolvePresenceVisuals(
-    state === 'idle' ? 'idle' : state === 'answering' ? 'speaking' : 'thinking',
-    profile,
-    'signature',
-    { onLight },
-  );
+  const visuals = resolvePresenceVisuals(state, profile, 'signature', { onLight });
 
   const measured = typeof activity === 'number' && Number.isFinite(activity)
     ? Math.min(1, Math.max(0, activity))
@@ -153,7 +155,17 @@ export function VoweMark({
     '--mark-torsion': `${(visuals.torsion * 140).toFixed(2)}deg`,
   };
 
-  const classes = ['vowe-mark', `is-${state}`, className].filter(Boolean).join(' ');
+  /*
+   * Whether it moves at all, said here rather than by a list of state names in
+   * the stylesheet. Every state in the table has some amplitude, including
+   * idle — a settled byline in a reading column is deliberately still, and
+   * so is a mark for something that is not available. Everything else is a
+   * live thing and reads as dead when it holds perfectly still.
+   */
+  const moving = state !== 'idle' && state !== 'unavailable';
+  const classes = ['vowe-mark', `is-${state}`, moving ? 'is-moving' : null, className]
+    .filter(Boolean)
+    .join(' ');
   return (
     <span className={classes} style={style} aria-hidden>
       <span className="field" />

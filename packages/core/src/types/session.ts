@@ -6,6 +6,8 @@
  * and capabilities are all discovered at runtime.
  */
 
+import type { ContextRef } from '../context/refs.js';
+
 /**
  * Coarse, provider-independent lifecycle state.
  *
@@ -57,6 +59,30 @@ export interface SessionCapabilities {
   interrupt: boolean;
   /** We can restart/continue the session after it has stopped. */
   resume: boolean;
+  /**
+   * We can start a brand-new session with this session's provider.
+   *
+   * A property of the provider rather than of this particular session, but it
+   * is reported here because it is environment-bound: an adapter whose CLI is
+   * not installed cannot launch anything, however well documented its flags.
+   */
+  launch: boolean;
+  /**
+   * The worker's own reasoning is recorded *and readable by us*.
+   *
+   * False covers three different situations that look identical from outside,
+   * and deliberately does not distinguish them: the provider records no
+   * reasoning, or records it and we chose not to carry it, or records it in a
+   * form we cannot read (an encrypted blob, a bare signature). What the
+   * product needs from this flag is only ever the same question — may a
+   * surface claim that an empty reasoning area means the worker did not think?
+   * It may not.
+   *
+   * Reasoning is *supporting evidence only*. Nothing in observation,
+   * interpretation or milestones may depend on it, because most providers do
+   * not offer it and Vowe has to understand those sessions just as well.
+   */
+  reasoning: boolean;
 }
 
 export interface AgentSession {
@@ -121,13 +147,55 @@ export interface AgentSession {
   semanticState: SemanticState | null;
 }
 
+/**
+ * One thing that changed what the developer should believe about a worker.
+ *
+ * Durable in a way `currentActivity` is not: activity is replaced constantly
+ * and nobody scrolls back through it, whereas these accumulate and are meant to
+ * be readable after looking away. Every one carries the refs of the evidence it
+ * was drawn from, so a claim can always be descended into.
+ */
+export interface MeaningfulUpdate {
+  /** The note or anchoring event id, so a recompute yields the same item. */
+  id: string;
+  text: string;
+  at: string;
+  refs: ContextRef[];
+}
+
+/** How many durable updates are worth carrying. Beyond this it is a log. */
+export const MEANINGFUL_UPDATE_LIMIT = 5;
+
 export interface SemanticState {
   task: string | null;
   /** e.g. exploring, editing, running, debugging, testing, waiting. */
   phase: string;
   currentActivity: string;
+  /**
+   * Raw recent progress, from the deterministic interpreter.
+   *
+   * The floor, not the product contract: these are event summaries, and what a
+   * developer reads is `meaningfulUpdates`. Kept because the companion's
+   * model-free description and the question prompts are built on it.
+   */
   recentProgress: string[];
   lastMeaningfulUpdate: string;
+  /**
+   * Where the work stands, as the observer currently understands it.
+   *
+   * Present-state orientation rather than history — one to three sentences
+   * about what is done and what is unresolved. What happened earlier lives in
+   * `meaningfulUpdates`, where it keeps its evidence.
+   *
+   * `null` whenever no observation model has interpreted this session. There is
+   * deliberately no deterministic stand-in: unlike an activity label, there is
+   * no honest prose a rule could produce for "what does this worker believe
+   * now?", and inventing one would be the first step in a chain that ends with
+   * a confident wrong answer.
+   */
+  currentUnderstanding: string | null;
+  /** Newest last, capped. Only what should change a developer's mental model. */
+  meaningfulUpdates: MeaningfulUpdate[];
   source: 'heuristic' | 'llm';
   /**
    * Which observed evidence produced this state. Required on every write so a
@@ -149,4 +217,6 @@ export const NO_CAPABILITIES: SessionCapabilities = {
   sendInstruction: false,
   interrupt: false,
   resume: false,
+  launch: false,
+  reasoning: false,
 };

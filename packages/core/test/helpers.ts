@@ -71,6 +71,8 @@ export function testSession(overrides: Partial<AgentSession> = {}): AgentSession
       sendInstruction: false,
       interrupt: false,
       resume: false,
+      launch: false,
+      reasoning: false,
     },
     semanticState: null,
     ...overrides,

@@ -101,11 +101,18 @@ export function fixtureSession(
     status: 'finished',
     createdAt: new Date(0).toISOString(),
     lastActivityAt: new Date(0).toISOString(),
+    /*
+     * A replayed session is a recording. It can be read and nothing else:
+     * there is no worker on the other end of it to instruct, interrupt or
+     * resume, and its reasoning is whatever the recording happened to keep.
+     */
     capabilities: {
       observe: true,
       sendInstruction: false,
       interrupt: false,
       resume: false,
+      launch: false,
+      reasoning: false,
     },
     semanticState: null,
     ...overrides,

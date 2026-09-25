@@ -25,7 +25,7 @@ import {
   useWorkspace,
 } from './hooks/useVoweData.js';
 import { usePresenceSignals } from './presence/index.js';
-import { ProjectRoom } from './project/ProjectRoom.js';
+import { ProjectSpace } from './project/ProjectSpace.js';
 import { ProjectSidebar } from './sidebar/ProjectSidebar.js';
 import { SessionRoom } from './session/SessionRoom.js';
 import { PresenceStudio } from './studio/PresenceStudio.js';
@@ -37,6 +37,7 @@ import {
   writeExpanded,
 } from './state/disclosure.js';
 import { projectOf, reconcileRoute, type Route } from './state/navigation.js';
+import { sessionShortcutNumbers, sessionShortcutTargets } from './state/session-shortcuts.js';
 
 import {
   CHROME_HEIGHT,
@@ -103,6 +104,7 @@ export function AppShell(): ReactElement {
   const [voice, saveVoice] = useVoicePreference();
   const [route, setRoute] = useState<Route>({ kind: 'none' });
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [commandHeld, setCommandHeld] = useState(false);
   const [user, setUser] = useState<UserProfile>(DEFAULT_USER_PROFILE);
   const [expanded, setExpanded] = useState<string[]>(readExpanded);
 
@@ -171,6 +173,52 @@ export function AppShell(): ReactElement {
     live.kind === 'session' ? sessions.find((item) => item.id === live.sessionId) ?? null : null;
   const project =
     live.kind === 'project' ? projects.find((item) => item.id === live.projectId) ?? null : null;
+  const shortcutTargets = useMemo(
+    () =>
+      sessionShortcutTargets({
+        projects,
+        sessions,
+        expandedProjectIds: expanded,
+        now: Date.now(),
+        openSessionId: live.kind === 'session' ? live.sessionId : null,
+      }),
+    [expanded, live, projects, sessions],
+  );
+  const sessionShortcuts = useMemo(() => sessionShortcutNumbers(shortcutTargets), [shortcutTargets]);
+  useEffect(() => {
+    const shortcutFor = (event: KeyboardEvent): number | null => {
+      const digit = event.code.startsWith('Digit')
+        ? event.code.slice('Digit'.length)
+        : event.code.startsWith('Numpad')
+          ? event.code.slice('Numpad'.length)
+          : event.key;
+      if (!/^[1-9]$/.test(digit)) return null;
+      return Number(digit);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Meta') setCommandHeld(true);
+      if (!event.metaKey) return;
+      setCommandHeld(true);
+      const number = shortcutFor(event);
+      if (number === null) return;
+      const target = shortcutTargets[number - 1];
+      if (!target) return;
+      event.preventDefault();
+      setRoute({ kind: 'session', sessionId: target.id });
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Meta') setCommandHeld(false);
+    };
+    const onBlur = () => setCommandHeld(false);
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [shortcutTargets]);
   const brief = useProjectBrief(project?.id ?? null);
 
   return (
@@ -252,6 +300,8 @@ export function AppShell(): ReactElement {
             }
             presence={presence}
             presenceState={presenceState}
+            sessionShortcuts={sessionShortcuts}
+            showSessionShortcuts={commandHeld && shortcutTargets.length > 0}
             onNavigate={setRoute}
           />
         </aside>
@@ -290,12 +340,16 @@ export function AppShell(): ReactElement {
             narrow={paneWidth < NARROW_PANE}
           />
         ) : project ? (
-          <ProjectRoom
+          <ProjectSpace
             key={project.id}
             project={project}
             brief={brief}
             presence={presence}
             presenceState={presenceState}
+            view={live.kind === 'project' ? live.view ?? 'home' : 'home'}
+            entryId={live.kind === 'project' ? live.entryId : undefined}
+            narrow={paneWidth < NARROW_PANE}
+            onNavigate={(view, entryId) => setRoute({ kind: 'project', projectId: project.id, view, ...(entryId ? { entryId } : {}) })}
             onOpenSession={(sessionId) => setRoute({ kind: 'session', sessionId })}
           />
         ) : live.kind === 'studio' ? (

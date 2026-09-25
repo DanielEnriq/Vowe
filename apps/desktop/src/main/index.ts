@@ -49,7 +49,9 @@ import {
   type TemperamentProfile,
   type VoicePreference,
 } from '@vowe/core';
-import { ClaudeCodeAdapter, PROVIDER } from '@vowe/adapter-claude-code';
+import { ClaudeCodeAdapter } from '@vowe/adapter-claude-code';
+import { CodexAdapter } from '@vowe/adapter-codex';
+import { PiAdapter } from '@vowe/adapter-pi';
 import { createGraphifyKnowledge } from '@vowe/knowledge-graphify';
 import { AnthropicLlmClient, AnthropicTitleModel } from '@vowe/llm';
 import { JevDecisionRouter } from '@vowe/decision-jev';
@@ -238,11 +240,18 @@ async function createServices(): Promise<Services> {
     projects,
     onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
   });
-  registry.registerAdapter(
-    new ClaudeCodeAdapter({
-      onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
-    }),
-  );
+  /*
+   * Every provider Vowe can observe, registered the same way.
+   *
+   * Nothing below this point names one. A provider that is not installed
+   * simply discovers no sessions and reports no capabilities, so the list is
+   * unconditional and the honesty happens per session instead.
+   */
+  const onAdapterError = (scope: string, error: unknown) =>
+    console.error(`[vowe] ${scope}`, error);
+  registry.registerAdapter(new ClaudeCodeAdapter({ onError: onAdapterError }));
+  registry.registerAdapter(new PiAdapter({ onError: onAdapterError }));
+  registry.registerAdapter(new CodexAdapter({ onError: onAdapterError }));
 
   const runner = new InterpretationRunner({
     registry,
@@ -419,6 +428,7 @@ async function createServices(): Promise<Services> {
   // leave behind.
   const delegated = new DelegatedQuestionRunner({
     store,
+    sessionsFor: (projectId) => projects.getSessions(projectId),
     navigator,
     investigator: llm ?? nullObserver(store),
     runs,
@@ -450,6 +460,7 @@ async function createServices(): Promise<Services> {
 
   const live = new LiveBridge({
     transport: liveTransport,
+    projectBrief: (projectId) => brief.get(projectId),
     observation,
     delegated,
     // With these, a spoken conversation is history rather than a session that
@@ -495,7 +506,7 @@ async function createServices(): Promise<Services> {
   live.on('answered', (answered) => {
     // A delegated answer is persisted as a conversation entry, so the session
     // view has something new to show.
-    window?.webContents.send(IPC.observationChanged, answered.sessionId);
+    if (answered.sessionId) window?.webContents.send(IPC.observationChanged, answered.sessionId);
   });
 
   /*
@@ -507,6 +518,9 @@ async function createServices(): Promise<Services> {
    * deterministic concise name `sessionTitle` derives, and it stays under that
    * name until a person opens it.
    */
+  const refreshVoice = () => { void live.refreshProjectContext().catch((error) => console.error('[vowe] live:project-context', error)); };
+  registry.on('session:added', refreshVoice);
+  registry.on('session:updated', refreshVoice);
   registry.on('session:added', broadcastSessions);
   registry.on('session:updated', broadcastSessions);
   registry.on('session:removed', broadcastSessions);
@@ -558,7 +572,8 @@ async function createServices(): Promise<Services> {
       codeKnowledgeConfigured: knowledgeProvider.available,
       codeKnowledgeUnavailableReason: knowledgeProvider.unavailableReason ?? null,
       storeRoot,
-      providers: [PROVIDER],
+      providers: registry.providers(),
+      launchCapableProviders: registry.launchCapableProviders(),
     },
   };
 }
@@ -639,11 +654,6 @@ function registerIpc(): void {
       (await requireServices()).store.getEvents(sessionId, {
         limit: limit ?? 400,
       }),
-  );
-  ipcMain.handle(
-    IPC.getEventsByIds,
-    async (_event, sessionId: string, ids: string[]) =>
-      (await requireServices()).store.getEventsByIds(sessionId, ids),
   );
   ipcMain.handle(IPC.getConversation, async (_event, sessionId: string) =>
     (await requireServices()).companion.getConversation(sessionId),
@@ -764,9 +774,10 @@ function registerIpc(): void {
       question: string,
       contextRefs?: ContextRef[],
     ): Promise<ProjectAskResult> => {
-      const result = await (
-        await requireServices()
-      ).companion.askProject(projectId, question, contextRefs);
+      const services = await requireServices();
+      const result = await services.companion.askProject(projectId, question, contextRefs);
+      void services.live.projectAsked(projectId, question, result.entry.text)
+        .catch((error) => console.error('[vowe] live:typed-context', error));
       return { entry: result.entry, refs: result.refs, failed: result.failed };
     },
   );
@@ -781,6 +792,9 @@ function registerIpc(): void {
 
   // What was actually conveyed, beside what was said. The renderer needs both
   // to be honest about a reply that was cut off.
+  ipcMain.handle(IPC.getProjectDeliveries, async (_event, projectId: string) =>
+    (await requireServices()).store.getDeliveriesForProject(projectId),
+  );
   ipcMain.handle(IPC.getDeliveries, async (_event, sessionId: string) =>
     (await requireServices()).store.getDeliveriesForSession(sessionId),
   );
@@ -889,9 +903,21 @@ function registerIpc(): void {
       (await requireServices()).registry.sendInstruction(sessionId, text),
   );
 
-  ipcMain.handle(IPC.launch, async (_event, cwd: string, prompt: string) => {
+  ipcMain.handle(
+    IPC.launch,
+    async (_event, cwd: string, prompt: string, provider?: string) => {
     const services = await requireServices();
-    const session = await services.registry.launchSession(PROVIDER, { cwd, prompt });
+    /*
+     * Which agent to start is the caller's choice, not a constant. Absent a
+     * choice, the first provider that can actually launch here wins — which
+     * keeps a machine without a given CLI installed from being offered it.
+     */
+    const capable = services.registry.launchCapableProviders();
+    const target = provider ?? capable[0];
+    if (!target) {
+      throw new Error('No installed provider can start a new session.');
+    }
+    const session = await services.registry.launchSession(target, { cwd, prompt });
     /*
      * A session Vowe started is named straight away.
      *
@@ -902,7 +928,8 @@ function registerIpc(): void {
      */
     void services.titles.ensure(session.id);
     return session;
-  });
+    },
+  );
 
   /*
    * The second trigger: someone opened this session.
@@ -955,6 +982,9 @@ function registerIpc(): void {
     IPC.startLive,
     async (_event, sessionId: string, sdpOffer: string) =>
       (await requireServices()).live.start(sessionId, sdpOffer),
+  );
+  ipcMain.handle(IPC.startProjectLive, async (_event, projectId: string, sdpOffer: string) =>
+    (await requireServices()).live.start({ projectId }, sdpOffer),
   );
   ipcMain.handle(IPC.stopLive, async () => {
     await (await requireServices()).live.stop();

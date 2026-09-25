@@ -56,6 +56,18 @@ export interface AgentAdapter {
   /** Optional: providers that can start new work on our behalf. */
   launchSession?(options: LaunchOptions): Promise<AgentSession>;
 
+  /**
+   * Whether launching would actually work *here, now*.
+   *
+   * Separate from whether `launchSession` exists, because the two answers
+   * differ: an adapter can implement launching perfectly against a documented
+   * CLI that is not installed on this machine. Implementing the method is a
+   * claim about the provider; this is a claim about the environment, and only
+   * the second one may reach a button. Absent means "yes, whenever the method
+   * exists".
+   */
+  canLaunch?(): boolean;
+
   /** Optional: providers that can interrupt work in progress. */
   interrupt?(providerSessionId: string): Promise<void>;
 

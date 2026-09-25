@@ -278,8 +278,10 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
       // A delegated question has someone waiting on the answer out loud, but it
       // is also the call most likely to be wrong if rushed, so it gets one step
       // more effort than routine observation.
-      output_config: { effort: this.effort === 'low' ? 'medium' : this.effort },
-      tools: [recordAnswerTool(capture), ...readTools(tools)],
+      output_config: { effort: 'projectId' in input ? this.effort : this.effort === 'low' ? 'medium' : this.effort },
+      tools: [recordAnswerTool(capture, 'projectId' in input
+        ? 'Now answer the current project question. For a status overview, use 2–4 short sentences, under 80 words: active count, one short clause per active worker, and actual attention. For a deeper question, explain only the requested change or cause using the evidence you opened. Use human titles, not session IDs or reference strings.'
+        : undefined), ...readTools(tools)],
       max_iterations: this.maxToolIterations,
       messages: [{ role: 'user', content: renderInvestigationPrompt(input) }],
       // Every round arrives as a stream, so reasoning and the answer can be
@@ -396,6 +398,10 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
         runner.setMessagesParams((params) => ({
           ...params,
           tool_choice: { type: 'none' as const },
+          // setMessagesParams takes ownership of history in the installed SDK.
+          // Carry this assistant call forward so the runner executes it and
+          // appends its tool result before asking for the written answer.
+          messages: [...params.messages, { role: message.role, content: message.content }],
         }));
       }
     }
@@ -420,12 +426,25 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
     trace: ModelTrace | undefined,
     usage: ModelUsage,
   ): Promise<Anthropic.Beta.BetaMessage> {
-    if (!trace) return runner.done();
-    trace.input(runner.params, { provider: 'anthropic', model: this.model });
+    /*
+     * The loop runs whether or not anything is watching.
+     *
+     * `done()` waits for the tool loop to finish; it does not drive it. Calling
+     * it on a runner nobody has iterated waits for something that will never
+     * happen — and because the promise never settles rather than rejecting, an
+     * observation made without a trace did not fail, it stopped: the window
+     * never completed, the cursor never advanced, and the session's observer
+     * stalled for good. Even the request's own error never surfaced, because
+     * the error is delivered to the iterator and the iterator was never read.
+     *
+     * So iteration is unconditional, and only the recording is conditional.
+     */
+    if (trace) trace.input(runner.params, { provider: 'anthropic', model: this.model });
     for await (const message of runner) {
       // The runner's iterator is typed for either mode; nothing here streams,
       // so a message without content is one this loop has nothing to say about.
       if (!('content' in message)) continue;
+      if (!trace) continue;
       reportReasoning(trace, message.content);
       addUsage(usage, message);
     }

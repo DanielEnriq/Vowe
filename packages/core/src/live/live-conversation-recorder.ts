@@ -5,6 +5,9 @@ import type { EventStore } from '../store/event-store.js';
 import type {
   ConversationEntry,
   ConversationRole,
+  ConversationScope,
+  ProjectConversationEntry,
+  DeliveryDetails,
 } from '../types/conversation.js';
 
 /** What the renderer measured about the audio it actually played. */
@@ -15,10 +18,8 @@ export type PlaybackReport =
   /** The connection went away while audio was in flight. */
   | { kind: 'lost'; at: string };
 
-export interface LiveConversationRecorderOptions {
+export type LiveConversationRecorderOptions = ConversationScope & {
   store: EventStore;
-  /** The Vowe session this conversation belongs to. */
-  sessionId: string;
   /** The provider's session id. Half of a turn's stable identity. */
   liveSessionId: string;
   provider: string;
@@ -38,6 +39,7 @@ interface OpenTurn {
   lastEndMs: number;
   /** Set when this turn is Vo speaking an answer that is already persisted. */
   deliversEntryId: string | null;
+  deliveryId: string | null;
   run: RunHandle | null;
   playbackStartedAt: string | null;
   playbackEndedAt: string | null;
@@ -50,7 +52,9 @@ interface OpenTurn {
 /** A spoken turn already written, still able to learn how its audio ended. */
 interface RecentDelivery {
   deliveryId: string;
+  /** Still waiting to link the user turn that interrupted this delivery. */
   interrupted: boolean;
+  status: 'completed' | 'interrupted' | 'cancelled';
 }
 
 const VOWE_TURN: ConversationRole = 'companion_message';
@@ -90,7 +94,7 @@ export class LiveConversationRecorder {
   private open: OpenTurn | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   /** The next spoken turn is the delivery of this already-persisted answer. */
-  private expectedDelivery: string | null = null;
+  private expectedDelivery: { entryId: string; deliveryId: string } | null = null;
   /**
    * The spoken turn most recently written.
    *
@@ -128,11 +132,31 @@ export class LiveConversationRecorder {
    * Text is the wrong test: Vo rephrases what it is given, and a person may
    * legitimately say the same sentence twice.
    */
-  expectDeliveryOf(entryId: string): void {
-    this.expectedDelivery = entryId;
+  async expectDeliveryOf(entryId: string): Promise<void> {
+    await this.cancelExpectedDelivery();
+    const deliveryId = randomUUID();
+    await this.options.store.recordDelivery({ id: deliveryId, entryId, ...this.scope,
+      modality: 'voice', status: 'started', startedAt: new Date().toISOString() });
+    this.expectedDelivery = { entryId, deliveryId };
+  }
+
+  private async cancelExpectedDelivery(): Promise<void> {
+    const expected = this.expectedDelivery;
+    this.expectedDelivery = null;
+    if (expected) await this.options.store.updateDelivery(expected.deliveryId, {
+      status: 'cancelled', completedAt: new Date().toISOString(),
+    });
   }
 
   userSaid(delta: string, startMs: number, endMs: number): void {
+    // A new question before the promised speech supersedes that delivery.
+    const expected = this.expectedDelivery;
+    this.expectedDelivery = null;
+    if (expected) this.writing = this.writing.then(async () => {
+      await this.options.store.updateDelivery(expected.deliveryId, {
+        status: 'cancelled', completedAt: new Date().toISOString(),
+      });
+    }).catch((error) => this.onError('live:cancel-delivery', error));
     this.accumulate('user', delta, startMs, endMs);
   }
 
@@ -163,7 +187,7 @@ export class LiveConversationRecorder {
       // The turn is already written — which is the usual order when the user
       // talks over it, because their first words reach us before the silence
       // that ends the audio does. Measured duration still belongs to it.
-      void this.attachMeasurement(report).catch((error) =>
+      this.writing = this.writing.then(() => this.attachMeasurement(report)).catch((error) =>
         this.onError('live:playback', error),
       );
       return;
@@ -189,7 +213,10 @@ export class LiveConversationRecorder {
   ): Promise<void> {
     const recent = this.recent;
     if (!recent) return;
-    if (report.kind === 'lost') return;
+    if (report.kind === 'lost') {
+      if (recent.status !== 'interrupted') await this.options.store.updateDelivery(recent.deliveryId, { status: 'cancelled', completedAt: report.at });
+      return;
+    }
     if (report.audioMs === undefined) return;
     await this.options.store.updateDelivery(recent.deliveryId, {
       audioEndMs: report.audioMs,
@@ -200,6 +227,11 @@ export class LiveConversationRecorder {
   async flush(): Promise<void> {
     await this.close();
     await this.writing;
+  }
+
+  async finish(): Promise<void> {
+    await this.flush();
+    await this.cancelExpectedDelivery();
   }
 
   private accumulate(
@@ -220,12 +252,14 @@ export class LiveConversationRecorder {
       void this.close().catch((error) => this.onError('live:close-turn', error));
     }
     if (!this.open) {
+      const expected = speaker === 'vo' ? this.takeExpectedDelivery() : null;
       this.open = {
         speaker,
         text: '',
         firstStartMs: startMs,
         lastEndMs: endMs,
-        deliversEntryId: speaker === 'vo' ? this.takeExpectedDelivery() : null,
+        deliversEntryId: expected?.entryId ?? null,
+        deliveryId: expected?.deliveryId ?? null,
         run: speaker === 'vo' ? this.beginResponseRun() : null,
         playbackStartedAt:
           speaker === 'vo' ? this.takePendingPlaybackStart() : null,
@@ -240,7 +274,7 @@ export class LiveConversationRecorder {
     this.armSilence();
   }
 
-  private takeExpectedDelivery(): string | null {
+  private takeExpectedDelivery(): { entryId: string; deliveryId: string } | null {
     const expected = this.expectedDelivery;
     this.expectedDelivery = null;
     return expected;
@@ -255,7 +289,7 @@ export class LiveConversationRecorder {
   private beginResponseRun(): RunHandle | null {
     const run = this.options.runs?.begin({
       kind: 'live_response',
-      sessionId: this.options.sessionId,
+      ...this.scope,
       provider: this.options.provider,
       ...(this.options.model ? { model: this.options.model } : {}),
     });
@@ -278,6 +312,11 @@ export class LiveConversationRecorder {
   private armSilence(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
+      // Transcript silence does not end audio which is still being played.
+      if (this.open?.speaker === 'vo' && this.open.playbackStartedAt && !this.open.playbackEndedAt) {
+        this.armSilence();
+        return;
+      }
       void this.close().catch((error) => this.onError('live:close-turn', error));
     }, this.silenceMs);
     this.timer.unref?.();
@@ -310,7 +349,8 @@ export class LiveConversationRecorder {
 
   private async writeUserTurn(turn: OpenTurn): Promise<void> {
     const entry = this.entryFor(turn, USER_TURN, turn.text.trim());
-    const stored = await this.options.store.appendConversationEntry(entry);
+    this.lastUserEntry = null;
+    const stored = await this.append(entry);
     if (!stored) return;
     this.lastUserEntry = stored.id;
 
@@ -344,10 +384,11 @@ export class LiveConversationRecorder {
     if (turn.deliversEntryId) {
       // The grounded answer is already the conversation's copy of this. What
       // was spoken is the short form of it, and belongs to the delivery.
-      await this.options.store.recordDelivery({
+      if (turn.deliveryId) await this.options.store.updateDelivery(turn.deliveryId, { ...delivery, deliveredText: text });
+      else await this.options.store.recordDelivery({
         id: randomUUID(),
         entryId: turn.deliversEntryId,
-        sessionId: this.options.sessionId,
+        ...this.scope,
         deliveredText: text,
         ...delivery,
       });
@@ -357,7 +398,7 @@ export class LiveConversationRecorder {
     }
 
     const entry = this.entryFor(turn, VOWE_TURN, text);
-    const stored = await this.options.store.appendConversationEntry(entry, delivery);
+    const stored = await this.append(entry, delivery);
     // Already stored: the provider redelivered a turn, and nothing about that
     // is new history. No second entry, and no second delivery either.
     if (!stored) {
@@ -388,11 +429,11 @@ export class LiveConversationRecorder {
     return 'completed';
   }
 
-  private remember(status: string, entryId: string): void {
+  private remember(status: RecentDelivery['status'], entryId: string): void {
     const deliveries = this.options.store.getDeliveries(entryId);
     const last = deliveries[deliveries.length - 1];
     this.recent = last
-      ? { deliveryId: last.id, interrupted: status === 'interrupted' }
+      ? { deliveryId: last.id, interrupted: status === 'interrupted', status }
       : null;
   }
 
@@ -418,14 +459,25 @@ export class LiveConversationRecorder {
     else await run.cancel({ ...produced, metadata: { delivery: status } });
   }
 
+  private get scope(): ConversationScope {
+    return this.options.projectId !== undefined
+      ? { projectId: this.options.projectId } : { sessionId: this.options.sessionId! };
+  }
+
+  private append(entry: ConversationEntry | ProjectConversationEntry, delivery?: DeliveryDetails) {
+    return 'projectId' in entry
+      ? this.options.store.appendProjectConversationEntry(entry, delivery)
+      : this.options.store.appendConversationEntry(entry, delivery);
+  }
+
   private entryFor(
     turn: OpenTurn,
     role: ConversationRole,
     text: string,
-  ): ConversationEntry {
+  ): ConversationEntry | ProjectConversationEntry {
     return {
       id: randomUUID(),
-      sessionId: this.options.sessionId,
+      ...this.scope,
       at: new Date().toISOString(),
       role,
       text,

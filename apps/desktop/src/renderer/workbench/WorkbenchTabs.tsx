@@ -53,9 +53,14 @@ const NO_EDGES: ScrollEdges = { start: false, end: false };
  * before there is anything to reach past.
  *
  * The strip sits on the window's own band, level with the panel toggles rather
- * than tucked under them, and the `+` sits at its right end beside the desk's
- * control — one row of controls along the top of the window instead of two
- * rows a chrome-height apart.
+ * than tucked under them, and the `+` ends it one light's width to the left of
+ * the desk's collapse control — the same distance that stands between the two
+ * toggles at the other end of the band, so the two read as a pair. One row of
+ * controls along the top of the window instead of two rows a chrome-height
+ * apart.
+ *
+ * The `+` belongs to the row and not to the scroller, so it holds that
+ * position while the tabs run out of room and scroll away to its left.
  */
 export function WorkbenchTabs({
   tabs,

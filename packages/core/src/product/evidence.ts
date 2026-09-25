@@ -196,6 +196,8 @@ export function eventTitle(event: { kind: string; summary?: string }): string {
       return 'Task instruction';
     case 'agent_message':
       return 'Worker update';
+    case 'agent_reasoning':
+      return 'Worker reasoning';
     case 'file_changed':
       return 'File change';
     case 'test_started':

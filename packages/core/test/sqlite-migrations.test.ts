@@ -174,6 +174,110 @@ describe('schema migrations', () => {
     expect('origin' in entry!).toBe(false);
   });
 
+  it('reads a semantic state written before the observer understood anything', async () => {
+    const root = await temporaryRoot();
+    buildDatabaseAt(root, 7);
+
+    // A v7 Vowe: semantic states exist, understanding does not.
+    const before = new DatabaseSync(databasePath(root));
+    before
+      .prepare(
+        `INSERT INTO semantic_states (
+           session_id, ord, task, phase, current_activity, recent_progress_json,
+           last_meaningful_update, source, provenance_json, updated_at)
+         VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        TEST_SESSION,
+        'Fix the reconnect regression',
+        'testing',
+        'Running the test suite',
+        JSON.stringify(['ran the suite']),
+        '2026-02-11T09:05:00.000Z',
+        'heuristic',
+        JSON.stringify({ eventIds: [], throughSeq: 4 }),
+        '2026-02-11T09:05:00.000Z',
+      );
+    before.close();
+
+    const store = await openStore(root);
+    const [state] = store.getSemanticHistory(TEST_SESSION);
+
+    // The honest reading of a row that predates the field: nothing was
+    // understood, and nothing durable was said. Not a throw, and not a guess.
+    expect(state!.currentActivity).toBe('Running the test suite');
+    expect(state!.currentUnderstanding).toBeNull();
+    expect(state!.meaningfulUpdates).toEqual([]);
+
+    // And the new capability writes on top of the old row.
+    await store.appendSemanticState(TEST_SESSION, {
+      ...state!,
+      currentUnderstanding: 'The suite passes; liveness is unresolved.',
+      meaningfulUpdates: [
+        {
+          id: 'note-1',
+          text: 'The focused normalization tests pass.',
+          at: '2026-02-11T09:06:00.000Z',
+          refs: [{ kind: 'trace', sessionId: TEST_SESSION, startSeq: 1, endSeq: 4 }],
+        },
+      ],
+    });
+
+    const reloaded = store.getSession(TEST_SESSION)!.semanticState!;
+    expect(reloaded.currentUnderstanding).toBe('The suite passes; liveness is unresolved.');
+    expect(reloaded.meaningfulUpdates[0]!.refs).toHaveLength(1);
+  });
+
+  it('recovers a record\u2019s siblings after the ordinal migration', async () => {
+    const root = await temporaryRoot();
+    buildDatabaseAt(root, 9);
+
+    // A v9 Vowe: one event stored at an address, its siblings already lost.
+    const before = new DatabaseSync(databasePath(root));
+    before
+      .prepare(
+        `INSERT INTO events (session_id, seq, id, at, kind, summary, detail_json,
+                             raw_json, raw_source, raw_byte_offset, raw_line)
+         VALUES (?, 1, ?, ?, ?, ?, NULL, NULL, ?, 4096, 12)`,
+      )
+      .run(TEST_SESSION, 'e1', '2026-02-11T09:00:00.000Z', 'agent_message', 'Reworking the pi adapter.', '/fixtures/session.jsonl');
+    before.close();
+
+    const store = await openStore(root);
+
+    // The old row reads back as the only event of its record, which it was.
+    expect(store.getEvents(TEST_SESSION)).toHaveLength(1);
+    expect(store.getEvents(TEST_SESSION)[0]!.rawRef.ordinal).toBe(0);
+
+    // And its siblings can now be stored beside it rather than bouncing off
+    // the identity index.
+    const rawRef = { source: '/fixtures/session.jsonl', byteOffset: 4096, line: 12 };
+    for (const [ordinal, kind] of [[1, 'file_changed'], [2, 'command_started']] as const) {
+      await store.appendEvent(TEST_SESSION, {
+        sessionId: TEST_SESSION,
+        at: '2026-02-11T09:00:00.000Z',
+        kind,
+        summary: `${kind} from the same record`,
+        raw: {},
+        rawRef: { ...rawRef, ordinal },
+      });
+    }
+    expect(store.getEvents(TEST_SESSION)).toHaveLength(3);
+
+    // Re-reading the record is still idempotent.
+    expect(
+      await store.appendEvent(TEST_SESSION, {
+        sessionId: TEST_SESSION,
+        at: '2026-02-11T09:00:00.000Z',
+        kind: 'file_changed',
+        summary: 'file_changed from the same record',
+        raw: {},
+        rawRef: { ...rawRef, ordinal: 1 },
+      }),
+    ).toBeNull();
+    expect(store.getEvents(TEST_SESSION)).toHaveLength(3);
+  });
+
   it('is a no-op the second time it runs', async () => {
     const root = await temporaryRoot();
     const first = await openStore(root);

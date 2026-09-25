@@ -75,6 +75,8 @@ describe('SqliteEventStore — a write either happened or it did not', () => {
         currentActivity: 'reading',
         recentProgress: [],
         lastMeaningfulUpdate: '2026-02-11T09:00:00.000Z',
+        currentUnderstanding: null,
+        meaningfulUpdates: [],
         source: 'heuristic',
         provenance: { eventIds: [], throughSeq: 0 },
         updatedAt: '2026-02-11T09:00:00.000Z',

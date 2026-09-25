@@ -54,6 +54,18 @@ export default defineConfig({
         find: '@vowe/adapter-claude-code',
         replacement: new URL('./packages/adapter-claude-code/src/index.ts', import.meta.url).pathname,
       },
+      {
+        find: '@vowe/adapter-kit',
+        replacement: new URL('./packages/adapter-kit/src/index.ts', import.meta.url).pathname,
+      },
+      {
+        find: '@vowe/adapter-pi',
+        replacement: new URL('./packages/adapter-pi/src/index.ts', import.meta.url).pathname,
+      },
+      {
+        find: '@vowe/adapter-codex',
+        replacement: new URL('./packages/adapter-codex/src/index.ts', import.meta.url).pathname,
+      },
     ],
   },
 });

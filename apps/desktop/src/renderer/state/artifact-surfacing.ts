@@ -19,7 +19,7 @@ import type { ContextRef, ConversationEntry, InvestigationReceipt } from '@vowe/
  * Nothing is learned and nothing is ranked. The order is the order the
  * investigation actually happened in.
  */
-export function planSurfacing(entry: ConversationEntry): ContextRef | null {
+export function planSurfacing(entry: Pick<ConversationEntry, 'investigation'>): ContextRef | null {
   const receipt = entry.investigation;
   if (!receipt) return null;
 

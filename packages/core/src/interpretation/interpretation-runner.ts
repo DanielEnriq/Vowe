@@ -1,3 +1,4 @@
+import { workerActivity } from '../product/worker-activity.js';
 import type { EventStore } from '../store/event-store.js';
 import type { SessionRegistry } from '../registry/session-registry.js';
 import type { SemanticInterpreter } from './semantic-interpreter.js';
@@ -12,15 +13,36 @@ export interface InterpretationRunnerOptions {
   burstEvents?: number;
   /** Size of the evidence window handed to the interpreter. */
   windowSize?: number;
+  /**
+   * How many trailing events the fast activity pass reads.
+   *
+   * Long enough to see a burst whole, and no longer.
+   *
+   * A run of edits and a command's start and finish are both pairs of events,
+   * so the tail has to hold roughly twice as many events as the burst it must
+   * recognise. Twelve was too tight: six edits filled it, and the label fell
+   * back from "Updating 6 files in adapter-pi" to "Making 6 file changes"
+   * because the paths had already scrolled out of view. Reading sixty to
+   * decide one label would be the opposite mistake, on a lane that runs for
+   * every single event.
+   */
+  activityWindow?: number;
   onError?: (error: unknown) => void;
 }
 
 /**
- * Drives interpretation from the live event stream.
+ * Drives interpretation from the live event stream, at two speeds.
  *
- * Debounced rather than per-event: interpretation is about what a session
- * appears to be doing, which does not change with every tool call, and an LLM
- * pass per event would be wasteful.
+ * The slow one is what this class always did: a debounced pass that may call a
+ * model. It stays debounced because reaching an interpretation is expensive and
+ * does not get better for being done per tool call.
+ *
+ * The fast one runs on every event, synchronously, and calls no model at all.
+ * It exists because the slow pass leaves a fifteen-second hole in which the
+ * product can say nothing about a worker that is plainly doing something — and
+ * the trace already contains the answer. `workerActivity` derives it; this
+ * publishes it. Nothing here blocks ingestion, and nothing here writes to the
+ * store.
  */
 export class InterpretationRunner {
   private readonly options: Required<Omit<InterpretationRunnerOptions, 'onError'>> & {
@@ -35,6 +57,7 @@ export class InterpretationRunner {
       quietMs: 15_000,
       burstEvents: 25,
       windowSize: 60,
+      activityWindow: 32,
       onError: () => undefined,
       ...options,
     };
@@ -42,8 +65,31 @@ export class InterpretationRunner {
 
   start(): void {
     this.options.registry.on('event', (event) => {
+      // Fast first, and never awaited: the event lane is ingestion, and a
+      // developer watching a worker move should see it move.
+      this.publishActivity(event.sessionId);
       this.schedule(event.sessionId);
     });
+  }
+
+  /**
+   * Derive and publish what the worker is doing, from the trace alone.
+   *
+   * Deliberately total: any failure here is a label, not a session, and losing
+   * ingestion over one would be absurd.
+   */
+  private publishActivity(sessionId: string): void {
+    if (this.stopped) return;
+    try {
+      const { registry, store, activityWindow } = this.options;
+      const events = store.getEvents(sessionId, { limit: activityWindow });
+      const activity = workerActivity(events);
+      if (activity && activity.id === events.at(-1)?.id) {
+        registry.applyActivitySignal(sessionId, activity);
+      }
+    } catch (error) {
+      this.options.onError(error);
+    }
   }
 
   stop(): void {

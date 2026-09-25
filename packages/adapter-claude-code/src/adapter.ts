@@ -461,19 +461,49 @@ function capabilitiesFor(
   attachMode: AgentSession['attachMode'],
   hasTranscript: boolean,
 ): SessionCapabilities {
+  /**
+   * Constant across attach modes, and true of the provider rather than of one
+   * session: the Agent SDK is a dependency of this package, so launching
+   * always works wherever Vowe itself runs.
+   */
+  const launch = true;
+  /**
+   * Claude Code records thinking blocks, and this adapter deliberately does
+   * not carry them (see `normalize.ts`). From the product's side that is
+   * indistinguishable from a provider that records nothing, and it should be:
+   * either way a surface must not claim the worker did not think.
+   */
+  const reasoning = false;
+
   switch (attachMode) {
     case 'managed':
-      return { observe: true, sendInstruction: true, interrupt: true, resume: true };
+      return {
+        observe: true,
+        sendInstruction: true,
+        interrupt: true,
+        resume: true,
+        launch,
+        reasoning,
+      };
     case 'external-live':
       // Observable in full, but Claude Code offers no public way to message a
       // session running under a process we do not own.
-      return { observe: true, sendInstruction: false, interrupt: false, resume: false };
+      return {
+        observe: true,
+        sendInstruction: false,
+        interrupt: false,
+        resume: false,
+        launch,
+        reasoning,
+      };
     case 'external-idle':
       return {
         observe: true,
         sendInstruction: hasTranscript,
         interrupt: false,
         resume: hasTranscript,
+        launch,
+        reasoning,
       };
   }
 }

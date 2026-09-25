@@ -1,120 +1,57 @@
-import { useState, type ReactElement } from 'react';
-
-import type { PresenceProfile } from '@vowe/core';
-
-import { useProjectInvestigation, useProjectThread } from '../hooks/useVoweData.js';
-import { useActivityImpulse } from '../presence/index.js';
+import { useEffect, useRef, type ReactElement, type ReactNode } from 'react';
+import { formatRef } from '@vowe/core/refs';
+import type { Attachment } from '../session/Composer.js';
 import { composerKeyAction } from '../state/composer.js';
-import { SendIcon } from '../shell/icons.js';
-import { LiveInvestigation } from '../session/LiveInvestigation.js';
-import { MessageBody } from '../session/MessageBody.js';
-import { SettledInvestigation } from '../session/SettledInvestigation.js';
-import { VoweMark } from '../session/VoweMark.js';
+import { SendIcon, CloseIcon } from '../shell/icons.js';
 
-/**
- * Asking about the repository rather than about one run.
- *
- * The same investigator answers this as answers a session question — it simply
- * sees the repository, what Vowe has learned about it and what Vowe understood
- * across its sessions, rather than one session's trace. Answers land in the
- * project's own durable thread, which is why they survive being closed.
- *
- * A real input rather than a link that reveals one. The capability is live, and
- * a line of text reading "Ask about this repository" made the most useful thing
- * in an idle room look like a caption — one click away from the thing it was
- * describing, for no reason other than that it had been built later.
- */
-export function ProjectAsk({
-  projectId,
-  presence,
-}: {
-  projectId: string;
-  presence: PresenceProfile;
-}): ReactElement {
-  const { entries } = useProjectThread(projectId);
-  const entryIds = entries.map((entry) => entry.id);
-  const investigation = useProjectInvestigation(projectId, entryIds);
-  const activity = useActivityImpulse(investigation.beat, investigation.active);
-  const [draft, setDraft] = useState('');
-  const [asking, setAsking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+interface Props {
+  voiceControl?: ReactNode;
+  draft: string;
+  asking: boolean;
+  error: string | null;
+  viewing: Attachment | null;
+  attachments: Attachment[];
+  onDraft: (draft: string) => void;
+  onSend: () => void;
+  onAttach: (attachment: Attachment) => void;
+  onDetach: (attachment: Attachment) => void;
+}
 
-  const send = async () => {
-    const question = draft.trim();
-    if (!question || asking) return;
-    setDraft('');
-    setAsking(true);
-    setError(null);
-    try {
-      await window.vowe.askProject(projectId, question);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setAsking(false);
-    }
-  };
-
+/** One draft follows the user between Home and conversation. Viewing is not attaching. */
+export function ProjectAsk({ voiceControl, draft, asking, error, viewing, attachments, onDraft,
+  onSend, onAttach, onDetach }: Props): ReactElement {
+  const field = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (!field.current) return;
+    field.current.style.height = 'auto';
+    field.current.style.height = `${Math.min(120, field.current.scrollHeight)}px`;
+  }, [draft]);
+  const canAttach = viewing && !attachments.some((item) => formatRef(item.ref) === formatRef(viewing.ref));
   return (
     <div className="project-ask">
-      {entries.length > 0 && (
-        <div className="project-thread">
-          {entries.map((entry) => (
-            <div
-              key={entry.id}
-              className={`turn${entry.role === 'user_question' ? ' user' : ''}`}
-            >
-              {entry.role === 'user_question' ? (
-                <span className="speaker">You</span>
-              ) : (
-                <div className="signature-line">
-                  <VoweMark profile={presence} />
-                  <span className="speaker">Vowe</span>
-                </div>
-              )}
-              {entry.role !== 'user_question' && entry.investigation && (
-                <SettledInvestigation entryId={entry.id} receipt={entry.investigation} />
-              )}
-              <MessageBody text={entry.text} />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {(asking || investigation.active || investigation.answer.length > 0) && (
-        <LiveInvestigation live={investigation} presence={presence} activity={activity} />
-      )}
-
+      {canAttach && <div className="project-viewing">
+        <span>On your desk · {viewing.label}</span>
+        <button className="link-button" type="button" onClick={() => onAttach(viewing)}>Add to question</button>
+      </div>}
+      {attachments.length > 0 && <div className="project-attachments" aria-label="Attached to question">
+        {attachments.map((item) => <button className="small-button" type="button" key={formatRef(item.ref)}
+          title={`Remove ${item.label} from question`} onClick={() => onDetach(item)}>
+          {item.label}<CloseIcon />
+        </button>)}
+      </div>}
       <div className="ask-field">
-        <textarea
-          rows={1}
-          value={draft}
-          placeholder="Ask Vowe about this project…"
-          aria-label="Ask Vowe about this project"
-          onChange={(event) => {
-            setDraft(event.target.value);
-            const element = event.target;
-            element.style.height = 'auto';
-            element.style.height = `${Math.min(120, element.scrollHeight)}px`;
-          }}
+        <textarea ref={field} rows={1} value={draft} placeholder="Ask Vowe about this project…"
+          aria-label="Ask Vowe about this project" onChange={(event) => onDraft(event.target.value)}
           onKeyDown={(event) => {
             if (composerKeyAction(event) !== 'send') return;
             event.preventDefault();
-            void send();
-          }}
-        />
-        <button
-          className="send"
-          type="button"
-          aria-label="Ask Vowe"
-          title="Ask Vowe"
-          disabled={!draft.trim() || asking}
-          onClick={() => void send()}
-        >
-          <SendIcon />
-        </button>
+            onSend();
+          }} />
+        {voiceControl}
+        <button className="send" type="button" aria-label="Ask Vowe" title="Ask Vowe"
+          disabled={!draft.trim() || asking} onClick={onSend}><SendIcon /></button>
       </div>
-
-      {error && <span className="fine">{error}</span>}
+      {error && <span className="fine" role="alert">{error}</span>}
     </div>
   );
 }

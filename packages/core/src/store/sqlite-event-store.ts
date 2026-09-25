@@ -6,6 +6,7 @@ import type { AdapterEvent, NormalizedEvent } from '../types/events.js';
 import type { AgentSession, SemanticState } from '../types/session.js';
 import type {
   ConversationDelivery,
+  DeliveryDetails,
   ConversationEntry,
   ProjectConversationEntry,
   DeliveryProgress,
@@ -250,13 +251,17 @@ export class SqliteEventStore implements EventStore {
     const row = this.get(
       `INSERT INTO events (
          session_id, seq, id, at, kind, summary, detail_json, raw_json,
-         raw_source, raw_byte_offset, raw_line)
+         raw_source, raw_byte_offset, raw_line, raw_ordinal)
        SELECT :sessionId,
               COALESCE((SELECT MAX(seq) FROM events WHERE session_id = :sessionId), 0) + 1,
-              :id, :at, :kind, :summary, :detail, :raw, :source, :byteOffset, :line
+              :id, :at, :kind, :summary, :detail, :raw, :source, :byteOffset,
+              :line, :ordinal
        -- Required: SQLite cannot parse ON CONFLICT after a bare SELECT.
        WHERE true
-       ON CONFLICT (session_id, raw_source, raw_byte_offset) DO NOTHING
+       -- Identity is the physical address plus which of that record's events
+       -- this is. Without the ordinal, a record that produced four events
+       -- stored one and discarded three.
+       ON CONFLICT (session_id, raw_source, raw_byte_offset, raw_ordinal) DO NOTHING
        RETURNING seq`,
       {
         sessionId,
@@ -269,6 +274,7 @@ export class SqliteEventStore implements EventStore {
         source: event.rawRef.source,
         byteOffset: event.rawRef.byteOffset,
         line: event.rawRef.line,
+        ordinal: event.rawRef.ordinal ?? 0,
       },
     );
     if (!row) return null;
@@ -321,11 +327,13 @@ export class SqliteEventStore implements EventStore {
       this.run(
         `INSERT INTO semantic_states (
            session_id, ord, task, phase, current_activity, recent_progress_json,
-           last_meaningful_update, source, provenance_json, updated_at)
+           last_meaningful_update, current_understanding, meaningful_updates_json,
+           source, provenance_json, updated_at)
          SELECT :sessionId,
                 COALESCE((SELECT MAX(ord) FROM semantic_states WHERE session_id = :sessionId), 0) + 1,
                 :task, :phase, :currentActivity, :recentProgress,
-                :lastMeaningfulUpdate, :source, :provenance, :updatedAt`,
+                :lastMeaningfulUpdate, :currentUnderstanding, :meaningfulUpdates,
+                :source, :provenance, :updatedAt`,
         {
           sessionId,
           task: rows.text(state.task),
@@ -333,6 +341,8 @@ export class SqliteEventStore implements EventStore {
           currentActivity: state.currentActivity,
           recentProgress: JSON.stringify(state.recentProgress),
           lastMeaningfulUpdate: state.lastMeaningfulUpdate,
+          currentUnderstanding: rows.text(state.currentUnderstanding ?? null),
+          meaningfulUpdates: JSON.stringify(state.meaningfulUpdates ?? []),
           source: state.source,
           provenance: JSON.stringify(state.provenance),
           updatedAt: state.updatedAt,
@@ -365,7 +375,7 @@ export class SqliteEventStore implements EventStore {
    */
   async appendConversationEntry(
     entry: ConversationEntry,
-    delivery?: Omit<ConversationDelivery, 'id' | 'entryId' | 'sessionId'>,
+    delivery?: DeliveryDetails,
   ): Promise<ConversationEntry | null> {
     const stored = this.transaction(() => {
       const inserted = this.get(
@@ -465,6 +475,7 @@ export class SqliteEventStore implements EventStore {
 
   async appendProjectConversationEntry(
     entry: ProjectConversationEntry,
+    delivery?: DeliveryDetails,
   ): Promise<ProjectConversationEntry | null> {
     const stored = this.transaction(() => {
       const inserted = this.get(
@@ -497,7 +508,9 @@ export class SqliteEventStore implements EventStore {
           originId: rows.text(entry.origin?.id),
         },
       );
-      return inserted ? rows.toProjectConversationEntry(inserted) : null;
+      if (!inserted) return null;
+      if (delivery) this.insertDelivery({ ...delivery, id: randomUUID(), entryId: entry.id, projectId: entry.projectId });
+      return rows.toProjectConversationEntry(inserted);
     });
 
     if (!stored) return null;
@@ -544,6 +557,7 @@ export class SqliteEventStore implements EventStore {
    */
   async recordDelivery(delivery: ConversationDelivery): Promise<void> {
     this.insertDelivery(delivery);
+    if (delivery.projectId) this.notifyProjectConversation({ projectId: delivery.projectId });
   }
 
   /**
@@ -558,8 +572,10 @@ export class SqliteEventStore implements EventStore {
     deliveryId: string,
     progress: DeliveryProgress,
   ): Promise<ConversationDelivery | null> {
+    const table = this.get('SELECT id FROM project_conversation_deliveries WHERE id = ?', deliveryId)
+      ? 'project_conversation_deliveries' : 'conversation_deliveries';
     const row = this.get(
-      `UPDATE conversation_deliveries SET
+      `UPDATE ${table} SET
          status                  = COALESCE(:status, status),
          delivered_text          = COALESCE(:deliveredText, delivered_text),
          audio_end_ms            = COALESCE(:audioEndMs, audio_end_ms),
@@ -576,15 +592,15 @@ export class SqliteEventStore implements EventStore {
         completedAt: rows.text(progress.completedAt),
       },
     );
-    return row ? rows.toDelivery(row) : null;
+    const delivery = row ? rows.toDelivery(row) : null;
+    if (delivery?.projectId) this.notifyProjectConversation({ projectId: delivery.projectId });
+    return delivery;
   }
 
   /** Every delivery of one entry, oldest first. */
   getDeliveries(entryId: string): ConversationDelivery[] {
-    return this.all(
-      'SELECT * FROM conversation_deliveries WHERE entry_id = ? ORDER BY ord',
-      entryId,
-    ).map(rows.toDelivery);
+    return ['conversation_deliveries', 'project_conversation_deliveries'].flatMap((table) =>
+      this.all(`SELECT * FROM ${table} WHERE entry_id = ? ORDER BY ord`, entryId).map(rows.toDelivery));
   }
 
   getDeliveriesForSession(
@@ -599,20 +615,26 @@ export class SqliteEventStore implements EventStore {
     ).map(rows.toDelivery);
   }
 
+  getDeliveriesForProject(projectId: string): ConversationDelivery[] {
+    return this.all('SELECT * FROM project_conversation_deliveries WHERE project_id = ? ORDER BY ord', projectId).map(rows.toDelivery);
+  }
+
   private insertDelivery(delivery: ConversationDelivery): void {
+    const table = delivery.projectId ? 'project_conversation_deliveries' : 'conversation_deliveries';
+    const scope = delivery.projectId ? 'project_id' : 'session_id';
     this.run(
-      `INSERT INTO conversation_deliveries (
-         id, entry_id, session_id, ord, modality, status, delivered_text,
+      `INSERT INTO ${table} (
+         id, entry_id, ${scope}, ord, modality, status, delivered_text,
          audio_end_ms, interrupted_by_entry_id, started_at, completed_at)
        SELECT :id, :entryId, :sessionId,
-              COALESCE((SELECT MAX(ord) FROM conversation_deliveries
-                         WHERE session_id = :sessionId), 0) + 1,
+              COALESCE((SELECT MAX(ord) FROM ${table}
+                         WHERE ${scope} = :sessionId), 0) + 1,
               :modality, :status, :deliveredText, :audioEndMs, :interruptedBy,
               :startedAt, :completedAt`,
       {
         id: delivery.id,
         entryId: delivery.entryId,
-        sessionId: delivery.sessionId,
+        sessionId: delivery.projectId ?? delivery.sessionId,
         modality: delivery.modality,
         status: delivery.status,
         deliveredText: rows.text(delivery.deliveredText),
@@ -802,11 +824,12 @@ export class SqliteEventStore implements EventStore {
     this.run(
       `INSERT INTO window_notes (
          id, session_id, ord, window_id, window_index, summary,
-         current_activity, notable_change, refs_json, investigated, created_at)
+         understanding, current_activity, notable_change, refs_json,
+         investigated, created_at)
        SELECT :id, :sessionId,
               COALESCE((SELECT MAX(ord) FROM window_notes
                          WHERE session_id = :sessionId), 0) + 1,
-              :windowId, :windowIndex, :summary, :currentActivity,
+              :windowId, :windowIndex, :summary, :understanding, :currentActivity,
               :notableChange, :refs, :investigated, :createdAt
        WHERE true
        -- One note per window. Re-noting a window replaces its note rather than
@@ -815,6 +838,7 @@ export class SqliteEventStore implements EventStore {
          id               = excluded.id,
          window_index     = excluded.window_index,
          summary          = excluded.summary,
+         understanding    = excluded.understanding,
          current_activity = excluded.current_activity,
          notable_change   = excluded.notable_change,
          refs_json        = excluded.refs_json,
@@ -826,6 +850,7 @@ export class SqliteEventStore implements EventStore {
         windowId: note.windowId,
         windowIndex: note.windowIndex,
         summary: note.summary,
+        understanding: rows.text(note.understanding),
         currentActivity: rows.text(note.currentActivity),
         notableChange: rows.text(note.notableChange),
         refs: JSON.stringify(note.refs),

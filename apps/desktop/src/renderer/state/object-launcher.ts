@@ -38,6 +38,17 @@ const MAX_MEMORIES = 5;
 export interface LauncherInput {
   sessionId: string;
   projectId: string | null;
+  /**
+   * Whether this session's provider exposes the worker's reasoning to us.
+   *
+   * Read rather than inferred from the events, because the two absences mean
+   * different things. No reasoning entry on a provider that exposes reasoning
+   * means the worker has not thought out loud yet, and one may appear later.
+   * No reasoning entry on a provider that does not means there is nothing to
+   * wait for. Offering the row on the second kind would promise an object
+   * Vowe can never open.
+   */
+  reasoningAvailable: boolean;
   events: readonly NormalizedEvent[];
   milestones: readonly WorkerMilestone[];
   notes: readonly WindowNote[];
@@ -87,6 +98,24 @@ export function launcherEntries(input: LauncherInput): LauncherEntry[] {
       label: 'Latest instruction',
       detail: instruction.summary,
       ref: { kind: 'transcript', sessionId: input.sessionId, eventId: instruction.id },
+    });
+  }
+
+  /*
+   * The worker's own thinking, where the provider records it in a form we can
+   * read. Most do not, so this row is usually absent — and absent is correct:
+   * see `reasoningAvailable`.
+   */
+  const reasoning = input.reasoningAvailable
+    ? lastOfKind(input.events, 'agent_reasoning')
+    : undefined;
+  if (reasoning) {
+    entries.push({
+      id: 'latest-reasoning',
+      section: 'current',
+      label: 'Latest worker reasoning',
+      detail: reasoning.summary,
+      ref: { kind: 'transcript', sessionId: input.sessionId, eventId: reasoning.id },
     });
   }
 

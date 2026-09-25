@@ -83,10 +83,120 @@ export function CheckIcon(): ReactElement {
 
 const PROVIDER_NAMES: Record<string, string> = {
   'claude-code': 'Claude Code',
+  pi: 'pi',
+  codex: 'Codex',
 };
 
 export function providerName(provider: string): string {
   return PROVIDER_NAMES[provider] ?? provider;
+}
+
+/*
+ * Which agent a session belongs to, as a mark rather than an abbreviation.
+ *
+ * `CC`, `P`, `C` told you a session came from *something*, and told two of the
+ * three apart only by counting letters. A row is read at a glance and the
+ * provider is the one thing on it that never changes, so it should be the part
+ * you recognise without reading — which is what a shape does and a pair of
+ * initials does not.
+ *
+ * Each mark evokes its agent rather than reproducing a logo: a burst, a
+ * letterform, a rosette. They are drawn in one weight, in `currentColor`, at
+ * the same size, so no agent looks more important than another — the mark says
+ * which, never how much it matters.
+ */
+export function ProviderGlyph({
+  provider,
+  size = 14,
+}: {
+  provider: string;
+  size?: number;
+}): ReactElement {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="provider-glyph"
+      role="img"
+      aria-label={providerName(provider)}
+    >
+      <title>{providerName(provider)}</title>
+      {glyphPathsFor(provider)}
+    </svg>
+  );
+}
+
+function glyphPathsFor(provider: string): ReactElement {
+  switch (provider) {
+    /*
+     * A burst: four long spokes, four short ones between them, and a gap at
+     * the centre so it reads as light rather than as a plus sign.
+     *
+     * The short spokes were briefly drawn at reduced opacity to suggest
+     * tapering. At this size that did not read as a lighter stroke, it read as
+     * a different colour — as though something had failed to load — so the
+     * fan is made with length alone and the whole mark is one weight.
+     */
+    case 'claude-code':
+      return (
+        <g strokeWidth="1.35">
+          <path d="M8 2.2v4.2M8 9.6v4.2M2.2 8h4.2M9.6 8h4.2" />
+          <path d="M5.5 5.5l1.2 1.2M10.5 10.5L9.3 9.3M10.5 5.5L9.3 6.7M5.5 10.5l1.2-1.2" />
+        </g>
+      );
+
+    /*
+     * The letter itself. Nothing abstract was going to beat it: π is already
+     * the name and already a glyph. The right leg keeps its calligraphic kick
+     * so it reads as drawn rather than typed.
+     */
+    case 'pi':
+      return (
+        <g strokeWidth="1.45">
+          <path d="M3.5 5.3h9" />
+          <path d="M6.3 5.3c0 3.2-.4 5.3-1.3 7.1" />
+          <path d="M10.2 5.3v5.4c0 1.3.9 1.8 2.1 1.3" />
+        </g>
+      );
+
+    /*
+     * An open book, which is what the word means.
+     *
+     * A six-petal rosette was drawn first, on the theory that knotwork is the
+     * shape people associate with it. It was pretty at four times this size
+     * and turned into a small grey atom at this one. A book keeps a silhouette
+     * nothing else here has — wide where the others are radial — so it is
+     * still itself in a sidebar row.
+     */
+    case 'codex':
+      return (
+        <g strokeWidth="1.3">
+          <path d="M8 4.8v7.5" />
+          <path d="M8 4.8C6.6 3.8 4.8 3.6 2.9 4v7.5c1.9-.4 3.7-.2 5.1.8" />
+          <path d="M8 4.8c1.4-1 3.2-1.2 5.1-.8v7.5c-1.9-.4-3.7-.2-5.1.8" />
+        </g>
+      );
+
+    /*
+     * An agent we have no mark for yet.
+     *
+     * Deliberately plain, and deliberately present: a provider Vowe has never
+     * heard of still gets a place in the row rather than a blank, the same way
+     * `providerName` falls back to the raw id instead of "Unknown".
+     */
+    default:
+      return (
+        <g strokeWidth="1.3">
+          <circle cx="8" cy="8" r="4.8" />
+          <circle cx="8" cy="8" r="1.15" />
+        </g>
+      );
+  }
 }
 
 export function statusLabel(status: SessionStatus): string {

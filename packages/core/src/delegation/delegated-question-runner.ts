@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ContextNavigator } from '../context/context-navigator.js';
-import { dedupeRefs, parseRef, type ContextRef } from '../context/refs.js';
+import { dedupeRefs, formatRef, parseRef, type ContextRef } from '../context/refs.js';
+import type { AgentSession } from '../types/session.js';
+import { isCurrentProjectWork, projectSessionSummary } from '../product/project-brief.js';
+import { plainText } from '../product/session-display.js';
 import type {
   DelegatedAnswer,
   InvestigationAttachment,
@@ -19,7 +22,7 @@ import type {
 } from '../types/conversation.js';
 import type { RunHandle, VoweRunRecorder } from '../execution/run-recorder.js';
 import { tracedTool } from '../execution/traced-tools.js';
-import { asModelContext, recentConversation } from '../product/conversation-context.js';
+import { asModelContext, recentConversation, conversationTurns } from '../product/conversation-context.js';
 import { temperamentGuidance, type TemperamentProfile } from '../product/temperament.js';
 import { InvestigationRecorder } from './investigation-recorder.js';
 
@@ -27,6 +30,8 @@ export interface DelegatedQuestionRunnerOptions {
   store: EventStore;
   navigator: ContextNavigator;
   investigator: ObservationLlm;
+  /** The live registry, so transient activity is as fresh as the Project Room. */
+  sessionsFor?: (projectId: string) => AgentSession[];
   /** How much recent L1 understanding to hand over. */
   recentNotes?: number;
   /**
@@ -155,6 +160,8 @@ export interface DelegatedQuestion {
 /** A question about a repository and the work going on in it. */
 export interface ProjectQuestion {
   projectId: string;
+  /** Already persisted voice utterance, exactly as for a session question. */
+  questionEntryId?: string;
   question: string;
   /** See `DelegatedQuestion.contextRefs`. */
   contextRefs?: ContextRef[];
@@ -208,11 +215,14 @@ export class DelegatedQuestionRunner {
   private readonly onAnswer: (result: DelegatedResult) => void;
   private readonly temperament: () => TemperamentProfile | undefined;
   private readonly onProgress: (progress: InvestigationProgress) => void;
+  private readonly sessionsFor: (projectId: string) => AgentSession[];
 
   constructor(options: DelegatedQuestionRunnerOptions) {
     this.store = options.store;
     this.navigator = options.navigator;
     this.investigator = options.investigator;
+    this.sessionsFor = options.sessionsFor ?? ((projectId) =>
+      this.store.listSessions().filter((session) => session.projectId === projectId));
     this.recentNotes = options.recentNotes ?? 6;
     this.recentTurns = options.recentTurns ?? 12;
     this.runs = options.runs ?? null;
@@ -410,19 +420,24 @@ export class DelegatedQuestionRunner {
     const recorder = this.progressRecorder(scope);
     this.report({ phase: 'started', scope, at: new Date().toISOString() });
 
-    const asked: ProjectConversationEntry = {
-      id: randomUUID(),
-      projectId,
-      at: new Date().toISOString(),
-      role: 'user_question',
-      text: question.question,
-    };
-    await this.store.appendProjectConversationEntry(asked);
+    let askedId = question.questionEntryId;
+    if (askedId && !this.store.getProjectConversation(projectId).some((entry) =>
+      entry.id === askedId && (entry.role === 'user_question' || entry.role === 'user_message'))) {
+      throw new Error('The voice question does not belong to this project conversation.');
+    }
+    if (!askedId) {
+      const asked: ProjectConversationEntry = {
+        id: randomUUID(), projectId, at: new Date().toISOString(),
+        role: 'user_question', text: question.question,
+      };
+      await this.store.appendProjectConversationEntry(asked);
+      askedId = asked.id;
+    }
 
     const run = this.runs?.begin({
       kind: 'investigation',
       projectId,
-      triggerEntryId: asked.id,
+      triggerEntryId: askedId,
     });
 
     const temperament = this.temperament();
@@ -434,7 +449,11 @@ export class DelegatedQuestionRunner {
       repoRoot: project?.repoRoot ?? null,
       sessions: this.projectRoster(projectId),
       question: question.question,
-      liveConversation: [],
+      liveConversation: asModelContext(conversationTurns(this.store,
+        this.store.getProjectConversation(projectId, this.recentTurns + 1)
+          .filter((entry) => entry.id !== askedId).slice(-this.recentTurns)
+          .map((entry) => ({ ...entry, text: entry.text.slice(0, 2400) + (entry.refs?.length
+            ? `\nEvidence: ${entry.refs.slice(0, 4).map(formatRef).join(', ')}` : '') })))),
       ...(temperament ? { guidance: temperamentGuidance(temperament) } : {}),
       ...(attachments.length ? { attachments } : {}),
     };
@@ -506,17 +525,25 @@ export class DelegatedQuestionRunner {
    * question is really about.
    */
   private projectRoster(projectId: string): ProjectSessionLine[] {
-    return this.store
-      .listSessions()
-      .filter((session) => session.projectId === projectId)
-      .sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1))
+    let recent = 0;
+    return this.sessionsFor(projectId)
+      .map((session) => projectSessionSummary(session, this.store.getEvents(session.id), projectId))
+      .sort((a, b) => Number(isCurrentProjectWork(b, b.needsAttention)) - Number(isCurrentProjectWork(a, a.needsAttention))
+        || Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt))
+      .filter((session) => isCurrentProjectWork(session, session.needsAttention) || recent++ < 3)
       .slice(0, MAX_ROSTER)
       .map((session) => ({
-        sessionId: session.id,
-        label: session.displayLabel,
+        sessionId: session.sessionId,
+        label: session.title,
         status: session.status,
-        currentActivity: session.semanticState?.currentActivity ?? null,
+        currentActivity: session.currentActivity,
         branch: session.branch ?? null,
+        provider: session.provider,
+        active: isCurrentProjectWork(session, session.needsAttention),
+        currentUnderstanding: session.currentUnderstanding ? plainText(session.currentUnderstanding, 360) : null,
+        attention: session.attention?.summary ?? null,
+        latestDevelopment: session.latestDevelopment ? plainText(session.latestDevelopment.text, 220) : null,
+        evidenceRefs: (session.latestDevelopment?.refs ?? []).slice(0, 3).map(formatRef),
       }));
   }
 
@@ -590,12 +617,14 @@ export class DelegatedQuestionRunner {
         traced('open_context', input, async () => {
           const result = await this.navigator.openContext({
             ref: input.ref,
+            scope,
             ...(input.depth ? { depth: input.depth } : {}),
           });
           // The address that was asked for, which is what the label describes.
           // A model can hand back nonsense, in which case there is nothing to
           // name and the check says only that a reference was followed.
-          recorder.opened(parseRef(input.ref), result);
+          const requested = parseRef(input.ref);
+          recorder.opened(requested?.kind === 'repo' ? result.ref : requested, result);
           return result;
         }),
       getDiff: async (input) =>

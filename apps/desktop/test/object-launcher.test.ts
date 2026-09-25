@@ -67,9 +67,59 @@ function memory(id: string, at: string, question: string): ProjectMemoryRecord {
   };
 }
 
-const EMPTY = { events: [], milestones: [], notes: [], memories: [] };
+const EMPTY = {
+  events: [],
+  milestones: [],
+  notes: [],
+  memories: [],
+  reasoningAvailable: false,
+};
+
+function reasoningEvent(): NormalizedEvent {
+  return {
+    id: 'e-reason',
+    sessionId: SESSION,
+    seq: 4,
+    at: '2026-09-22T09:00:04.000Z',
+    kind: 'agent_reasoning',
+    summary: 'Weighing two ways to fix the reconnect',
+    detail: { text: 'Weighing two ways to fix the reconnect' },
+    raw: {},
+    rawRef: { source: 'x.jsonl', byteOffset: 0, line: 4 },
+  };
+}
 
 describe('Object launcher — only what is really there', () => {
+  /**
+   * Two absences that look identical and are not. The row is gated on the
+   * provider's capability rather than on the events alone, so a provider that
+   * can never expose reasoning never offers a row that would not open.
+   */
+  it('offers the worker’s reasoning only where the provider exposes it', () => {
+    const withCapability = launcherEntries({
+      sessionId: SESSION,
+      projectId: null,
+      ...EMPTY,
+      reasoningAvailable: true,
+      events: [reasoningEvent()],
+    });
+    expect(
+      withCapability.find((entry) => entry.id === 'latest-reasoning')?.label,
+    ).toBe('Latest worker reasoning');
+
+    // The same events, from a provider whose reasoning Vowe cannot read.
+    const withoutCapability = launcherEntries({
+      sessionId: SESSION,
+      projectId: null,
+      ...EMPTY,
+      reasoningAvailable: false,
+      events: [reasoningEvent()],
+    });
+    expect(
+      withoutCapability.some((entry) => entry.id === 'latest-reasoning'),
+    ).toBe(false);
+  });
+
   it('always offers the session diff, because the resolver answers honestly', () => {
     const entries = launcherEntries({ sessionId: SESSION, projectId: null, ...EMPTY });
     expect(entries).toEqual([

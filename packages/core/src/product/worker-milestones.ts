@@ -51,6 +51,9 @@ export interface WorkerMilestone {
  */
 const EXCLUDED = new Set([
   'agent_message',
+  // Thinking is not progress. It is also unevenly available, so admitting it
+  // would give a session more milestones for having a talkative provider.
+  'agent_reasoning',
   'user_instruction',
   'tool_started',
   'tool_finished',

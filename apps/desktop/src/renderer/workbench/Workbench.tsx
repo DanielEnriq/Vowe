@@ -22,6 +22,7 @@ interface Props {
   onClose: (id: string) => void;
   onKeep: (id: string) => void;
   onOpenRef: (ref: ContextRef) => void;
+  onOpenSession?: (sessionId: string) => void;
 }
 
 /**
@@ -46,6 +47,7 @@ export function Workbench({
   onClose,
   onKeep,
   onOpenRef,
+  onOpenSession,
 }: Props): ReactElement {
   const [launcherOpen, setLauncherOpen] = useState(false);
   const tab = activeTab(state);
@@ -77,6 +79,11 @@ export function Workbench({
           {/* A source artifact's subtitle is its directory, which readily
               outruns a 352px panel. Faded like every other line that can. */}
           <Fading className="kind">{artifact.subtitle ?? kindLabel(artifact.kind)}</Fading>
+          {onOpenSession && 'sessionId' in artifact.sourceRef && (
+            <button className="link-button" type="button" onClick={() => {
+              if ('sessionId' in artifact.sourceRef) onOpenSession(artifact.sourceRef.sessionId);
+            }}>Open session</button>
+          )}
           {state.reason && <span className="because">{state.reason}</span>}
         </div>
       )}
@@ -154,12 +161,7 @@ function ArtifactBody({ tab }: { tab: { artifact: WorkbenchArtifact | null; titl
       return <DiffArtifact content={artifact.content} />;
     case 'narrative':
       return (
-        <NarrativeArtifact
-          content={artifact.content}
-          kind={artifact.kind}
-          sourceRef={artifact.sourceRef}
-          {...(artifact.focus ? { focus: artifact.focus } : {})}
-        />
+        <NarrativeArtifact content={artifact.content} kind={artifact.kind} />
       );
     case 'unavailable':
       // An expected absence, said plainly. A fault would have thrown.

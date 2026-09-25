@@ -137,11 +137,8 @@ export function reachedWorker(role: ConversationRole): boolean {
 /**
  * A turn in a conversation about a project rather than about one session.
  *
- * Same shape as a session turn minus the two things that only make sense
- * inside a session: there is no `sessionId`, and there is no delivery, because
- * a project conversation is typed and read rather than spoken. When project
- * voice exists it brings its own record rather than having been anticipated
- * here.
+ * Same turn and delivery semantics as a session conversation, scoped to the
+ * long-lived project. Text and voice share this chronological record.
  *
  * Kept a separate type rather than a `ConversationEntry` with a nullable
  * session so that no query can confuse the two and no reader has to remember
@@ -189,11 +186,14 @@ export type DeliveryStatus =
  * An entry may have several deliveries — spoken, then re-read as text — and
  * none of them may rewrite the entry.
  */
-export interface ConversationDelivery {
+export type ConversationScope =
+  | { sessionId: string; projectId?: never }
+  | { projectId: string; sessionId?: never };
+
+export type ConversationDelivery = ConversationScope & {
   id: string;
   /** The entry this delivered. Never a copy of its text. */
   entryId: string;
-  sessionId: string;
   modality: DeliveryModality;
   status: DeliveryStatus;
   /**
@@ -217,6 +217,8 @@ export interface ConversationDelivery {
   /** Absent while the delivery is still in flight. */
   completedAt?: string;
 }
+
+export type DeliveryDetails = Omit<ConversationDelivery, 'id' | 'entryId' | 'sessionId' | 'projectId'>;
 
 /**
  * What may change after a delivery has started.

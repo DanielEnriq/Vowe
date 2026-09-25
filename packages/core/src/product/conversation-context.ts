@@ -2,6 +2,7 @@ import type { EventStore } from '../store/event-store.js';
 import type {
   ConversationEntry,
   ConversationDelivery,
+  ProjectConversationEntry,
 } from '../types/conversation.js';
 
 /**
@@ -50,6 +51,10 @@ export function recentConversation(
   limit = 20,
 ): ConversationTurn[] {
   const entries = store.getConversation(sessionId, limit);
+  return conversationTurns(store, entries);
+}
+
+export function conversationTurns(store: EventStore, entries: (ConversationEntry | ProjectConversationEntry)[]): ConversationTurn[] {
   return entries
     .filter(
       (entry) =>
@@ -104,10 +109,10 @@ function deliveryNote(turn: ConversationTurn): string {
   switch (delivery.status) {
     case 'interrupted':
       return `\n[Interrupted${heard(delivery.audioEndMs)}. The user did not hear all of this.${
-        delivery.deliveredText ? ` They heard: "${delivery.deliveredText}"` : ''
+        delivery.deliveredText ? ` Spoken transcript (may include unheard words): "${delivery.deliveredText}"` : ''
       }]`;
     case 'cancelled':
-      return '\n[Never delivered — the attempt to say this was cancelled.]';
+      return '\n[Playback was cancelled; do not assume the user heard the complete answer.]';
     case 'started':
       // Still reading `started` long after the fact means Vowe stopped while
       // saying it. Honest, and different from either of the two above.

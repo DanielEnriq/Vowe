@@ -74,6 +74,52 @@ describe('parsePatch', () => {
     expect(files[1]?.after).toEqual([]);
   });
 
+  it('numbers each side in its own file, from the hunk headers', () => {
+    const [file] = parsePatch(MODIFIED);
+    expect(file?.before.map((line) => [line.kind, line.line])).toEqual([
+      ['context', 1],
+      ['change', 2],
+      ['context', 3],
+      ['gap', undefined],
+      ['context', 20],
+    ]);
+    expect(file?.after.map((line) => [line.kind, line.line])).toEqual([
+      ['context', 1],
+      ['change', 2],
+      ['context', 3],
+      ['gap', undefined],
+      ['context', 20],
+      ['change', 21],
+    ]);
+  });
+
+  /*
+   * The whole reason the two sides are counted separately: an addition above
+   * pushes everything after it down on the new side and not on the old one.
+   */
+  it('lets the two sides drift apart after an insertion', () => {
+    const [file] = parsePatch(
+      [
+        'diff --git a/a.ts b/a.ts',
+        '@@ -10,3 +10,4 @@',
+        ' one',
+        '+inserted',
+        ' two',
+        ' three',
+      ].join('\n'),
+    );
+    expect(file?.before.map((line) => line.line)).toEqual([10, 11, 12]);
+    expect(file?.after.map((line) => line.line)).toEqual([10, 11, 12, 13]);
+  });
+
+  it('numbers a single-line hunk, whose header carries no count', () => {
+    const [file] = parsePatch(
+      ['diff --git a/a.ts b/a.ts', '@@ -7 +7 @@', '-was', '+is'].join('\n'),
+    );
+    expect(file?.before.map((line) => line.line)).toEqual([7]);
+    expect(file?.after.map((line) => line.line)).toEqual([7]);
+  });
+
   it('stops at the truncation marker', () => {
     const files = parsePatch(`${MODIFIED}\n… diff truncated at 24000 bytes …\n+not a line`);
     expect(files).toHaveLength(1);

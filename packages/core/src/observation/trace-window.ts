@@ -97,7 +97,16 @@ export interface WindowNote {
   windowId: string;
   windowIndex: number;
   summary: string;
+  /**
+   * Where the work stood, as the observer understood it after this portion.
+   *
+   * Carried into the next window so the observer continues rather than starts
+   * over. Absent on notes written before the observer had one, and on any note
+   * whose model answered in prose without calling the terminal tool.
+   */
+  understanding?: string;
   currentActivity?: string;
+  /** A durable update. Absent for ordinary progress, which is most portions. */
   notableChange?: string;
   /** Always includes the window's own trace range. */
   refs: ContextRef[];

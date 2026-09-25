@@ -66,10 +66,7 @@ export function LiveInvestigation({
       */}
       {writing && (
         <>
-          <div className="signature-line">
-            <VoweMark profile={presence} />
-            <span className="speaker">Vowe</span>
-          </div>
+          <span className="speaker">Vowe</span>
           <div className="live-answer">
             <MessageBody text={live.answer} />
           </div>
@@ -89,7 +86,7 @@ export function LiveInvestigation({
         >
           <VoweMark
             profile={presence}
-            state={phase === 'answering' ? 'answering' : 'thinking'}
+            state={phase === 'answering' ? 'speaking' : 'thinking'}
             activity={activity}
           />
           {phase === 'answering' && <span className="label">Answering…</span>}

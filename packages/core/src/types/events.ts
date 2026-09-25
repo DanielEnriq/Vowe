@@ -12,6 +12,19 @@
 export type NormalizedEventKind =
   | 'session_started'
   | 'agent_message'
+  /**
+   * The worker's own reasoning, as the provider recorded it.
+   *
+   * Supporting evidence, never a source of truth about what a session is
+   * doing. Most providers expose nothing here, and the ones that do expose it
+   * unevenly, so observation, interpretation and milestones all ignore this
+   * kind on purpose. It is carried so a person can read it and so an
+   * investigation can cite it — nothing further depends on it.
+   *
+   * Its absence says nothing. `capabilities.reasoning` is what distinguishes
+   * "did not think" from "we cannot see it".
+   */
+  | 'agent_reasoning'
   | 'user_instruction'
   | 'tool_started'
   | 'tool_finished'
@@ -42,6 +55,20 @@ export interface RawEventRef {
   source: string;
   byteOffset: number;
   line: number;
+  /**
+   * Which event this is among those produced by the same raw record.
+   *
+   * One record routinely becomes several events — a worker's message carrying
+   * its reasoning and three tool calls is one line of JSON — and the physical
+   * address is the same for all of them. Without this they are indistinguish-
+   * able, and the store's idempotency index treats them as one record read
+   * repeatedly: the first is kept and the rest are silently dropped.
+   *
+   * It is the index within that record's own output, so it is stable across
+   * re-reads, which is what keeps restart-replay idempotent. Absent means `0`,
+   * which is exactly right for the single-event records that are the majority.
+   */
+  ordinal?: number;
 }
 
 export interface NormalizedEvent {

@@ -2,6 +2,7 @@ import type { AdapterEvent, NormalizedEvent } from '../types/events.js';
 import type { AgentSession, SemanticState } from '../types/session.js';
 import type {
   ConversationDelivery,
+  DeliveryDetails,
   ConversationEntry,
   DeliveryProgress,
   ProjectConversationEntry,
@@ -117,7 +118,7 @@ export interface EventStore {
    */
   appendConversationEntry(
     entry: ConversationEntry,
-    delivery?: Omit<ConversationDelivery, 'id' | 'entryId' | 'sessionId'>,
+    delivery?: DeliveryDetails,
   ): Promise<ConversationEntry | null>;
   getConversation(sessionId: string, limit?: number): ConversationEntry[];
 
@@ -135,6 +136,7 @@ export interface EventStore {
    */
   appendProjectConversationEntry(
     entry: ProjectConversationEntry,
+    delivery?: DeliveryDetails,
   ): Promise<ProjectConversationEntry | null>;
   getProjectConversation(projectId: string, limit?: number): ProjectConversationEntry[];
 
@@ -176,6 +178,7 @@ export interface EventStore {
 
   /** Every delivery of one entry, oldest first. */
   getDeliveries(entryId: string): ConversationDelivery[];
+  getDeliveriesForProject(projectId: string): ConversationDelivery[];
   getDeliveriesForSession(
     sessionId: string,
     limit?: number,

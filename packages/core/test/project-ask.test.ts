@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 import { ContextNavigator } from '../src/context/context-navigator.js';
 import { formatRef, parseRef } from '../src/context/refs.js';
@@ -47,7 +49,7 @@ async function harness(
     createdAt: '2026-09-01T00:00:00.000Z',
   });
   await store.upsertSession(
-    testSession({ projectId: PROJECT, displayLabel: 'Unified Ask', branch: 'main' }),
+    testSession({ projectId: PROJECT, task: 'Unified Ask', displayLabel: 'Unified Ask', branch: 'main' }),
   );
   await store.upsertSession(
     testSession({
@@ -55,6 +57,7 @@ async function harness(
       providerSessionId: 'second',
       projectId: PROJECT,
       displayLabel: 'Voice integration',
+      task: 'Voice integration',
       lastActivityAt: '2026-02-11T10:00:00.000Z',
     }),
   );
@@ -71,7 +74,7 @@ async function harness(
     navigator: new ContextNavigator({ store }),
     investigator,
   });
-  return { runner, store };
+  return { runner, store, root: fixture.root };
 }
 
 describe('Project Ask — a durable thread of its own', () => {
@@ -141,6 +144,57 @@ describe('Project Ask — a durable thread of its own', () => {
     expect(store.getConversation(TEST_SESSION)).toEqual([]);
   });
 
+  it('opens a relative code reference in the project and records its absolute address', async () => {
+    const { runner, store, root } = await harness(async (_input, tools) => {
+      const opened = await tools.openContext({ ref: 'repo:observer.ts' });
+      expect(opened.notFound).toBeUndefined();
+      expect(opened.content).toContain('project observer evidence');
+      return { spokenAnswer: 'Found it.', fullAnswer: 'Found it.', refs: [opened.ref] };
+    });
+    await store.upsertProject({ ...store.getProject(PROJECT)!, repoRoot: root });
+    await writeFile(path.join(root, 'observer.ts'), '// project observer evidence\n');
+    const result = await runner.answerProject({ projectId: PROJECT, question: 'Show me the relevant code.' });
+    expect(result.refs).toEqual([{ kind: 'repo', path: path.join(root, 'observer.ts') }]);
+  });
+
+  it('uses live observer orientation and carries a follow-up with evidence', async () => {
+    const { store } = await harness(async () => ({ spokenAnswer: '', fullAnswer: '', refs: [] }));
+    const evidence = { kind: 'trace' as const, sessionId: TEST_SESSION, startSeq: 1, endSeq: 2 };
+    const live = testSession({ projectId: PROJECT, generatedTitle: 'Observer intelligence', semanticState: {
+      task: 'Join observer state', phase: 'editing', currentActivity: 'Joining observer state',
+      currentUnderstanding: 'Window observation now carries settled understanding.',
+      meaningfulUpdates: [{ id: 'u1', text: 'The observer publishes into SemanticState.', at: '2026-09-24T10:00:00Z', refs: [evidence] }],
+      recentProgress: [], lastMeaningfulUpdate: '2026-09-24T10:00:00Z', source: 'llm',
+      provenance: { eventIds: [], throughSeq: 2 }, updatedAt: '2026-09-24T10:00:00Z',
+    } });
+    const inputs: InvestigationInput[] = [];
+    const runner = new DelegatedQuestionRunner({
+      store, navigator: new ContextNavigator({ store }), sessionsFor: () => [live],
+      investigator: {
+        async observeWindow() { return { summary: '' }; },
+        async investigate(input) {
+          inputs.push(input);
+          return { spokenAnswer: 'Joined.', fullAnswer: 'The observer publishes into SemanticState.', refs: [evidence] };
+        },
+      },
+    });
+    await runner.answerProject({ projectId: PROJECT, question: 'What changed in the observer work?' });
+    await runner.answerProject({ projectId: PROJECT, question: 'Why?' });
+    const first = inputs[0] as Extract<InvestigationInput, { projectId: string }>;
+    expect(first.sessions[0]).toMatchObject({
+      label: 'Observer intelligence', provider: 'claude-code', active: true,
+      currentActivity: 'Joining observer state', attention: null,
+      currentUnderstanding: 'Window observation now carries settled understanding.',
+      latestDevelopment: 'The observer publishes into SemanticState.', evidenceRefs: [formatRef(evidence)],
+    });
+    expect(first.liveConversation).toEqual([]);
+    expect(inputs[1]!.liveConversation).toEqual([
+      { speaker: 'user', text: 'What changed in the observer work?' },
+      { speaker: 'vo', text: `The observer publishes into SemanticState.\nEvidence: ${formatRef(evidence)}` },
+    ]);
+    expect(store.getConversation(TEST_SESSION)).toEqual([]);
+  });
+
   it('answers with a failure it can persist when the investigation falls over', async () => {
     const { runner, store } = await harness(async () => {
       throw new Error('model unavailable');
@@ -153,6 +207,20 @@ describe('Project Ask — a durable thread of its own', () => {
 });
 
 describe('Project Ask — what a project search may see', () => {
+  it('can find carried understanding through the observations source', async () => {
+    const { store } = await harness(async () => ({ spokenAnswer: '', fullAnswer: '', refs: [] }));
+    await store.appendWindowNote({
+      ...note(TEST_SESSION, 1, 'Routine file reads.'),
+      understanding: 'The continuity cursor keeps settled understanding across windows.',
+    });
+    const hits = await new ContextNavigator({ store }).searchContext({
+      projectId: PROJECT, query: 'continuity cursor', sources: ['observations'],
+    });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.snippet).toContain('continuity cursor');
+    expect(hits[0]!.ref).toEqual({ kind: 'window', sessionId: TEST_SESSION, windowId: 'w-1' });
+  });
+
   it('reads interpretation across every session, and says which one it came from', async () => {
     const { store } = await harness(async () => ({
       spokenAnswer: 'a',

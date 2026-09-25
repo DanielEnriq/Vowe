@@ -33,7 +33,17 @@ export function workerUnavailableReason(session: AgentSession | null): string | 
   if (session.attachMode === 'external-live') {
     return 'This session runs in a terminal Vowe does not own, so it cannot be sent instructions.';
   }
+  // Checked before the capability below, because a session that has ended is
+  // the more specific and more useful thing to say about it.
   if (session.status === 'finished') return 'This session has finished.';
+  /*
+   * A session that cannot be resumed either is not temporarily out of reach —
+   * this agent offers Vowe no way in at all. Worth saying differently, because
+   * "right now" invites someone to wait for a door that is never going to open.
+   */
+  if (!session.capabilities.resume) {
+    return 'Vowe can watch this session but cannot send it anything.';
+  }
   return 'This session cannot receive instructions right now.';
 }
 

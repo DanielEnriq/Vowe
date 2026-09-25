@@ -5,7 +5,10 @@ import type { VoweRunRecorder } from '../execution/run-recorder.js';
 import {
   asModelContext,
   recentConversation,
+  conversationTurns,
 } from '../product/conversation-context.js';
+import type { ConversationScope } from '../types/conversation.js';
+import type { ProjectBrief } from '../product/project-brief.js';
 import type { EventStore } from '../store/event-store.js';
 import type {
   CommunicationDecision,
@@ -29,6 +32,7 @@ export interface LiveBridgeOptions {
   transport: LiveTransport;
   observation: ObservationService;
   delegated: DelegatedQuestionRunner;
+  projectBrief?: (projectId: string) => Promise<ProjectBrief>;
   /**
    * Where the conversation is persisted.
    *
@@ -71,12 +75,13 @@ export interface LiveTranscriptDelta {
   speaker: 'user' | 'vo';
   /** The fragment accumulated so far for the speaker's current turn. */
   text: string;
+  scope?: ConversationScope;
 }
 
 export type LiveBridgeEvents = {
   status: [LiveStatus];
   /** A delegated question and the answer Vowe gave. For the UI. */
-  answered: [{ sessionId: string; question: string; spokenAnswer: string; fullAnswer: string }];
+  answered: [ConversationScope & { question: string; spokenAnswer: string; fullAnswer: string }];
   /** In-flight speech. Only ever emitted while a sideband is attached. */
   transcript: [LiveTranscriptDelta];
 };
@@ -90,6 +95,7 @@ export interface LiveStatus {
   sidebandAttached: boolean;
   /** The session Vo is currently talking about. */
   sessionId: string | null;
+  projectId: string | null;
   liveSessionId: string | null;
   /**
    * True while Vowe's own audio is actually playing.
@@ -104,7 +110,10 @@ export interface LiveStatus {
 }
 
 interface Attachment {
-  sessionId: string;
+  scope: ConversationScope;
+  delegations: Set<string>;
+  utterance: number;
+  lastContext: string;
   liveSessionId: string;
   sideband: LiveSideband | null;
   detach: (() => void) | null;
@@ -134,6 +143,7 @@ interface Attachment {
  */
 export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
   private readonly transport: LiveTransport;
+  private readonly projectBrief: LiveBridgeOptions['projectBrief'];
   private readonly observation: ObservationService;
   private readonly delegated: DelegatedQuestionRunner;
   private readonly store: EventStore | null;
@@ -146,6 +156,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
   private readonly onError: (scope: string, error: unknown) => void;
 
   private attachment: Attachment | null = null;
+  private generation = 0;
   /** Spoken history, newest last. The only record of what was actually said. */
   private transcript: { speaker: 'user' | 'vo'; text: string }[] = [];
   private userFragment = '';
@@ -163,6 +174,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
   constructor(options: LiveBridgeOptions) {
     super();
     this.transport = options.transport;
+    this.projectBrief = options.projectBrief;
     this.observation = options.observation;
     this.delegated = options.delegated;
     this.store = options.store ?? null;
@@ -182,7 +194,8 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
       unavailableReason: this.transport.unavailableReason,
       connected: this.attachment !== null,
       sidebandAttached: this.attachment?.sideband != null,
-      sessionId: this.attachment?.sessionId ?? null,
+      sessionId: this.attachment?.scope.sessionId ?? null,
+      projectId: this.attachment?.scope.projectId ?? null,
       liveSessionId: this.attachment?.liveSessionId ?? null,
       playbackActive: this.attachment !== null && this.playing,
     };
@@ -201,7 +214,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
   }
 
   /**
-   * Start a conversation about one session.
+   * Start a conversation about one session or the long-lived project.
    *
    * The SDP offer comes from the renderer, which owns the microphone; the
    * answer goes back to it. Between those two the backend attaches its own
@@ -209,7 +222,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
    * never passes through this process.
    */
   async start(
-    sessionId: string,
+    target: string | ConversationScope,
     sdpOffer: string,
   ): Promise<{ sdpAnswer: string; status: LiveStatus }> {
     if (!this.transport.available) {
@@ -217,8 +230,14 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
         this.transport.unavailableReason ?? 'Voice is not available.',
       );
     }
-    await this.stop();
-
+    const scope: ConversationScope = typeof target === 'string' ? { sessionId: target } : target;
+    if (scope.projectId !== undefined && (!this.store?.getProject(scope.projectId) || !this.projectBrief)) {
+      throw new Error('This project is not available for voice.');
+    }
+    const stopping = this.stop();
+    const generation = this.generation;
+    await stopping;
+    if (generation !== this.generation) throw new Error('Voice connection cancelled.');
     const instructions = this.systemPrompt;
     const voice = this.voice();
     const created = await this.transport.createSession({
@@ -227,18 +246,26 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
       ...(voice ? { voice } : {}),
     });
 
+    if (generation !== this.generation) {
+      const abandoned = await this.transport.attachSideband(created.liveSessionId);
+      await abandoned?.close();
+      throw new Error('Voice connection cancelled.');
+    }
     // Nothing has been played on this call yet, whatever the last one did.
     this.playing = false;
 
     this.attachment = {
-      sessionId,
+      scope,
+      delegations: new Set(),
+      utterance: 0,
+      lastContext: '',
       liveSessionId: created.liveSessionId,
       sideband: null,
       detach: null,
       recorder: this.store
         ? new LiveConversationRecorder({
             store: this.store,
-            sessionId,
+            ...scope,
             liveSessionId: created.liveSessionId,
             provider: this.transport.name,
             instructions,
@@ -255,19 +282,37 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     this.userFragment = '';
     this.voFragment = '';
 
+    const attachment = this.attachment;
     try {
       const sideband = await this.transport.attachSideband(created.liveSessionId);
+      if (this.attachment !== attachment) {
+        await sideband?.close();
+        throw new Error('Voice connection cancelled.');
+      }
       if (sideband) {
         this.attachment.sideband = sideband;
         this.attachment.detach = sideband.on((event) => {
-          void this.handle(event).catch((error) => this.onError('live:event', error));
+          if (this.attachment === attachment) void this.handle(event).catch((error) => this.onError('live:event', error));
         });
-        await this.primeSession(sessionId, sideband);
+        if (scope.projectId !== undefined) {
+          await this.refreshProjectContext();
+          await sideband.appendThinking('This is the project conversation. Answer orientation questions from the latest project understanding. Delegate requests for evidence, files, changes, or careful reasoning to the existing Vowe investigator.');
+          await this.hydrate(scope, sideband);
+        } else {
+          await this.primeSession(scope.sessionId, sideband);
+        }
       }
     } catch (error) {
       // A conversation the backend cannot observe is degraded, not broken: the
       // user can still talk to Vo, they just will not get proactive updates.
       this.onError('live:sideband', error);
+      if (this.attachment !== attachment) throw error;
+      if (scope.projectId !== undefined) { await this.stop(); throw error; }
+    }
+    if (this.attachment !== attachment) throw new Error('Voice connection cancelled.');
+    if (scope.projectId !== undefined && !attachment.sideband) {
+      await this.stop();
+      throw new Error('Vowe could not connect to the project conversation. Please try again.');
     }
 
     this.emit('status', this.status);
@@ -275,16 +320,18 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
   }
 
   async stop(): Promise<void> {
+    this.generation++;
     const attachment = this.attachment;
     this.attachment = null;
     this.queued = [];
+    if (this.playing) attachment?.recorder?.playback({ kind: 'lost', at: new Date().toISOString() });
     this.playing = false;
     if (!attachment) return;
     attachment.detach?.();
     // Whatever was half-said is still what was said. Closing the call is not a
     // reason to drop the turn that was in progress when it closed.
     try {
-      await attachment.recorder?.flush();
+      await attachment.recorder?.finish();
     } catch (error) {
       this.onError('live:flush-turn', error);
     }
@@ -324,6 +371,10 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
    * *developments*, not about every window.
    */
   private async deliverQuiet(note: WindowNote): Promise<void> {
+    if (this.attachment?.scope.projectId !== undefined) {
+      if (this.store?.getSession(note.sessionId)?.projectId === this.attachment.scope.projectId) await this.refreshProjectContext();
+      return;
+    }
     const sideband = this.sidebandFor(note.sessionId);
     if (!sideband) return;
     const text = [note.summary, note.currentActivity && `Now: ${note.currentActivity}`]
@@ -373,8 +424,13 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
   private async handle(event: LiveServerEvent): Promise<void> {
     switch (event.type) {
       case 'transcript.user':
+        if (!this.userFragment) {
+          if (this.attachment) this.attachment.utterance++;
+          if (this.voFragment.trim()) this.pushTurn('vo', this.voFragment);
+          this.voFragment = '';
+        }
         this.userFragment += event.delta;
-        this.emit('transcript', { speaker: 'user', text: this.userFragment });
+        this.emit('transcript', { speaker: 'user', text: this.userFragment, ...(this.attachment ? { scope: this.attachment.scope } : {}) });
         this.attachment?.recorder?.userSaid(
           event.delta,
           event.startMs,
@@ -392,10 +448,13 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
           );
         }
         this.voFragment += event.delta;
-        this.emit('transcript', { speaker: 'vo', text: this.voFragment });
+        this.emit('transcript', { speaker: 'vo', text: this.voFragment, ...(this.attachment ? { scope: this.attachment.scope } : {}) });
         this.attachment?.recorder?.voSaid(event.delta, event.startMs, event.endMs);
         return;
-      case 'delegation.created':
+      case 'delegation.created': {
+        const attachment = this.attachment;
+        if (!attachment || attachment.delegations.has(event.delegationId)) return;
+        attachment.delegations.add(event.delegationId);
         if (this.userFragment.trim()) {
           this.pushTurn('user', this.userFragment);
           this.userFragment = '';
@@ -404,12 +463,13 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
           this.pushTurn('vo', this.voFragment);
           this.voFragment = '';
         }
-        // The question has to be a persisted turn before the investigation
-        // writes its answer, or the conversation records the answer to a
-        // question nobody asked.
-        await this.attachment?.recorder?.flush();
-        await this.investigate(event.delegationId);
+        const question = this.latestUserTurn();
+        const utterance = attachment.utterance;
+        await attachment.recorder?.flush();
+        if (this.attachment !== attachment) return;
+        await this.investigate(event.delegationId, attachment, question, utterance);
         return;
+      }
       case 'session.closed':
         await this.stop();
         return;
@@ -429,11 +489,9 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
    * question. So the question is reconstructed from the transcript we have been
    * accumulating all along, which is why that buffer exists.
    */
-  private async investigate(delegationId: string): Promise<void> {
-    const attachment = this.attachment;
+  private async investigate(delegationId: string, attachment: Attachment, question: string | null, utterance: number): Promise<void> {
     if (!attachment?.sideband) return;
 
-    const question = this.latestUserTurn();
     if (!question) {
       await attachment.sideband.appendThinking(
         'Vowe received a request for help but could not tell what was asked. Ask the user to repeat it.',
@@ -448,8 +506,11 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     // question a second time. With no recorder there is no such turn, and it
     // writes one as it always did.
     const askedEntryId = recorder?.lastUserEntryId ?? null;
-    const result = await this.delegated.answer({
-      sessionId: attachment.sessionId,
+    const result = attachment.scope.projectId !== undefined
+      ? await this.delegated.answerProject({ projectId: attachment.scope.projectId, question,
+          ...(askedEntryId ? { questionEntryId: askedEntryId } : {}) })
+      : await this.delegated.answer({
+      sessionId: attachment.scope.sessionId,
       question,
       // With a recorder, this call's turns are already durable history — along
       // with which of Vowe's own answers were cut off — so the investigator
@@ -463,7 +524,13 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     // The grounded answer is now a conversation entry. What Vo is about to say
     // is that entry being delivered, not a second answer — so the recorder is
     // told, from the execution path, before the words come back.
-    recorder?.expectDeliveryOf(result.entry.id);
+    // An ended/replaced call or a newer utterance must not receive stale audio.
+    if (this.attachment !== attachment || attachment.utterance !== utterance) return;
+    await recorder?.expectDeliveryOf(result.entry.id);
+    if (this.attachment !== attachment || attachment.utterance !== utterance) {
+      await recorder?.finish();
+      return;
+    }
 
     // Only the short form is spoken. The grounded account is already persisted
     // and rendered in Vowe's own window; reading it aloud would make the
@@ -474,7 +541,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     );
 
     this.emit('answered', {
-      sessionId: attachment.sessionId,
+      ...attachment.scope,
       question,
       spokenAnswer: result.spokenAnswer,
       fullAnswer: result.fullAnswer,
@@ -510,7 +577,7 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
       );
     }
     await sideband.appendThinking(toLiveText(parts.join(' ')));
-    await this.hydrate(sessionId, sideband);
+    await this.hydrate({ sessionId }, sideband);
   }
 
   /**
@@ -527,22 +594,21 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
    * database twice.
    */
   private async hydrate(
-    sessionId: string,
+    scope: ConversationScope,
     sideband: LiveSideband,
   ): Promise<void> {
     if (!this.store) return;
-    const turns = asModelContext(
-      recentConversation(this.store, sessionId, this.hydrateTurns),
-    );
+    const turns = asModelContext((scope.projectId !== undefined
+      ? conversationTurns(this.store, this.store.getProjectConversation(scope.projectId, this.hydrateTurns))
+      : recentConversation(this.store, scope.sessionId, this.hydrateTurns))
+      .map((turn) => ({ ...turn, text: turn.text.slice(0, 1200),
+        ...(turn.delivery ? { delivery: { ...turn.delivery, ...(turn.delivery.deliveredText
+          ? { deliveredText: turn.delivery.deliveredText.slice(0, 300) } : {}) } } : {}) })));
     if (!turns.length) return;
-    const transcript = turns
-      .map((turn) => `${turn.speaker === 'user' ? 'The user' : 'You'}: ${turn.text}`)
-      .join('\n');
-    await sideband.appendThinking(
-      toLiveText(
-        `Earlier in this conversation, before this call:\n${transcript}`,
-      ),
-    );
+    await sideband.appendThinking('Earlier in this same conversation, before this call (context only):');
+    for (const turn of turns) {
+      await sideband.appendThinking(toLiveText(`${turn.speaker === 'user' ? 'The user' : 'You'}: ${turn.text}`));
+    }
   }
 
   /**
@@ -562,8 +628,30 @@ export class LiveBridge extends EventEmitter<LiveBridgeEvents> {
     this.emit('status', this.status);
   }
 
+  /** A typed exchange during a call is part of the same conversation. */
+  async projectAsked(projectId: string, question: string, answer: string): Promise<void> {
+    const attachment = this.attachment;
+    if (attachment?.scope.projectId !== projectId || !attachment.sideband) return;
+    await attachment.sideband.appendThinking(toLiveText(`The user just asked in writing: ${question}`));
+    if (this.attachment !== attachment) return;
+    await attachment.sideband.appendThinking(toLiveText(`Vowe answered in writing (not yet spoken): ${answer}`));
+  }
+
+  /** Refresh the existing projection; no model, timer, or background reasoning. */
+  async refreshProjectContext(): Promise<void> {
+    const attachment = this.attachment;
+    const projectId = attachment?.scope.projectId;
+    if (!attachment?.sideband || projectId === undefined || !this.projectBrief) return;
+    const brief = await this.projectBrief(projectId);
+    if (this.attachment !== attachment) return;
+    const context = projectVoiceContext(brief);
+    if (context === attachment.lastContext) return;
+    attachment.lastContext = context;
+    for (const block of context.split('\n')) await attachment.sideband.appendThinking(toLiveText(block));
+  }
+
   private sidebandFor(sessionId: string): LiveSideband | null {
-    if (!this.attachment || this.attachment.sessionId !== sessionId) return null;
+    if (!this.attachment || this.attachment.scope.sessionId !== sessionId) return null;
     return this.attachment.sideband;
   }
 
@@ -602,4 +690,17 @@ export function toLiveText(text: string, maxTokens = LIVE_APPEND_TOKEN_LIMIT): s
   const maxCharacters = maxTokens * 4 - 64;
   if (collapsed.length <= maxCharacters) return collapsed;
   return `${collapsed.slice(0, maxCharacters)}…`;
+}
+
+/** Existing Home understanding, with no raw trace or repository contents. */
+export function projectVoiceContext(brief: ProjectBrief): string {
+  const running = brief.active.filter((session) => session.status === 'working' || session.status === 'starting');
+  return [
+    `Current project understanding (replaces earlier orientation): ${brief.headline} ${running.length} workers running; ${brief.needsAttention.length} need attention. ${brief.detailLines.join(' ')}`,
+    ...(brief.latestSignal ? [`Latest change: ${brief.latestSignal.text}`] : []),
+    ...brief.active.slice(0, 12).map((session) =>
+      `${session.title} (${session.provider}): ${session.status}. ${session.currentUnderstanding ?? session.currentActivity ?? 'No interpreted update yet.'}${session.latestDevelopment ? ` Changed: ${session.latestDevelopment.text}` : ''}${session.attention ? ` Needs you: ${session.attention.summary}` : ''}`),
+    ...brief.recent.slice(0, 3).map((session) =>
+      `Recent work: ${session.title}, ${session.status}. ${session.currentUnderstanding ?? session.currentActivity ?? 'No interpreted update yet.'}`),
+  ].join('\n');
 }
