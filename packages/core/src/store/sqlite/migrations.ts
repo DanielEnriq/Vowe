@@ -382,6 +382,25 @@ ALTER TABLE semantic_states ADD COLUMN meaningful_updates_json TEXT;  -- NULL =>
 ALTER TABLE window_notes    ADD COLUMN understanding           TEXT;  -- NULL => key ABSENT
 `;
 
+// Same delivery record, attached to the existing project conversation table.
+const PROJECT_DELIVERY = `
+CREATE TABLE project_conversation_deliveries (
+  id TEXT PRIMARY KEY,
+  entry_id TEXT NOT NULL REFERENCES project_conversation_entries(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL,
+  ord INTEGER NOT NULL,
+  modality TEXT NOT NULL,
+  status TEXT NOT NULL,
+  delivered_text TEXT,
+  audio_end_ms INTEGER,
+  interrupted_by_entry_id TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT
+) STRICT;
+CREATE INDEX project_deliveries_entry ON project_conversation_deliveries(entry_id, ord);
+CREATE UNIQUE INDEX project_deliveries_ord ON project_conversation_deliveries(project_id, ord);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -423,6 +442,7 @@ export const MIGRATIONS: readonly Migration[] = [
     name: '008_observer_understanding',
     up: (db) => db.exec(OBSERVER_UNDERSTANDING),
   },
+  { version: 9, name: '009_project_delivery', up: (db) => db.exec(PROJECT_DELIVERY) },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

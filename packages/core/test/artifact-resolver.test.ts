@@ -172,7 +172,7 @@ describe('ArtifactResolver — a ref, as something a person can look at', () => 
 
     const clean = await resolver.resolve({ kind: 'diff', sessionId: TEST_SESSION });
     if (clean.content.type !== 'narrative') throw new Error('expected narrative');
-    expect(clean.content.text).toBe('The working tree is clean.');
+    expect(clean.content.text).toContain('No tracked changes in this diff scope.');
 
     await store.upsertSession(testSession({ id: 'claude-code:nowhere', cwd: null }));
     const homeless = await resolver.resolve({
@@ -180,6 +180,15 @@ describe('ArtifactResolver — a ref, as something a person can look at', () => 
       sessionId: 'claude-code:nowhere',
     });
     expect(homeless.content.type).toBe('unavailable');
+  });
+
+  it('does not call an untracked file clean or committed when its diff is empty', async () => {
+    const { resolver, repoRoot } = await harness();
+    await writeFile(path.join(repoRoot, 'new-observer.ts'), 'export const live = true;\n');
+    const artifact = await resolver.resolve({ kind: 'diff', sessionId: TEST_SESSION, path: 'new-observer.ts' });
+    if (artifact.content.type !== 'narrative') throw new Error('expected narrative');
+    expect(artifact.content.text).toContain('Untracked files are not included');
+    expect(artifact.content.text).toContain('does not establish');
   });
 
   it('resolves an event to normalized material, not the provider’s own record', async () => {

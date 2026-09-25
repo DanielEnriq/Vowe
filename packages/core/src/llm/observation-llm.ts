@@ -171,6 +171,12 @@ export interface ProjectSessionLine {
   status: string;
   currentActivity: string | null;
   branch: string | null;
+  provider: string;
+  currentUnderstanding: string | null;
+  attention: string | null;
+  latestDevelopment: string | null;
+  evidenceRefs: string[];
+  active: boolean;
 }
 
 interface InvestigationBase {

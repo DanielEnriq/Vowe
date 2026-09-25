@@ -82,6 +82,7 @@ export interface PresenceSignals {
 export function resolvePresenceState(signals: PresenceSignals): PresenceState {
   if (!signals.voweAvailable) return 'unavailable';
   if (signals.liveConnected && signals.livePlaybackActive) return 'speaking';
+  if (signals.liveConnected && signals.investigating) return 'thinking';
   if (signals.liveConnected && !signals.liveMuted) return 'listening';
   if (signals.liveJoining) return 'joining';
   if (signals.needsAttention) return 'attention';

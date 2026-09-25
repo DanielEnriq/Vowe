@@ -59,7 +59,12 @@ describe('Presence state — voice', () => {
     expect(resolvePresenceState(quiet({ liveJoining: true }))).toBe('joining');
   });
 
-  it('is listening on a connected call', () => {
+  it('shows a delegated investigation while the microphone remains live', () => {
+    expect(resolvePresenceState(quiet({ liveConnected: true, investigating: true }))).toBe('thinking');
+    expect(resolvePresenceState(quiet({ liveConnected: true, investigating: true, livePlaybackActive: true }))).toBe('speaking');
+  });
+
+  it('is listening on a connected call' , () => {
     expect(resolvePresenceState(quiet({ liveConnected: true }))).toBe('listening');
   });
 

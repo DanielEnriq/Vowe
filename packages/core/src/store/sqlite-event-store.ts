@@ -6,6 +6,7 @@ import type { AdapterEvent, NormalizedEvent } from '../types/events.js';
 import type { AgentSession, SemanticState } from '../types/session.js';
 import type {
   ConversationDelivery,
+  DeliveryDetails,
   ConversationEntry,
   ProjectConversationEntry,
   DeliveryProgress,
@@ -369,7 +370,7 @@ export class SqliteEventStore implements EventStore {
    */
   async appendConversationEntry(
     entry: ConversationEntry,
-    delivery?: Omit<ConversationDelivery, 'id' | 'entryId' | 'sessionId'>,
+    delivery?: DeliveryDetails,
   ): Promise<ConversationEntry | null> {
     const stored = this.transaction(() => {
       const inserted = this.get(
@@ -469,6 +470,7 @@ export class SqliteEventStore implements EventStore {
 
   async appendProjectConversationEntry(
     entry: ProjectConversationEntry,
+    delivery?: DeliveryDetails,
   ): Promise<ProjectConversationEntry | null> {
     const stored = this.transaction(() => {
       const inserted = this.get(
@@ -501,7 +503,9 @@ export class SqliteEventStore implements EventStore {
           originId: rows.text(entry.origin?.id),
         },
       );
-      return inserted ? rows.toProjectConversationEntry(inserted) : null;
+      if (!inserted) return null;
+      if (delivery) this.insertDelivery({ ...delivery, id: randomUUID(), entryId: entry.id, projectId: entry.projectId });
+      return rows.toProjectConversationEntry(inserted);
     });
 
     if (!stored) return null;
@@ -548,6 +552,7 @@ export class SqliteEventStore implements EventStore {
    */
   async recordDelivery(delivery: ConversationDelivery): Promise<void> {
     this.insertDelivery(delivery);
+    if (delivery.projectId) this.notifyProjectConversation({ projectId: delivery.projectId });
   }
 
   /**
@@ -562,8 +567,10 @@ export class SqliteEventStore implements EventStore {
     deliveryId: string,
     progress: DeliveryProgress,
   ): Promise<ConversationDelivery | null> {
+    const table = this.get('SELECT id FROM project_conversation_deliveries WHERE id = ?', deliveryId)
+      ? 'project_conversation_deliveries' : 'conversation_deliveries';
     const row = this.get(
-      `UPDATE conversation_deliveries SET
+      `UPDATE ${table} SET
          status                  = COALESCE(:status, status),
          delivered_text          = COALESCE(:deliveredText, delivered_text),
          audio_end_ms            = COALESCE(:audioEndMs, audio_end_ms),
@@ -580,15 +587,15 @@ export class SqliteEventStore implements EventStore {
         completedAt: rows.text(progress.completedAt),
       },
     );
-    return row ? rows.toDelivery(row) : null;
+    const delivery = row ? rows.toDelivery(row) : null;
+    if (delivery?.projectId) this.notifyProjectConversation({ projectId: delivery.projectId });
+    return delivery;
   }
 
   /** Every delivery of one entry, oldest first. */
   getDeliveries(entryId: string): ConversationDelivery[] {
-    return this.all(
-      'SELECT * FROM conversation_deliveries WHERE entry_id = ? ORDER BY ord',
-      entryId,
-    ).map(rows.toDelivery);
+    return ['conversation_deliveries', 'project_conversation_deliveries'].flatMap((table) =>
+      this.all(`SELECT * FROM ${table} WHERE entry_id = ? ORDER BY ord`, entryId).map(rows.toDelivery));
   }
 
   getDeliveriesForSession(
@@ -603,20 +610,26 @@ export class SqliteEventStore implements EventStore {
     ).map(rows.toDelivery);
   }
 
+  getDeliveriesForProject(projectId: string): ConversationDelivery[] {
+    return this.all('SELECT * FROM project_conversation_deliveries WHERE project_id = ? ORDER BY ord', projectId).map(rows.toDelivery);
+  }
+
   private insertDelivery(delivery: ConversationDelivery): void {
+    const table = delivery.projectId ? 'project_conversation_deliveries' : 'conversation_deliveries';
+    const scope = delivery.projectId ? 'project_id' : 'session_id';
     this.run(
-      `INSERT INTO conversation_deliveries (
-         id, entry_id, session_id, ord, modality, status, delivered_text,
+      `INSERT INTO ${table} (
+         id, entry_id, ${scope}, ord, modality, status, delivered_text,
          audio_end_ms, interrupted_by_entry_id, started_at, completed_at)
        SELECT :id, :entryId, :sessionId,
-              COALESCE((SELECT MAX(ord) FROM conversation_deliveries
-                         WHERE session_id = :sessionId), 0) + 1,
+              COALESCE((SELECT MAX(ord) FROM ${table}
+                         WHERE ${scope} = :sessionId), 0) + 1,
               :modality, :status, :deliveredText, :audioEndMs, :interruptedBy,
               :startedAt, :completedAt`,
       {
         id: delivery.id,
         entryId: delivery.entryId,
-        sessionId: delivery.sessionId,
+        sessionId: delivery.projectId ?? delivery.sessionId,
         modality: delivery.modality,
         status: delivery.status,
         deliveredText: rows.text(delivery.deliveredText),

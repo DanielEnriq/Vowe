@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import type { ContextNavigator, OpenResult } from '../context/context-navigator.js';
+import { renderDiff, type ContextNavigator, type OpenResult } from '../context/context-navigator.js';
 import { formatRef, type ContextRef } from '../context/refs.js';
 import type { ProjectKnowledgeService } from '../knowledge/project-knowledge-service.js';
 import { eventSubtitle, eventTitle } from '../product/evidence.js';
@@ -155,7 +155,7 @@ export class ArtifactResolver {
     if (!diff.stat && !diff.patch) {
       return this.artifact(ref, 'diff', title, undefined, {
         type: 'narrative',
-        text: 'The working tree is clean.',
+        text: renderDiff(diff),
         truncated: false,
       });
     }

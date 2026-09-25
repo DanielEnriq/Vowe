@@ -1,5 +1,6 @@
 import { betaZodTool } from '@anthropic-ai/sdk/helpers/beta/zod';
 import * as z from 'zod/v4';
+import { renderDiff } from '@vowe/core';
 
 import type {
   ObserverToolset,
@@ -96,7 +97,7 @@ export const RECORD_ANSWER = 'record_answer';
  * evidence it stands on. The written answer is generated afterwards, with the
  * tools taken away, as text that can be streamed as it is composed.
  */
-export function recordAnswerTool(capture: AnswerCapture) {
+export function recordAnswerTool(capture: AnswerCapture, writingInstruction = 'Now write the full answer.') {
   return betaZodTool({
     name: RECORD_ANSWER,
     description:
@@ -112,7 +113,7 @@ export function recordAnswerTool(capture: AnswerCapture) {
     run: async (input) => {
       capture.spokenAnswer = input.spokenAnswer;
       capture.refs = input.refs ?? [];
-      return 'Recorded. Now write the full answer.';
+      return `Recorded. ${writingInstruction}`;
     },
   });
 }
@@ -164,14 +165,14 @@ export function readTools(read: ReadOnlyToolset) {
     betaZodTool({
       name: 'search_context',
       description:
-        'Search the observed session and, optionally, the repository. Returns references and short snippets — open what looks relevant.',
+        'Search Vowe knowledge and the repository. Project scope uses repo and observations across sessions; session scope can also search its windows, trace, and transcript. Returns references and short snippets — open what looks relevant.',
       inputSchema: z.object({
         query: z.string().describe('Words to look for.'),
         sources: z
-          .array(z.enum(['windows', 'trace', 'transcript', 'repo']))
+          .array(z.enum(['windows', 'trace', 'transcript', 'repo', 'observations']))
           .optional()
           .describe(
-            'windows = earlier interpretations, trace = the raw event stream, transcript = messages between the developer and the worker, repo = the working tree. Defaults to windows, trace and transcript.',
+            'At project scope use observations (understanding across sessions) and repo (working tree). At session scope windows = earlier interpretations, trace = raw events, transcript = developer/worker messages. Omit sources to use the correct defaults for the current scope.',
           ),
         limit: z.number().int().min(1).max(40).optional(),
       }),
@@ -210,7 +211,7 @@ export function readTools(read: ReadOnlyToolset) {
         const related = result.related.length
           ? `\n\nAlso openable: ${result.related.map(refString).join(', ')}`
           : '';
-        return `${result.content}${related}`;
+        return `[${result.refId}]\n${result.content}${related}`;
       },
     }),
 
@@ -230,9 +231,7 @@ export function readTools(read: ReadOnlyToolset) {
           ...(input.path ? { path: input.path } : {}),
           ...(input.around ? { around: input.around } : {}),
         });
-        if (diff.unavailable) return `No diff available: ${diff.unavailable}`;
-        if (!diff.stat && !diff.patch) return 'The working tree is clean.';
-        return [diff.stat, '', diff.patch].join('\n').trim();
+        return renderDiff(diff);
       },
     }),
   ];

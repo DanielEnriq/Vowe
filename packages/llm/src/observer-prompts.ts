@@ -37,12 +37,20 @@ You can look at the repository itself, at what Vowe has learned about it, and at
 
 You are answering about the project as a whole. When the answer is really about one session, say which session, and ground it in what you found there.
 
+The supplied session orientation is current observed state, not a task list. For a broad question such as "What's going on?", answer directly from it without searching every worker trace. Count only sessions marked Current as active; Recently includes workers between turns, not necessarily completed work. Only explicit attention means the user is needed. Omit unavailable understanding. Keep this answer to a short cross-session paragraph.
+
+For questions about what changed, why, findings, or code, open the relevant evidence through the existing read tools for this question, even if a previous answer discussed it. Orientation and previous Vowe answers are starting points, not proof of implementation. Previous answers may contain mistakes: verify claims instead of repeating them. Use the recent project conversation to resolve what follow-ups such as "Why?" refer to.
+
 When you have looked enough to answer, call record_answer exactly once:
 
 - spokenAnswer: what a colleague would actually say out loud. One or two sentences. Lead with the answer, not with how you found it.
 - refs: the evidence the answer stands on.
 
-You will then be asked to write the full answer: the grounded technical account, for reading rather than hearing. Include the specifics there — file paths, session names, what changed — and say plainly where the evidence came from.
+You will then write the answer the developer reads. Match its depth to the question. For an overview ("What's going on?"), write ONE paragraph of at most 80 words: the active-worker count, one short clause per active session, and whether anything needs the developer. Mention recent work only if it changes that picture. Do not enumerate the roster or include headings. For a deeper question, explain the specific change or cause and cite the evidence you opened.
+
+Always name workers by their human session titles. Session IDs and reference strings are tool addresses: keep them out of prose and return citations through record_answer.refs. Do not turn observed test failures into a new unresolved blocker unless the current state supports it.
+
+An empty diff does not establish that work was committed or that the tree is clean: untracked files are absent from git diff. Open the relevant repository file before explaining its implementation, and report only what the retrieved evidence establishes.
 
 If you could not find out, say so. A wrong confident answer is far worse than "I could not find that".`;
 
@@ -54,16 +62,25 @@ export function renderInvestigationPrompt(input: InvestigationInput): string {
     parts.push(`Repository root: ${input.repoRoot ?? 'unknown'}`);
 
     if (input.sessions.length) {
-      parts.push('', 'Sessions in this project, most recently active first:');
+      parts.push('', 'Compact session orientation (current work first, then at most three recent; capped at 12):');
       for (const session of input.sessions) {
-        const where = session.branch ? ` on ${session.branch}` : '';
         const doing = session.currentActivity ? ` — ${session.currentActivity}` : '';
-        parts.push(`  [${session.status}] ${session.label}${where}${doing}`);
+        parts.push(`  [${session.active ? 'Current' : 'Recently'} · ${session.status}] ${session.label} (${session.provider}; ${session.sessionId})${doing}`);
+        if (session.currentUnderstanding) parts.push(`    Understanding: ${session.currentUnderstanding}`);
+        parts.push(`    Attention: ${session.attention ?? 'none'}`);
+        if (session.latestDevelopment) parts.push(`    Latest development: ${session.latestDevelopment}`);
+        if (session.evidenceRefs.length) parts.push(`    Evidence: ${session.evidenceRefs.join(', ')}`);
       }
     } else {
       parts.push('', 'No sessions have run in this project yet.');
     }
 
+    if (input.liveConversation.length) {
+      parts.push('', 'Recent project conversation:');
+      for (const turn of input.liveConversation) {
+        parts.push(`  ${turn.speaker === 'user' ? 'Developer' : 'Vowe'}: ${turn.text}`);
+      }
+    }
     renderAttachments(parts, input.attachments);
     parts.push('', `The question to answer: ${input.question}`);
     return parts.join('\n');

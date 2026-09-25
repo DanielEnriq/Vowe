@@ -297,7 +297,7 @@ export function toDelivery(row: Row): ConversationDelivery {
   const delivery: ConversationDelivery = {
     id: str(row['id']),
     entryId: str(row['entry_id']),
-    sessionId: str(row['session_id']),
+    ...('project_id' in row ? { projectId: str(row['project_id']) } : { sessionId: str(row['session_id']) }),
     modality: str(row['modality']) as DeliveryModality,
     status: str(row['status']) as DeliveryStatus,
     startedAt: str(row['started_at']),

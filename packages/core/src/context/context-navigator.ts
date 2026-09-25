@@ -42,6 +42,8 @@ export interface SearchHit {
 export interface OpenContextInput {
   ref: string | ContextRef;
   depth?: OpenDepth;
+  /** Resolve repository-relative references in the question's working tree. */
+  scope?: { projectId: string } | { sessionId: string };
 }
 
 /**
@@ -132,8 +134,18 @@ const MAX_PROJECT_SESSIONS = 12;
 const MAX_SNIPPET_BYTES = 600;
 const MAX_OPEN_BYTES = 12_000;
 
+/**
+ * What counts as transcript when an investigation reads a session.
+ *
+ * Reasoning is here and deliberately nowhere else: an investigation is a
+ * question someone asked, so the worker's own thinking is fair evidence to
+ * quote back. The observer's copy of this set leaves it out, because a
+ * continuous reading of a session must not come to depend on something most
+ * providers never record.
+ */
 const TRANSCRIPT_KINDS = new Set<NormalizedEvent['kind']>([
   'agent_message',
+  'agent_reasoning',
   'user_instruction',
   'session_started',
 ]);
@@ -302,7 +314,7 @@ export class ContextNavigator {
     const state = session?.semanticState;
     if (!state) return null;
 
-    const haystack = [state.currentActivity, state.phase, ...state.recentProgress]
+    const haystack = [state.currentUnderstanding, state.currentActivity, state.phase, ...state.recentProgress]
       .filter(Boolean)
       .join('\n');
     if (scoreOf(haystack, terms) <= 0) return null;
@@ -338,7 +350,7 @@ export class ContextNavigator {
     const notes = this.store.getWindowNotes(sessionId);
     const scored: { score: number; note: WindowNote }[] = [];
     for (const note of notes) {
-      const haystack = [note.summary, note.currentActivity, note.notableChange]
+      const haystack = [note.understanding, note.summary, note.currentActivity, note.notableChange]
         .filter(Boolean)
         .join(' ');
       const score = scoreOf(haystack, terms);
@@ -358,7 +370,7 @@ export class ContextNavigator {
         source: 'windows' as const,
         label: `Window ${note.windowIndex}`,
         snippet: this.snippet(
-          [note.summary, note.currentActivity, note.notableChange]
+          [note.understanding, note.summary, note.currentActivity, note.notableChange]
             .filter(Boolean)
             .join('\n'),
         ),
@@ -489,7 +501,7 @@ export class ContextNavigator {
   // ------------------------------------------------------------ open_context
 
   async openContext(input: OpenContextInput): Promise<OpenResult> {
-    const ref = parseRef(input.ref);
+    let ref = parseRef(input.ref);
     if (!ref) {
       return {
         ref: { kind: 'repo', path: String(input.ref) },
@@ -500,6 +512,11 @@ export class ContextNavigator {
         truncated: false,
         notFound: `Not a reference this system recognizes: ${String(input.ref)}`,
       };
+    }
+    if (ref.kind === 'repo' && !path.isAbsolute(ref.path) && input.scope) {
+      const cwd = this.cwdFor(input.scope);
+      if (!cwd) return this.missing(ref, 'No working directory is available for this reference.');
+      ref = { ...ref, path: path.resolve(cwd, ref.path) };
     }
     const depth = input.depth ?? 'full';
 
@@ -973,6 +990,6 @@ function indent(text: string): string {
 
 export function renderDiff(diff: DiffResult): string {
   if (diff.unavailable) return `No diff available: ${diff.unavailable}`;
-  if (!diff.stat && !diff.patch) return 'The working tree is clean.';
+  if (!diff.stat && !diff.patch) return 'No tracked changes in this diff scope. Untracked files are not included; this does not establish that the working tree is clean or that changes were committed.';
   return [diff.stat, '', diff.patch].join('\n').trim();
 }
