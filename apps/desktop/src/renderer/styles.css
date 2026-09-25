@@ -4263,7 +4263,19 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
 .project-home .work-list { margin: 0; }
 .project-home .project-changes h2 { font-family: var(--mono); font-weight: 500; text-transform: uppercase; }
 .project-home .change-text { -webkit-line-clamp: 2; }
-.project-orientation .presence-project { width: 88px; height: 88px; flex: 0 0 88px; }
+/* The orb reads as the room's subject, so it runs well past the 88px box it
+ * used to sit in. The negative block margin lets most of the extra size bleed
+ * into the room's top padding and the measure's gap rather than pushing the
+ * headline and everything under it down: the row costs 96px, not 144px. The
+ * inline margins hang it into the room's left gutter and hand only part of that
+ * distance back on its right, so the headline sits closer to the orb than the
+ * left bleed alone would leave it. */
+.project-orientation .presence-project { width: 144px; height: 144px; flex: 0 0 144px;
+  margin-block: -24px; margin-inline: -20px 6px; }
+@container (max-width: 540px) {
+  .project-orientation .presence-project { width: 120px; height: 120px; flex: 0 0 120px;
+    margin-block: -16px; margin-inline: -12px 4px; }
+}
 
 /* Voice shares the project's presence, reading measure, and theme tokens. */
 .project-talk { display: inline-flex; gap: 6px; align-items: center; flex: 0 0 auto; align-self: end;
