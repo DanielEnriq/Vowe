@@ -25,18 +25,18 @@ const api: VoweApi = {
   getSession: (sessionId) => ipcRenderer.invoke(IPC.getSession, sessionId),
   getEvents: (sessionId, limit) =>
     ipcRenderer.invoke(IPC.getEvents, sessionId, limit),
-  getEventsByIds: (sessionId, ids) =>
-    ipcRenderer.invoke(IPC.getEventsByIds, sessionId, ids),
   getConversation: (sessionId) =>
     ipcRenderer.invoke(IPC.getConversation, sessionId),
   refreshInterpretation: (sessionId) =>
     ipcRenderer.invoke(IPC.refreshInterpretation, sessionId),
   askCompanion: (sessionId, question, contextRefs) =>
     ipcRenderer.invoke(IPC.ask, sessionId, question, contextRefs),
+  getProjectDeliveries: (projectId) => ipcRenderer.invoke(IPC.getProjectDeliveries, projectId),
   getDeliveries: (sessionId) => ipcRenderer.invoke(IPC.getDeliveries, sessionId),
   sendInstruction: (sessionId, text) =>
     ipcRenderer.invoke(IPC.sendInstruction, sessionId, text),
-  launchSession: (cwd, prompt) => ipcRenderer.invoke(IPC.launch, cwd, prompt),
+  launchSession: (cwd, prompt, provider) =>
+    ipcRenderer.invoke(IPC.launch, cwd, prompt, provider),
   chooseFolder: () => ipcRenderer.invoke(IPC.chooseFolder),
   chooseFile: () => ipcRenderer.invoke(IPC.chooseFile),
   getProjectKnowledge: (projectId) =>
@@ -96,6 +96,7 @@ const api: VoweApi = {
   getInvestigationSteps: (entryId: string) =>
     ipcRenderer.invoke(IPC.getInvestigationSteps, entryId),
 
+  startProjectLive: (projectId, sdpOffer) => ipcRenderer.invoke(IPC.startProjectLive, projectId, sdpOffer),
   startLive: (sessionId, sdpOffer) =>
     ipcRenderer.invoke(IPC.startLive, sessionId, sdpOffer),
   stopLive: () => ipcRenderer.invoke(IPC.stopLive),

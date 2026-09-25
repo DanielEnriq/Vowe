@@ -42,12 +42,7 @@ import { planSurfacing } from '../state/artifact-surfacing.js';
 import { useActivityImpulse } from '../presence/index.js';
 import { PanelToggle } from '../shell/PanelToggle.js';
 import { RoomActions } from '../shell/TopChrome.js';
-import {
-  PANEL_RIGHT,
-  PANEL_RIGHT_CLOSE_AT,
-  PANEL_RIGHT_MAX,
-  PANEL_RIGHT_MIN,
-} from '../../shared/layout.js';
+import { useDeskResize } from '../hooks/useDeskResize.js';
 import { Workbench } from '../workbench/Workbench.js';
 import { Composer, type Attachment } from './Composer.js';
 import { Conversation } from './Conversation.js';
@@ -197,12 +192,21 @@ export function SessionRoom({
       launcherEntries({
         sessionId: session.id,
         projectId: session.projectId ?? null,
+        reasoningAvailable: session.capabilities.reasoning,
         events: thread.events,
         milestones: thread.milestones,
         notes,
         memories,
       }),
-    [session.id, session.projectId, thread.events, thread.milestones, notes, memories],
+    [
+      session.id,
+      session.projectId,
+      session.capabilities.reasoning,
+      thread.events,
+      thread.milestones,
+      notes,
+      memories,
+    ],
   );
 
   /** Repository files by name. Addresses only; nothing is read to answer it. */
@@ -454,54 +458,3 @@ export function SessionRoom({
 }
 
 /** Where the desk sits when nothing has moved it, and how far it may go. */
-
-/**
- * The desk's width, dragged from its own edge.
- *
- * The mirror of the sidebar's, including the part that matters: dragged past
- * the point where it could still hold a readable artifact it closes, rather
- * than shrinking into a column too narrow to read. Measured from the window's
- * right edge, because that is the edge this panel is attached to.
- */
-function useDeskResize(onClose: () => void) {
-  const [width, setWidth] = useState(PANEL_RIGHT);
-  const [resizing, setResizing] = useState(false);
-  const frame = useRef<number | null>(null);
-
-  const startResize = useCallback(
-    (event: React.MouseEvent) => {
-      event.preventDefault();
-      setResizing(true);
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-
-      const move = (moved: MouseEvent) => {
-        if (frame.current) cancelAnimationFrame(frame.current);
-        frame.current = requestAnimationFrame(() => {
-          const fromRight = window.innerWidth - moved.clientX;
-          if (fromRight < PANEL_RIGHT_CLOSE_AT) {
-            stop();
-            setWidth(PANEL_RIGHT_MIN);
-            onClose();
-            return;
-          }
-          setWidth(Math.max(PANEL_RIGHT_MIN, Math.min(PANEL_RIGHT_MAX, fromRight)));
-        });
-      };
-
-      const stop = () => {
-        window.removeEventListener('mousemove', move);
-        window.removeEventListener('mouseup', stop);
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        setResizing(false);
-      };
-
-      window.addEventListener('mousemove', move);
-      window.addEventListener('mouseup', stop);
-    },
-    [onClose],
-  );
-
-  return { deskWidth: width, deskResizing: resizing, startDeskResize: startResize };
-}

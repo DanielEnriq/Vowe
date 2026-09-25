@@ -55,7 +55,6 @@ export interface VoweApi {
   listSessions(): Promise<AgentSession[]>;
   getSession(sessionId: string): Promise<AgentSession | null>;
   getEvents(sessionId: string, limit?: number): Promise<NormalizedEvent[]>;
-  getEventsByIds(sessionId: string, ids: string[]): Promise<NormalizedEvent[]>;
   getConversation(sessionId: string): Promise<ConversationEntry[]>;
   refreshInterpretation(sessionId: string): Promise<void>;
 
@@ -79,12 +78,17 @@ export interface VoweApi {
    * The UI needs both to tell the truth about a reply that was cut off — the
    * text it shows is the entry's, and how much of it was heard is here.
    */
+  getProjectDeliveries(projectId: string): Promise<ConversationDelivery[]>;
   getDeliveries(sessionId: string): Promise<ConversationDelivery[]>;
 
   /** Delivered to the coding agent through the provider adapter. */
   sendInstruction(sessionId: string, text: string): Promise<InstructionResult>;
 
-  launchSession(cwd: string, prompt: string): Promise<AgentSession>;
+  /**
+   * Start a new session. `provider` defaults to the first one that can launch
+   * here; passing one that cannot is refused rather than silently redirected.
+   */
+  launchSession(cwd: string, prompt: string, provider?: string): Promise<AgentSession>;
 
   // ----------------------------------------------------------- observation
 
@@ -106,6 +110,7 @@ export interface VoweApi {
    * The renderer owns the microphone and the audio; the credential stays in
    * the main process, which is the only reason this is an IPC call at all.
    */
+  startProjectLive(projectId: string, sdpOffer: string): Promise<LiveStartResult>;
   startLive(sessionId: string, sdpOffer: string): Promise<LiveStartResult>;
   stopLive(): Promise<void>;
   getLiveStatus(): Promise<LiveStatus>;
@@ -401,7 +406,17 @@ export interface AppStatus {
   /** Why code knowledge is unavailable, in words the UI can show directly. */
   codeKnowledgeUnavailableReason: string | null;
   storeRoot: string;
+  /** Every provider Vowe is attached to, whether or not it found sessions. */
   providers: string[];
+  /**
+   * The subset that can actually start a new session on this machine.
+   *
+   * Separate from `providers` because the two differ: a provider can be
+   * perfectly observable and still have no way to be launched, either because
+   * it offers none or because its CLI is not installed here. Only this list
+   * may be put behind a button.
+   */
+  launchCapableProviders: string[];
 }
 
 /**
@@ -429,7 +444,6 @@ export const IPC = {
   listSessions: 'vowe:sessions:list',
   getSession: 'vowe:session:get',
   getEvents: 'vowe:session:events',
-  getEventsByIds: 'vowe:session:events-by-ids',
   getConversation: 'vowe:session:conversation',
   refreshInterpretation: 'vowe:session:refresh-interpretation',
   ask: 'vowe:companion:ask',
@@ -439,6 +453,7 @@ export const IPC = {
   stopObserving: 'vowe:observe:stop',
   getObservation: 'vowe:observe:state',
   setPreference: 'vowe:observe:preference',
+  startProjectLive: 'vowe:live:project:start',
   startLive: 'vowe:live:start',
   stopLive: 'vowe:live:stop',
   liveStatus: 'vowe:live:status',
@@ -458,6 +473,7 @@ export const IPC = {
   getWorkbench: 'vowe:workbench:get',
   saveWorkbench: 'vowe:workbench:save',
   getInvestigationSteps: 'vowe:investigation:steps',
+  getProjectDeliveries: 'vowe:project:deliveries',
   getDeliveries: 'vowe:session:deliveries',
   askProject: 'vowe:project:ask',
   getProjectConversation: 'vowe:project:conversation',

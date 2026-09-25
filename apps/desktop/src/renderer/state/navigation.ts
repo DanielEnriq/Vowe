@@ -9,7 +9,7 @@ import type { AgentSession, Project } from '@vowe/core';
  * at, and which one of them".
  */
 export type Route =
-  | { kind: 'project'; projectId: string }
+  | { kind: 'project'; projectId: string; view?: 'home' | 'conversation'; entryId?: string }
   | { kind: 'session'; sessionId: string }
   | { kind: 'studio' }
   | { kind: 'none' };
@@ -84,6 +84,6 @@ export function activeCount(
   sessions: readonly AgentSession[],
 ): number {
   return sessions.filter(
-    (session) => session.projectId === projectId && isActiveSession(session),
+    (session) => session.projectId === projectId && (session.status === 'working' || session.status === 'starting'),
   ).length;
 }

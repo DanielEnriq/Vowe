@@ -7,7 +7,7 @@ import {
   type RefObject,
 } from 'react';
 
-import type { LiveStatus, PlaybackReport } from '@vowe/core';
+import type { ConversationScope, LiveStatus, PlaybackReport } from '@vowe/core';
 
 /**
  * How quiet, for how long, counts as Vo having stopped speaking.
@@ -137,12 +137,17 @@ export interface Vo {
  * provider. The SDP offer goes through the main process only because the
  * exchange needs a credential, and the credential must not reach here.
  */
-export function useVo(sessionId: string): Vo {
+export function useVo(target: string | ConversationScope): Vo {
+  const sessionId = typeof target === 'string' ? target : target.sessionId;
+  const projectId = typeof target === 'string' ? undefined : target.projectId;
   const [phase, setPhase] = useState<VoPhase>('idle');
   const [status, setStatus] = useState<LiveStatus | null>(null);
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const generation = useRef(0);
+  const ownsCall = useRef(false);
+  const established = useRef(false);
   const connection = useRef<RTCPeerConnection | null>(null);
   const microphone = useRef<MediaStream | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -151,6 +156,8 @@ export function useVo(sessionId: string): Vo {
   const [level, setLevel] = useState<number | undefined>(undefined);
 
   const teardown = useCallback(() => {
+    generation.current++;
+    established.current = false;
     // Audio that is still playing when the call goes away was not finished —
     // reporting that is the difference between an honest record and one that
     // quietly implies the developer heard the end of something.
@@ -162,7 +169,12 @@ export function useVo(sessionId: string): Vo {
     listening.current?.stop();
     listening.current = null;
     setLevel(undefined);
-    connection.current?.close();
+    if (audio.current) audio.current.srcObject = null;
+    if (connection.current) {
+      connection.current.ontrack = null;
+      connection.current.onconnectionstatechange = null;
+      connection.current.close();
+    }
     connection.current = null;
     for (const track of microphone.current?.getTracks() ?? []) track.stop();
     microphone.current = null;
@@ -170,15 +182,29 @@ export function useVo(sessionId: string): Vo {
   }, []);
 
   useEffect(() => {
+    const receive = (next: LiveStatus) => {
+      setStatus(next);
+      if (ownsCall.current && established.current && !next.connected) {
+        ownsCall.current = false;
+        teardown();
+        setPhase('idle');
+      }
+    };
     void window.vowe.getLiveStatus().then(setStatus).catch(() => undefined);
-    return window.vowe.onLiveStatus(setStatus);
-  }, []);
+    return window.vowe.onLiveStatus(receive);
+  }, [teardown]);
 
-  // Ending the session when the panel goes away matters: a live microphone
-  // that outlives the screen it belongs to is a real problem, not a tidy-up.
-  useEffect(() => () => teardown(), [teardown]);
+  useEffect(() => () => {
+    teardown();
+    if (ownsCall.current) {
+      ownsCall.current = false;
+      void window.vowe.stopLive().catch(() => undefined);
+    }
+  }, [sessionId, projectId, teardown]);
 
   const join = useCallback(async () => {
+    if (connection.current) return;
+    const attempt = ++generation.current;
     setPhase('joining');
     setError(null);
     try {
@@ -186,6 +212,7 @@ export function useVo(sessionId: string): Vo {
       connection.current = peer;
 
       peer.ontrack = (event) => {
+        if (attempt !== generation.current) return;
         const stream = event.streams[0] ?? null;
         if (audio.current) audio.current.srcObject = stream;
         playback.current?.stop();
@@ -195,20 +222,20 @@ export function useVo(sessionId: string): Vo {
               (report) => window.vowe.reportLivePlayback(report),
               // Vowe speaking outranks the room: while there is playback, this
               // is what the presence is moving to.
-              (measured) => setLevel(measured),
+              (measured) => setLevel((current) => playback.current?.playing ? measured : current),
             )
           : null;
       };
 
       peer.onconnectionstatechange = () => {
+        if (attempt !== generation.current) return;
         const state = peer.connectionState;
         if (state !== 'failed' && state !== 'disconnected') return;
-        if (playback.current?.playing) {
-          window.vowe.reportLivePlayback({
-            kind: 'lost',
-            at: new Date().toISOString(),
-          });
-        }
+        teardown();
+        ownsCall.current = false;
+        setPhase('error');
+        setError('The voice connection was lost. Please try again.');
+        void window.vowe.stopLive().catch(() => undefined);
       };
 
       // The provider's events travel on this channel; the label is fixed. It is
@@ -228,6 +255,10 @@ export function useVo(sessionId: string): Vo {
       };
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (attempt !== generation.current) {
+        for (const track of stream.getTracks()) track.stop();
+        return;
+      }
       microphone.current = stream;
       // The microphone, measured the same way, so `listening` is the developer's
       // own voice rather than a state pulsing to nothing.
@@ -239,23 +270,34 @@ export function useVo(sessionId: string): Vo {
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
 
-      const { sdpAnswer, status: next } = await window.vowe.startLive(
-        sessionId,
-        offer.sdp ?? '',
-      );
+      if (attempt !== generation.current) return;
+      ownsCall.current = true;
+      const { sdpAnswer, status: next } = projectId !== undefined
+        ? await window.vowe.startProjectLive(projectId, offer.sdp ?? '')
+        : await window.vowe.startLive(sessionId!, offer.sdp ?? '');
+      if (attempt !== generation.current) return;
       await peer.setRemoteDescription({ type: 'answer', sdp: sdpAnswer });
-
+      if (attempt !== generation.current) return;
+      established.current = true;
       setStatus(next);
       setPhase('live');
     } catch (cause) {
+      if (attempt !== generation.current) return;
+      if (ownsCall.current) {
+        ownsCall.current = false;
+        void window.vowe.stopLive().catch(() => undefined);
+      }
       teardown();
       setPhase('error');
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(cause instanceof Error && cause.name === 'NotAllowedError'
+        ? 'Microphone access is blocked. Enable Electron in System Settings → Privacy & Security → Microphone, then try Talk again.'
+        : cause instanceof Error ? cause.message : String(cause));
     }
-  }, [sessionId, teardown]);
+  }, [sessionId, projectId, teardown]);
 
   const end = useCallback(async () => {
     teardown();
+    ownsCall.current = false;
     setPhase('idle');
     try {
       await window.vowe.stopLive();

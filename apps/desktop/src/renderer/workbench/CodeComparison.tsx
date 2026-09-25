@@ -12,8 +12,10 @@ import type { ComparedLine, FileComparison } from '../state/patch.js';
  * Magic UI's Code Comparison, ported to this app's own styling rather than
  * brought in with Tailwind, `next-themes` and an icon library for the sake of
  * one component: the same two titled panes, the same `VS` mark between them,
- * Shiki for the code and the same green and red washes for what changed. The
- * app has one theme, so there is no theme switch to follow.
+ * Shiki for the code and the same green and red washes for what changed.
+ * Both of Shiki's GitHub themes are emitted as variables on every token and
+ * the stylesheet picks one by `data-theme`, so the code follows the appearance
+ * without being highlighted again.
  *
  * Side by side when the desk is wide enough to read two columns of code, and
  * stacked when it is not — a container query rather than the viewport,
@@ -75,7 +77,12 @@ function Side({
               {lines.map((line, index) => (
                 <span key={index}>
                   {index > 0 && '\n'}
-                  <span className={`line${lineClass(line, which)}`}>{lineText(line)}</span>
+                  <span
+                    className={`line${lineClass(line, which)}`}
+                    {...(line.line === undefined ? {} : { 'data-line': line.line })}
+                  >
+                    {lineText(line)}
+                  </span>
                 </span>
               ))}
             </code>
@@ -148,7 +155,7 @@ function useHighlighted(
   return html;
 }
 
-const THEME = 'github-dark-default';
+const THEMES = { light: 'github-light-default', dark: 'github-dark-default' } as const;
 
 /**
  * One highlighter for the app, made the first time a diff is drawn.
@@ -160,31 +167,69 @@ const THEME = 'github-dark-default';
  */
 let highlighter: Promise<Highlighter> | null = null;
 
+/**
+ * Languages being fetched, so the two sides fetch each one once.
+ *
+ * Both sides of a comparison highlight at the same moment and in the same
+ * language, and `loadLanguage` is not idempotent under that: each saw the
+ * language missing, both asked for it, and one of the two calls lost. Its
+ * `catch` then dropped that side to `text` — so a file would come up coloured
+ * on the left and plain on the right, intermittently, which looks like the
+ * highlighter failing rather than like a race. One promise per language,
+ * awaited by everyone who wants it.
+ */
+const loadingLanguages = new Map<string, Promise<void>>();
+
 async function highlight(
   lines: readonly ComparedLine[],
   language: string,
   which: Which,
 ): Promise<string> {
   const shiki = await import('shiki');
-  highlighter ??= shiki.createHighlighter({
-    themes: [THEME],
-    langs: [],
-    engine: shiki.createJavaScriptRegexEngine(),
-  });
+  /*
+   * A creation that fails is forgotten rather than kept.
+   *
+   * `??=` stores the promise, and a rejected promise is still a promise — so
+   * one failure (a bad first load, an offline fetch of the engine) was cached
+   * for the life of the window and every diff opened afterwards came up
+   * plain, with nothing to suggest it was one transient error rather than a
+   * highlighter that does not work. Clearing the slot lets the next diff try.
+   */
+  highlighter ??= shiki
+    .createHighlighter({
+      themes: Object.values(THEMES),
+      langs: [],
+      engine: shiki.createJavaScriptRegexEngine(),
+    })
+    .catch((error: unknown) => {
+      highlighter = null;
+      throw error;
+    });
   const instance = await highlighter;
 
   let lang = language in shiki.bundledLanguages ? language : 'text';
   if (lang !== 'text' && !instance.getLoadedLanguages().includes(lang)) {
+    let pending = loadingLanguages.get(lang);
+    if (!pending) {
+      pending = instance
+        .loadLanguage(lang as keyof typeof shiki.bundledLanguages)
+        .then(() => undefined);
+      loadingLanguages.set(lang, pending);
+    }
     try {
-      await instance.loadLanguage(lang as keyof typeof shiki.bundledLanguages);
+      await pending;
     } catch {
+      // Not cached as a failure: a grammar that failed to fetch once may well
+      // arrive next time, and until it does this side reads as plain text.
+      loadingLanguages.delete(lang);
       lang = 'text';
     }
   }
 
   return instance.codeToHtml(lines.map((line) => (line.kind === 'gap' ? '' : line.text)).join('\n'), {
     lang,
-    theme: THEME,
+    themes: THEMES,
+    defaultColor: false,
     transformers: [
       {
         line(node, number) {
@@ -192,6 +237,9 @@ async function highlight(
           if (!line) return;
           const extra = lineClass(line, which).trim();
           if (extra) this.addClassToHast(node, extra);
+          // The gutter, which the stylesheet draws from the attribute. A gap
+          // has no number: it is the space where lines were skipped.
+          if (line.line !== undefined) node.properties['data-line'] = String(line.line);
           if (line.kind === 'gap') node.children = [{ type: 'text', value: lineText(line) }];
         },
       },

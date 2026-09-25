@@ -27,6 +27,8 @@ function session(overrides: Partial<AgentSession> = {}): AgentSession {
       sendInstruction: true,
       interrupt: true,
       resume: true,
+      launch: true,
+      reasoning: false,
     },
     semanticState: null,
     ...overrides,
@@ -38,6 +40,18 @@ const NO_CONTROL = {
   sendInstruction: false,
   interrupt: false,
   resume: false,
+  launch: true,
+  reasoning: false,
+};
+
+/** A provider Vowe can only ever watch — no way in, now or later. */
+const WATCH_ONLY = {
+  observe: true,
+  sendInstruction: false,
+  interrupt: false,
+  resume: false,
+  launch: false,
+  reasoning: false,
 };
 
 describe('Composer destination — talking about is not talking to', () => {
@@ -79,6 +93,17 @@ describe('Composer destination — talking about is not talking to', () => {
     ).toMatch(/finished/);
 
     expect(workerUnavailableReason(null)).toMatch(/No session/);
+
+    /*
+     * A provider that offers no way in at all reads differently from one that
+     * is momentarily out of reach. "Right now" would invite someone to wait
+     * for a door that is never going to open.
+     */
+    expect(
+      workerUnavailableReason(
+        session({ attachMode: 'external-idle', status: 'working', capabilities: WATCH_ONLY }),
+      ),
+    ).toBe('Vowe can watch this session but cannot send it anything.');
   });
 
   it('is available exactly when the capability says so', () => {

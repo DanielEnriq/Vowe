@@ -53,6 +53,26 @@
    */
   --chrome-control: 26px;
   --chrome-gap: 16px;
+  /*
+   * How far a room's identity stands off the band's own controls.
+   *
+   * Larger than `--chrome-gap`, and a separate number because it answers a
+   * different question. The gap is how far apart two things on the band sit;
+   * this is how much air there is between the window's controls and the
+   * room's first word — and at the gap's own 16px the title read as the
+   * fourth item in a row of buttons rather than as the beginning of the room
+   * under them.
+   *
+   * Generous, because the state it applies to is the one with room to spare.
+   * It is only reached when the projects panel is closed — an open panel's
+   * width already carries the title well past the controls — and a closed
+   * panel is precisely the case where the window has 268 pixels it is not
+   * using. Spending some of them here puts the title roughly where the
+   * conversation's own column begins, so the first word of the room and the
+   * first word of the thread start from about the same place instead of the
+   * title hanging alone out at the window's edge.
+   */
+  --chrome-standoff: 84px;
   /* A fallback; `.app` sets it from `CHROME_GLYPH`. */
   --chrome-glyph: 17.6px;
   /* What a traffic light and the band's title measure. */
@@ -115,6 +135,20 @@
   --fill-3: rgba(255, 255, 255, 0.12);
   /* The user's own turn. Its own token because it is a design decision. */
   --user-turn: rgba(255, 255, 255, 0.032);
+
+  /*
+   * Glass: a plate you can see through, and the lit edge that makes it one
+   * object rather than a patch of lighter fill.
+   *
+   * Three tokens because a plate needs all three to read: the body it is made
+   * of, the light catching its top edge, and the shadow it casts on what it
+   * is sitting on. On a dark surface the plate is light held at low alpha; on
+   * paper it is near-white and nearly opaque, because a transparent plate on
+   * a light ground has nothing to be transparent against.
+   */
+  --glass: rgba(255, 255, 255, 0.075);
+  --glass-edge: rgba(255, 255, 255, 0.15);
+  --glass-shade: rgba(0, 0, 0, 0.16);
 
   /* Lines. */
   --hairline: rgba(255, 255, 255, 0.055);
@@ -277,6 +311,11 @@
   --fill-2: rgba(18, 22, 30, 0.07);
   --fill-3: rgba(18, 22, 30, 0.1);
   --user-turn: rgba(18, 22, 30, 0.05);
+
+  /* The same plate, on paper: nearly white, and its shadow is ink not black. */
+  --glass: rgba(255, 255, 255, 0.45);
+  --glass-edge: rgba(255, 255, 255, 0.78);
+  --glass-shade: rgba(18, 22, 30, 0.06);
 
   /* Lines. */
   --hairline: rgba(18, 22, 30, 0.08);
@@ -470,10 +509,14 @@ textarea, input { font: inherit; color: inherit; }
    * with the band's own gap between them. Counting one was what slid the
    * room's orb and title under the pencil whenever the projects panel was
    * closed — the clearance has to describe what is actually standing there.
+   *
+   * Past them it is `--chrome-standoff` rather than the band's gap: clearing
+   * the controls and being balanced against them are two different amounts,
+   * and only the first of them is arithmetic.
    */
   --chrome-content-left: calc(
     var(--chrome-left) + 2 * var(--chrome-control) + var(--chrome-breathing) +
-      var(--chrome-gap)
+      var(--chrome-standoff)
   );
   --chrome-content-right: calc(var(--chrome-gutter) + var(--chrome-control) + var(--chrome-gap));
 }
@@ -1202,6 +1245,42 @@ textarea, input { font: inherit; color: inherit; }
  */
 .session-row:hover,
 .session-row:focus-within { --fade-gap: 28px; }
+/*
+ * The plate's own footprint: 34px of pill, 5px in from the edge, and a few
+ * more so the text dissolves clear of it rather than up against it.
+ */
+.session-row.has-shortcut { --fade-gap: 44px; }
+/*
+ * And the fade is unconditional while the plate is there.
+ *
+ * `is-faded` answers "does this line overflow its column", which the rest of
+ * the panel is right to ask — an unconditional mask would dissolve the tail
+ * of every short string. It is the wrong question here: a title that fits
+ * perfectly well still has a plate parked over its last thirty pixels, and
+ * that is the one case the class does not cover. It cost nothing to fix,
+ * because a mask anchored to the right edge does nothing at all to text that
+ * never reaches it.
+ */
+.session-row.has-shortcut .fading:not(.is-revealing) {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - var(--fade-gap) - var(--fade)),
+    rgba(0, 0, 0, 0.96) calc(100% - var(--fade-gap) - var(--fade) * 0.8),
+    rgba(0, 0, 0, 0.84) calc(100% - var(--fade-gap) - var(--fade) * 0.6),
+    rgba(0, 0, 0, 0.64) calc(100% - var(--fade-gap) - var(--fade) * 0.4),
+    rgba(0, 0, 0, 0.36) calc(100% - var(--fade-gap) - var(--fade) * 0.2),
+    transparent calc(100% - var(--fade-gap)));
+  mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - var(--fade-gap) - var(--fade)),
+    rgba(0, 0, 0, 0.96) calc(100% - var(--fade-gap) - var(--fade) * 0.8),
+    rgba(0, 0, 0, 0.84) calc(100% - var(--fade-gap) - var(--fade) * 0.6),
+    rgba(0, 0, 0, 0.64) calc(100% - var(--fade-gap) - var(--fade) * 0.4),
+    rgba(0, 0, 0, 0.36) calc(100% - var(--fade-gap) - var(--fade) * 0.2),
+    transparent calc(100% - var(--fade-gap)));
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
 .session-row .open {
   flex: 1 1 auto;
   min-width: 0;
@@ -1252,6 +1331,7 @@ textarea, input { font: inherit; color: inherit; }
 }
 .session-row:hover .hide,
 .session-row:focus-within .hide { opacity: 1; pointer-events: auto; }
+.session-row.has-shortcut .hide { opacity: 0; pointer-events: none; }
 .session-row .hide:hover { background: var(--fill-2); color: var(--ink-2); }
 /*
  * The whole first line fades and scrolls as one thing.
@@ -1279,10 +1359,33 @@ textarea, input { font: inherit; color: inherit; }
 }
 .session-row .provider {
   flex: 0 0 auto;
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.12em;
+  display: inline-flex;
+  align-items: center;
   color: var(--ink-9);
+}
+/*
+ * Which agent, as a mark.
+ *
+ * Quieter than the name it sits beside, because it repeats on every row and
+ * never changes: it is there to be recognised at a glance, not read. It takes
+ * the row's colour on hover and selection like everything else on the line, so
+ * it belongs to the row rather than sitting on top of it.
+ */
+.provider-glyph {
+  flex: 0 0 auto;
+  opacity: 0.62;
+  transition: opacity 120ms ease;
+}
+.session-row .open:hover .provider-glyph,
+.session-row.selected .provider-glyph {
+  opacity: 0.9;
+}
+/* In the header there is one of them, beside the name it belongs to. */
+.provider-mark {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: -2px;
+  margin-right: 5px;
 }
 /* What it is doing — one line under the name, inset to clear the dot. */
 .session-row .activity {
@@ -1291,6 +1394,73 @@ textarea, input { font: inherit; color: inherit; }
   padding-left: 14px;
   font-size: 11px;
   color: var(--ink-6);
+}
+/*
+ * Which key reaches this session, as a plate laid on the row.
+ *
+ * It was a flat pill of `--fill-3`, which on a row that also has a hover fill
+ * read as a slightly different grey rather than as a separate object — and
+ * put the ⌘ and the digit at one small size, where the glyph is the part that
+ * loses. So: a piece of glass. The body is translucent, the top edge catches
+ * light, and it casts a short shadow, which is the whole of what makes
+ * something look like it is *on* a surface rather than *in* it.
+ *
+ * The blur is not decoration here. The plate sits over the dissolving tail of
+ * the title, so what is behind it is text — and smearing that is exactly what
+ * glass does and what tells you the plate is in front.
+ *
+ * The glyph and the number are separate spans because they want different
+ * sizes: ⌘ is drawn small for its point size in every monospace face, so
+ * matching the digit's size makes it look like the smaller of the two.
+ */
+.session-shortcut {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 34px;
+  height: 21px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1;
+  color: var(--ink-5);
+  pointer-events: none;
+  /*
+   * Barely a gradient. The start sits well above the plate, so what is drawn
+   * is the tail of the ramp rather than its bright end, and the body colour
+   * has taken over by the top third. Enough to say the light is coming from
+   * above; not enough to read as a sheen.
+   */
+  background: linear-gradient(180deg, var(--glass-edge) -75%, var(--glass) 35%);
+  -webkit-backdrop-filter: blur(12px) saturate(1.7);
+  backdrop-filter: blur(12px) saturate(1.7);
+  box-shadow:
+    /* The lit top edge, and the hairline that closes the plate's outline. */
+    inset 0 1px 0 color-mix(in srgb, var(--glass-edge) 55%, transparent),
+    inset 0 0 0 0.5px var(--glass-edge),
+    /*
+     * What it casts, and no more than that.
+     *
+     * A 3px blur at this size spreads as far sideways as it does down, which
+     * reads as the plate hovering well above the row and puts a smudge off
+     * its left edge with nothing over there to cast it. A single soft pixel,
+     * straight down, says the same thing — it is lying on the surface, not
+     * floating over it — and says it far more quietly.
+     */
+    0 1px 1.5px -0.5px var(--glass-shade);
+}
+/* Up two points, which is about what the glyph gives away to the digit. */
+.session-shortcut .cmd {
+  font-size: 13.5px;
+  line-height: 1;
+  /* Optical: the glyph's ink sits high in its box next to a lining figure. */
+  transform: translateY(0.5px);
 }
 
 .dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px; display: inline-block; }
@@ -1526,55 +1696,101 @@ textarea, input { font: inherit; color: inherit; }
 }
 .button.primary:hover { background: var(--attention-hover); }
 
-.work-row {
+/*
+ * Current work, in the hero's reading column.
+ *
+ * Lines rather than cards, held to the conversation's measure so a wide window
+ * does not stretch a title and its metadata a full screen apart. The reading
+ * column is the container: narrow, the metadata drops under the line of what
+ * the worker is doing instead of squeezing it.
+ */
+.synthesis.busy { align-items: start; }
+.synthesis .reading { container-type: inline-size; }
+.current-work { display: flex; flex-direction: column; gap: 8px; max-width: 720px; margin-top: 6px; }
+.current-work h2 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-7);
+}
+/* Pulled out by its own padding so the text, not the hover wash, lines up. */
+.work-list { display: flex; flex-direction: column; gap: 2px; margin: 0 -12px; }
+.work-line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 198px;
-  column-gap: 24px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title meta"
+    "doing doing"
+    "understanding understanding";
+  column-gap: 20px;
   row-gap: 3px;
   align-items: baseline;
   width: 100%;
   border: 0;
   border-radius: 8px;
   background: transparent;
-  padding: 10px 14px 11px;
+  padding: 8px 12px 9px;
   text-align: left;
 }
-.work-row:hover { background: var(--hover); }
-.work-row .name {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-/*
- * Only the label grows.
- *
- * This was `.work-row .name span`, which also matched the status dot beside
- * it — `flex: 1` beat the dot's fixed basis and stretched a 7px circle into a
- * full-width coloured bar. A status is a dot; it is not a progress bar, and
- * there is no progress here to measure.
- */
-.work-row .name .label {
-  flex: 1;
-  font-size: 13.5px;
+.work-line:hover { background: var(--hover); }
+.work-line .title {
+  grid-area: title;
+  font-size: 14px;
   font-weight: 550;
   letter-spacing: -0.008em;
+  color: var(--ink-2);
 }
-.work-row .state { font-size: 11.5px; color: var(--ink-5); white-space: nowrap; }
-.work-row .state.waiting { color: var(--attention-ink); }
-/* Two lines of current activity is context; six is the task pasted again. */
-.work-row .note {
-  padding-left: 17px;
-  color: var(--ink-5);
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-.work-row .where {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.05em;
+.work-line .meta {
+  grid-area: meta;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
   color: var(--ink-8);
   white-space: nowrap;
+}
+.work-line .meta .provider-glyph { color: var(--ink-7); flex: 0 0 auto; }
+.work-line .doing {
+  grid-area: doing;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.work-line .doing .vowe-mark { flex: 0 0 auto; }
+.work-line .doing .text {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-4);
+}
+/* Only the status, not a reading of the work: said, but quieter. */
+.work-line .doing.plain .text { color: var(--ink-7); }
+.work-line.needs-you .doing .text { color: var(--attention-ink); }
+.work-line .understanding {
+  grid-area: understanding;
+  padding-left: 23px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-6);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+@container (max-width: 520px) {
+  .work-line {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "title"
+      "doing"
+      "understanding"
+      "meta";
+  }
+  .work-line .meta { padding-left: 23px; }
 }
 
 /*
@@ -1599,7 +1815,7 @@ textarea, input { font: inherit; color: inherit; }
 /* Work in flight is the story; history is a tail under it. */
 .outcomes.secondary { padding: 18px 0 28px; opacity: 0.86; }
 .column { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.column .rows { display: flex; flex-direction: column; gap: 2px; }
+.column .rows { display: flex; flex-direction: column; gap: 2px; max-width: 720px; }
 .column .link-button { align-self: flex-start; font-size: 12.5px; }
 
 /* What Vowe worked out and kept, named by the question it answers. */
@@ -1637,6 +1853,7 @@ textarea, input { font: inherit; color: inherit; }
   text-wrap: pretty;
 }
 
+/* The same two lines as a work line, settled: quieter ink, a rest mark. */
 .recent-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1647,7 +1864,7 @@ textarea, input { font: inherit; color: inherit; }
   border: 0;
   border-radius: 8px;
   background: transparent;
-  padding: 4px 0;
+  padding: 5px 0;
   text-align: left;
 }
 .recent-row:hover { background: var(--hover); }
@@ -1658,15 +1875,30 @@ textarea, input { font: inherit; color: inherit; }
   font-weight: 500;
   color: var(--ink-4);
 }
-.recent-row .when { font-size: 11.5px; color: var(--ink-8); white-space: nowrap; }
-.recent-row .where {
-  padding-left: 23px;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.05em;
+.recent-row .meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
   color: var(--ink-8);
+  white-space: nowrap;
 }
-.check { display: inline-flex; color: var(--ink-10); flex: 0 0 auto; }
+.recent-row .meta .provider-glyph { color: var(--ink-9); flex: 0 0 auto; }
+.recent-row .last {
+  grid-column: 1 / -1;
+  padding-left: 24px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-7);
+}
+.recent-row .check { display: inline-flex; width: 14px; justify-content: center; color: var(--ink-10); flex: 0 0 auto; }
+/* Stopped, not finished: a resting point where a check would overclaim. */
+.recent-row .check .rest {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--ink-10);
+}
 
 /*
  * Asking about the repository, as an input rather than as a link to one.
@@ -1824,6 +2056,57 @@ textarea, input { font: inherit; color: inherit; }
   padding: 0;
 }
 .talk:hover:not(:disabled) { background: var(--hover); }
+/*
+ * Still until you reach for it.
+ *
+ * The mark here is the same one the conversation wears, and it carries a real
+ * state — listening, speaking, asking for attention — so left alone it would
+ * move whenever Vowe did. In a byline that is the point; on the one control
+ * sitting under the cursor while somebody writes, it is a thing twitching in
+ * the corner of the eye of a person composing a sentence. So the state still
+ * decides how it looks, and the pointer decides whether it moves. Focus
+ * counts as reaching for it: a keyboard never hovers.
+ */
+.talk .vowe-mark.is-moving,
+.talk .vowe-mark.is-moving .field { animation: none; }
+/*
+ * On hover it moves whatever state it is in, and at a pace of its own.
+ *
+ * Two things were wrong with gating this on `is-moving`. The state at rest is
+ * `idle`, which is exactly the state that carries no motion, so the pointer
+ * had nothing to start — the case somebody actually hovers was the one case
+ * excluded. And idle's own clock is a seven-second breath, which is a
+ * presence at rest rather than a control answering a cursor.
+ *
+ * So this is not Vowe reporting anything; it is the button acknowledging the
+ * pointer, and it says so by not reading the table. The amplitude and the
+ * periods are the affordance's own. Everything about how the mark *looks* —
+ * colour, density, size, halo — still comes from the state, untouched.
+ */
+.talk:hover:not(:disabled) .vowe-mark,
+.talk:focus-visible .vowe-mark {
+  animation: vowe-mark-reach 1.5s ease-in-out infinite;
+}
+.talk:hover:not(:disabled) .vowe-mark .field,
+.talk:focus-visible .vowe-mark .field {
+  animation: vowe-mark-drift 5.5s linear infinite;
+}
+/*
+ * Its own amplitude, because `--mark-amp` is set on the element by `VoweMark`
+ * and an inline property cannot be overridden from here — and because the
+ * depth of a hover response is a question about the control, not about the
+ * state it happens to be in.
+ */
+@keyframes vowe-mark-reach {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.14); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .talk:hover:not(:disabled) .vowe-mark,
+  .talk:focus-visible .vowe-mark,
+  .talk:hover:not(:disabled) .vowe-mark .field,
+  .talk:focus-visible .vowe-mark .field { animation: none; }
+}
 .talk.in-voice { background: var(--fill-3); }
 .talk:disabled { cursor: default; }
 
@@ -1950,12 +2233,6 @@ textarea, input { font: inherit; color: inherit; }
   text-transform: uppercase;
   color: var(--ink-9);
 }
-.turn .signature-line { display: flex; align-items: center; gap: 7px; margin-bottom: -2px; }
-.turn .signature-line .doing {
-  font-size: 12.5px;
-  color: var(--ink-7);
-  animation: vowe-pulse 1.9s ease-in-out infinite;
-}
 .turn p {
   margin: 0;
   font-size: 13px;
@@ -2058,12 +2335,10 @@ textarea, input { font: inherit; color: inherit; }
 }
 
 /* The busy states move; a settled byline is still. */
-.vowe-mark.is-thinking,
-.vowe-mark.is-answering {
+.vowe-mark.is-moving {
   animation: vowe-mark-breathe var(--mark-period, 1.6s) ease-in-out infinite;
 }
-.vowe-mark.is-thinking .field,
-.vowe-mark.is-answering .field {
+.vowe-mark.is-moving .field {
   animation: vowe-mark-drift var(--mark-spin-period, 9s) linear infinite;
 }
 /* Displacement depth, as the shell's scale. `--mark-amp` carries `pulse` too. */
@@ -2083,10 +2358,8 @@ textarea, input { font: inherit; color: inherit; }
  * exactly what the preference is about.
  */
 @media (prefers-reduced-motion: reduce) {
-  .vowe-mark.is-thinking,
-  .vowe-mark.is-answering,
-  .vowe-mark.is-thinking .field,
-  .vowe-mark.is-answering .field { animation: none; }
+  .vowe-mark.is-moving,
+  .vowe-mark.is-moving .field { animation: none; }
 }
 
 code.inline {
@@ -2613,7 +2886,6 @@ button.check-row:hover .target-label { color: var(--ink-4); }
 .ribbon-brief .touched { display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-4); }
 .ribbon-brief .touched .more { color: var(--ink-8); font-family: inherit; }
 
-/* The raw activity, one step further down, for anyone who wants the log. */
 .ribbon-activity { display: flex; flex-direction: column; gap: 6px; }
 .ribbon-activity > button {
   display: inline-flex;
@@ -3100,8 +3372,9 @@ button.check-row:hover .target-label { color: var(--ink-4); }
  * gone and the strip moved to where a strip of open things belongs. Deleting
  * the header is also what pays for the strip: the chrome budget did not grow.
  *
- * No inset for the desk toggle, because the toggle is on the band above and
- * not floating over this row any more.
+ * No inset for the desk toggle beyond the room it needs: the toggle is on the
+ * band above, at the window's right edge, and the `+` ends this row just to
+ * the left of it.
  */
 .workbench-tabs {
   position: relative;
@@ -3117,11 +3390,53 @@ button.check-row:hover .target-label { color: var(--ink-4); }
    * rows of controls along the top of one window. It is the same row now, so
    * the tabs, the `+` and both toggles share a baseline.
    *
-   * The right inset is the band's own: it holds the `+` clear of the desk
-   * control, which floats over this panel at the window's right edge.
+   * The right inset clears the collapse control, which floats over this panel
+   * at the window's right edge, and leaves `--chrome-breathing` between the
+   * two of them — one light's width, which is exactly what stands between the
+   * panel toggle and the pencil at the other end of the band. So the `+` and
+   * the collapse read as a pair in the same way that pair does, rather than
+   * as two controls that happen to be near each other.
    */
   height: var(--chrome-height);
-  padding: 0 var(--chrome-content-right) 0 16px;
+  padding: 0
+    calc(var(--chrome-gutter) + var(--chrome-control) + var(--chrome-breathing))
+    0 16px;
+  /*
+   * The tabs stand on the strip's bottom edge, which is where the rule is.
+   *
+   * `flex-end` rather than `center` is the whole of the folder metaphor: a
+   * tab is not a chip floating in a row, it is the top of the thing below it,
+   * and it has to touch the boundary it interrupts.
+   */
+  align-items: center;
+  /*
+   * No rule under it, and no wash behind it.
+   *
+   * There was a boundary here and the tabs were folders cut into it — which
+   * is a lot of drawing to say which of four things you are looking at, and
+   * it put a hard line across the desk a few pixels under the window's own
+   * controls. The separation is space now. What marks the open tab is the tab
+   * itself: one plate of glass, the same material the keyboard shortcuts in
+   * the projects panel are made of, so the two read as the same product
+   * rather than as two ideas about what a highlight is.
+   */
+  margin-bottom: 14px;
+  /*
+   * Clickable, which it was not.
+   *
+   * The band above is `-webkit-app-region: drag`, and a drag region is an
+   * OS-level rectangle rather than a hit test — it swallows the mouse whatever
+   * `pointer-events` says and whatever is painted underneath it. This strip is
+   * drawn on that row, so every tab and the `+` sat inside the window's drag
+   * rectangle and nothing in here could be clicked or scrolled. Only in the
+   * side-panel mode: when the desk takes the pane it is pushed below the band
+   * and works, which is what made this look like it worked at all.
+   *
+   * `no-drag` subtracts this rectangle back out, the same way the room's own
+   * identity buttons do. The cost is that the window cannot be dragged by the
+   * tab strip, which is the right trade for a row that is entirely controls.
+   */
+  -webkit-app-region: no-drag;
 }
 /*
  * Last in the row, against the desk's control — and the same box as it.
@@ -3130,10 +3445,29 @@ button.check-row:hover .target-label { color: var(--ink-4); }
  * Everything standing on this row is `--chrome-control` wide so the toggles,
  * the `+` and the tabs are one family rather than three near-misses.
  */
+/*
+ * Last in the row, one light's width to the left of the collapse control —
+ * and the same box as it. `.icon-button` is 24px, which is the composer's
+ * size and not the band's; everything standing on this row is
+ * `--chrome-control` wide so the toggles, the `+` and the tabs are one family
+ * rather than three near-misses.
+ *
+ * It belongs to the row and not to the scroller, so it holds that position
+ * while the tabs run out of room and scroll away to its left.
+ */
 .tab-launcher {
   flex: 0 0 var(--chrome-control);
   width: var(--chrome-control);
   height: var(--chrome-control);
+  /*
+   * Centred on the band's line rather than on the tabs'.
+   *
+   * The tabs sit on the floor of this row because a folder tab has to touch
+   * the boundary it interrupts; the `+` does not, and following them would
+   * leave it five pixels below the control it is paired with. It belongs to
+   * the row of window controls it is standing in.
+   */
+  align-self: center;
 }
 
 /*
@@ -3151,7 +3485,6 @@ button.check-row:hover .target-label { color: var(--ink-4); }
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 2px;
   overflow-x: auto;
   overflow-y: hidden;
   /* Nothing here may hand a horizontal swipe to the window behind it. */
@@ -3169,6 +3502,14 @@ button.check-row:hover .target-label { color: var(--ink-4); }
 .tabs.more-start { --fade-start: 16px; }
 .tabs.more-end { --fade-end: 16px; }
 
+/*
+ * One box, the row's own size.
+ *
+ * `--chrome-control` is what every glyph on this row is drawn in — the two
+ * panel toggles, the `+`, the collapse control — so a tab is the same height
+ * as the things standing beside it and its label sits on their centre line
+ * without any arithmetic to make it.
+ */
 .tab {
   flex: 0 0 auto;
   display: inline-flex;
@@ -3176,10 +3517,9 @@ button.check-row:hover .target-label { color: var(--ink-4); }
   gap: 6px;
   min-width: 92px;
   max-width: 172px;
-  height: 26px;
-  padding: 0 4px 0 9px;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  height: var(--chrome-control);
+  padding: 0 4px 0 11px;
+  border-radius: 8px;
   background: transparent;
   color: var(--ink-6);
   font-size: 12px;
@@ -3188,10 +3528,19 @@ button.check-row:hover .target-label { color: var(--ink-4); }
   /* The mask clips; the ring is drawn tight so an edge tab keeps all of it. */
   outline-offset: 0;
 }
-.tab:hover { background: var(--hover); color: var(--ink-3); }
+.tab:hover:not(.active) { background: var(--hover); color: var(--ink-3); }
+/*
+ * The open one: a fill and full ink, and nothing else at all.
+ *
+ * No edge, no gradient, no blur, no cast shadow. An outline around a shape
+ * that is already a different colour from its surroundings is a second way of
+ * saying one thing, and it is the way that adds a line to a row whose whole
+ * improvement was losing one. The plates in the projects panel keep their
+ * glass because they are parked over text dissolving underneath them and the
+ * material is what says they are in front of it; nothing is behind a tab.
+ */
 .tab.active {
   background: var(--chip);
-  border-color: var(--border-3);
   color: var(--ink-strong);
 }
 .tab-label { flex: 1 1 auto; min-width: 0; }
@@ -3254,6 +3603,7 @@ button.check-row:hover .target-label { color: var(--ink-4); }
  * What is left of the old header, re-parented under the tabs: the tab carries
  * the name, and these two lines are the things it deliberately does not.
  */
+/* The strip already left room under its rule; this adds none of its own. */
 .workbench-note {
   flex: 0 0 auto;
   min-width: 0;
@@ -3261,7 +3611,7 @@ button.check-row:hover .target-label { color: var(--ink-4); }
   flex-direction: column;
   align-items: flex-start;
   gap: 3px;
-  padding: 2px 16px 10px 20px;
+  padding: 0 16px 10px 20px;
 }
 .workbench-note .kind {
   max-width: 100%;
@@ -3335,8 +3685,8 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
  * Stacked in an ordinary desk and side by side once the desk is wide enough to
  * hold two columns of code — measured on the desk, not the window. The `VS`
  * mark only exists in the side-by-side form, where there is a seam for it to
- * sit on. Shiki paints its own background inline, so the pane's surface has to
- * win with `!important`.
+ * sit on. Shiki sets its own background, so the pane's surface has to win with
+ * `!important`.
  */
 .diff-files {
   display: flex;
@@ -3389,6 +3739,11 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
   background: transparent !important;
 }
 .side-code pre.plain { color: var(--ink-3); }
+/* Shiki writes both themes' colours as variables; the appearance picks one. */
+.side-code .shiki,
+.side-code .shiki span[style] { color: var(--shiki-dark); }
+:root[data-theme='light'] .side-code .shiki,
+:root[data-theme='light'] .side-code .shiki span[style] { color: var(--shiki-light); }
 .side-code code { display: block; font: inherit; }
 /*
  * Inline blocks, as in the original: Shiki separates its line spans with
@@ -3398,9 +3753,38 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
   display: inline-block;
   width: 100%;
   min-height: 1.6em;
-  padding: 0 12px;
+  padding: 0 12px 0 0;
   box-sizing: border-box;
   white-space: pre;
+}
+/*
+ * Where the line is in its own file.
+ *
+ * The two sides count in different files, so the numbers drift apart wherever
+ * something above has been added or removed — which is the useful part: it is
+ * what says a line moved rather than merely changed, and it is what makes a
+ * hunk findable in an editor.
+ *
+ * Drawn from an attribute rather than a `counter`, because these are not the
+ * first `n` lines of anything: a side is the changed regions of a file with
+ * the rest left out, so the sequence restarts at every gap and only the
+ * parser knows where. A gap carries no attribute, so `attr()` yields nothing
+ * and the column simply goes blank across the break, which is exactly what
+ * happened to the file there.
+ *
+ * `user-select: none` so that copying a side copies code. A gutter that comes
+ * away with the text is the reason people do not copy from diffs.
+ */
+.side-code .line::before {
+  content: attr(data-line);
+  display: inline-block;
+  min-width: 4ch;
+  margin-right: 12px;
+  padding: 0 8px 0 12px;
+  text-align: right;
+  color: var(--ink-9);
+  -webkit-user-select: none;
+  user-select: none;
 }
 .side-code .line.add { background: var(--diff-add); }
 .side-code .line.remove { background: var(--diff-remove); }
@@ -3504,8 +3888,6 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
 .markdown th { color: var(--ink-2); font-weight: 600; background: var(--fill-1); }
 .markdown img { max-width: 100%; }
 
-.raw-evidence { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
-pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height: 1.6; }
 
 .narrative {
   margin: 0;
@@ -3811,3 +4193,88 @@ pre.code.raw { max-height: 320px; overflow: auto; font-size: 10.5px; line-height
   font-size: 11.5px;
   color: var(--ink-4);
 }
+
+/* Project Home and its conversation share a desk, not a scroll surface. */
+.project-home {
+  grid-row: 2;
+  grid-column: 1;
+  min-height: 0;
+  min-width: 0;
+  padding: 42px var(--room-gutter, 40px) 40px;
+  container-type: inline-size;
+}
+.project-home-measure {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+.project-orientation { display: flex; align-items: center; gap: 24px; }
+.project-orientation > .reading { flex: 1; min-width: 0; }
+.project-orientation .headline { max-width: none; font-size: 28px; }
+.project-last-understanding { margin-top: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.project-last-understanding p { color: var(--ink-4); font-size: 14px; line-height: 1.65; text-wrap: pretty; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.project-home .current-work { margin: 0; max-width: none; }
+.project-home .work-line { padding: 12px 0; }
+.project-home .work-line:hover { background: transparent; }
+.project-home .work-line:hover .title { color: var(--ink-bright); }
+.project-home h2 { font-size: 10px; letter-spacing: .12em; color: var(--ink-6); }
+.project-home h2.attention { color: var(--attention-ink); }
+.project-home .section { padding: 0; }
+.project-changes { display: flex; flex-direction: column; gap: 6px; }
+.project-changes h2 { margin-bottom: 6px; }
+.project-change {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 18px;
+  row-gap: 4px;
+  padding: 9px 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  min-width: 0;
+  color: var(--ink-4);
+  cursor: pointer;
+}
+.project-change:hover .change-title { color: var(--ink-bright); }
+.change-title { font-size: 13px; font-weight: 500; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-change time { font-size: 11px; color: var(--ink-6); padding-top: 2px; }
+.change-text { grid-column: 1 / -1; font-size: 13px; line-height: 1.6; white-space: pre-line; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.project-home-ask { display: flex; flex-direction: column; gap: 14px; padding-top: 4px; }
+.project-home-ask .knows { font-size: 11.5px; }
+.project-space .project-ask { max-width: none; width: 100%; }
+.project-resume { align-self: flex-start; font-size: 12px; }
+.project-conversation-nav { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px var(--room-gutter, 40px) 0; }
+.project-conversation-nav select { width: 280px; max-width: 65%; min-width: 0; background: var(--pane); color: var(--ink-5); border: 0; font: inherit; font-size: 12px; padding: 6px 0; text-overflow: ellipsis; }
+.project-conversation .conversation { padding-top: 24px; }
+.project-composer-dock { padding: 14px var(--room-gutter, 40px) 22px; }
+.project-composer-dock .conversation-measure { padding-bottom: 0; }
+.project-viewing { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 11.5px; color: var(--ink-6); }
+.project-viewing > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.project-attachments { display: flex; flex-wrap: wrap; gap: 6px; }
+.project-attachments .small-button { max-width: 100%; font-size: 11px; }
+.project-attachments svg { width: 12px; height: 12px; flex-shrink: 0; }
+@container (max-width: 540px) {
+  .project-orientation { gap: 14px; }
+  .project-orientation .headline { font-size: 24px; }
+  .project-home-measure { gap: 26px; }
+}
+.project-home .work-list { margin: 0; }
+.project-home .project-changes h2 { font-family: var(--mono); font-weight: 500; text-transform: uppercase; }
+.project-home .change-text { -webkit-line-clamp: 2; }
+.project-orientation .presence-project { width: 88px; height: 88px; flex: 0 0 88px; }
+
+/* Voice shares the project's presence, reading measure, and theme tokens. */
+.project-talk { display: inline-flex; gap: 6px; align-items: center; flex: 0 0 auto; align-self: end;
+  min-height: 32px; padding: 4px 7px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--ink-4); font: inherit; font-size: 12px; cursor: pointer; }
+.project-talk:hover, .project-talk[aria-pressed="true"] { color: var(--ink); background: var(--fill-2); }
+.project-talk:disabled { opacity: .5; cursor: default; }
+.project-voice { margin: 12px 0 20px; color: var(--ink-4); }
+.project-voice-status { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; font-size: 12px; }
+.project-voice-status [role="status"] { margin-right: auto; }
+.project-voice-caption { margin: 12px 0 0; font-size: 14px; line-height: 1.6; max-height: 4.8em;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.project-voice-investigation { margin: 16px 0 24px; max-height: 300px; overflow: auto; }
+.project-voice-investigation .turn { margin: 0; }

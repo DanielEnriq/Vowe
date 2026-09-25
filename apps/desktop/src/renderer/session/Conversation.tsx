@@ -20,7 +20,6 @@ import {
 import { LiveInvestigation } from './LiveInvestigation.js';
 import { MessageBody } from './MessageBody.js';
 import { SettledInvestigation } from './SettledInvestigation.js';
-import { VoweMark } from './VoweMark.js';
 
 interface Props {
   entries: ConversationEntry[];
@@ -50,9 +49,9 @@ interface Props {
  * which is which without reading either, and a symmetric chat would throw that
  * away for the sake of looking like every other client.
  *
- * Identity is shown once per speaker run rather than once per message, and
- * Vowe's mark is the same `VoweMark` the live region uses — one identity down
- * the whole column, in different states.
+ * Identity is shown once per speaker run rather than once per message, and as
+ * a name on both sides — the mark belongs to Vowe while it is doing something,
+ * not to the record of what it said.
  */
 export function Conversation({
   entries,
@@ -146,9 +145,14 @@ export function Conversation({
 /**
  * One speaker's run of turns.
  *
- * Vowe's byline is the same `VoweMark` the live region uses, in its settled
- * state. One identity down the whole column: what changes between a turn that
- * finished and an answer being written is the mark's state, never the mark.
+ * Both bylines are a name and nothing else.
+ *
+ * Vowe's used to carry the mark in its settled state, on the reasoning that
+ * one identity should run down the whole column. It does — but a finished
+ * answer is not a place Vowe is present, it is a place Vowe has been, and a
+ * mark on every one of them turned the column into a row of badges down the
+ * left margin of something meant to be read. The mark stays where it is
+ * saying something: the live tail, while the turn is still happening.
  */
 function Turn({
   turn,
@@ -168,10 +172,7 @@ function Turn({
       {turn.speaker === 'user' ? (
         <span className="speaker">{userName}</span>
       ) : (
-        <div className="signature-line">
-          <VoweMark profile={presence} />
-          <span className="speaker">Vowe</span>
-        </div>
+        <span className="speaker">Vowe</span>
       )}
 
       {turn.entries.map((entry) => (

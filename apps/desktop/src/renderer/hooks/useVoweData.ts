@@ -96,11 +96,14 @@ export function useProjectBrief(projectId: string | null): ProjectBrief | null {
       return;
     }
     let live = true;
+    let generation = 0;
+    setBrief(null);
     const load = () => {
+      const request = ++generation;
       void window.vowe
         .getProjectBrief(projectId)
         .then((next) => {
-          if (live) setBrief(next);
+          if (live && request === generation) setBrief(next);
         })
         .catch(() => undefined);
     };
@@ -108,6 +111,8 @@ export function useProjectBrief(projectId: string | null): ProjectBrief | null {
     load();
     const unsubscribes = [
       window.vowe.onSessionsChanged(load),
+      // Attention may change on a tool result even when the activity label stays put.
+      window.vowe.onSessionEvent(() => load()),
       window.vowe.onObservationChanged(() => load()),
       window.vowe.onProjectKnowledgeChanged((changed) => {
         if (changed === projectId) load();
@@ -185,28 +190,36 @@ export function useSessionThread(sessionId: string | null): SessionThread {
 /** A project's own thread, with its own change event. */
 export function useProjectThread(projectId: string | null): {
   entries: ProjectConversationEntry[];
+  deliveries: ConversationDelivery[];
+  loaded: boolean;
   reload: () => void;
 } {
   const [entries, setEntries] = useState<ProjectConversationEntry[]>([]);
+  const [deliveries, setDeliveries] = useState<ConversationDelivery[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const generation = useRef(0);
 
   const load = useCallback(() => {
     if (!projectId) return;
-    void window.vowe
-      .getProjectConversation(projectId)
-      .then(setEntries)
+    const request = ++generation.current;
+    void Promise.all([window.vowe.getProjectConversation(projectId), window.vowe.getProjectDeliveries(projectId)])
+      .then(([next, delivered]) => { if (request === generation.current) { setEntries(next); setDeliveries(delivered); setLoaded(true); } })
       .catch(() => undefined);
   }, [projectId]);
 
   useEffect(() => {
+    setLoaded(false);
     setEntries([]);
+    setDeliveries([]);
     load();
     if (!projectId) return;
-    return window.vowe.onProjectConversationChanged((change) => {
+    const unsubscribe = window.vowe.onProjectConversationChanged((change) => {
       if (change.projectId === projectId) load();
     });
+    return () => { generation.current++; unsubscribe(); };
   }, [projectId, load]);
 
-  return { entries, reload: load };
+  return { entries, deliveries, loaded, reload: load };
 }
 
 /**

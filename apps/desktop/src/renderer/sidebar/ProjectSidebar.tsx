@@ -13,7 +13,7 @@ import {
   sessionsForProject,
   type Route,
 } from '../state/navigation.js';
-import { providerName, statusLabel } from '../components/ui.js';
+import { ProviderGlyph, statusLabel } from '../components/ui.js';
 import { sessionActivity, sessionTitle } from '@vowe/core/projections';
 
 interface Props {
@@ -30,6 +30,8 @@ interface Props {
   onToggleExpanded: (projectId: string) => void;
   presence: PresenceProfile;
   presenceState: PresenceState;
+  sessionShortcuts?: ReadonlyMap<string, number>;
+  showSessionShortcuts?: boolean;
   onNavigate: (route: Route) => void;
 }
 
@@ -47,6 +49,8 @@ export function ProjectSidebar({
   onToggleExpanded,
   presence,
   presenceState,
+  sessionShortcuts,
+  showSessionShortcuts = false,
   onNavigate,
 }: Props): ReactElement {
   const user = useUserProfile();
@@ -100,6 +104,8 @@ export function ProjectSidebar({
             onNavigate={onNavigate}
             onToggleExpanded={() => onToggleExpanded(project.id)}
             onArchive={archive}
+            sessionShortcuts={sessionShortcuts}
+            showSessionShortcuts={showSessionShortcuts}
           />
         ))}
 
@@ -120,6 +126,7 @@ export function ProjectSidebar({
                   key={session.id}
                   session={session}
                   selected={route.kind === 'session' && route.sessionId === session.id}
+                  shortcut={showSessionShortcuts ? sessionShortcuts?.get(session.id) : undefined}
                   onOpen={() => onNavigate({ kind: 'session', sessionId: session.id })}
                   onArchive={() => archive(session.id, true)}
                 />
@@ -173,6 +180,8 @@ function ProjectBlock({
   onNavigate,
   onToggleExpanded,
   onArchive,
+  sessionShortcuts,
+  showSessionShortcuts,
 }: {
   project: Project;
   sessions: AgentSession[];
@@ -183,6 +192,8 @@ function ProjectBlock({
   onNavigate: (route: Route) => void;
   onToggleExpanded: () => void;
   onArchive: (sessionId: string, archived: boolean) => void;
+  sessionShortcuts?: ReadonlyMap<string, number>;
+  showSessionShortcuts: boolean;
 }): ReactElement {
   const all = sessionsForProject(project.id, sessions);
   /*
@@ -269,6 +280,7 @@ function ProjectBlock({
               key={session.id}
               session={session}
               selected={route.kind === 'session' && route.sessionId === session.id}
+              shortcut={showSessionShortcuts ? sessionShortcuts?.get(session.id) : undefined}
               onOpen={() => onNavigate({ kind: 'session', sessionId: session.id })}
               onArchive={() => onArchive(session.id, true)}
             />
@@ -284,11 +296,13 @@ function SessionRow({
   selected,
   onOpen,
   onArchive,
+  shortcut,
 }: {
   session: AgentSession;
   selected: boolean;
   onOpen: () => void;
   onArchive?: (() => void) | undefined;
+  shortcut?: number | undefined;
 }): ReactElement {
   // The activity line is the interpreter's, not a guess: when nothing has been
   // interpreted yet it says the status rather than inventing a description.
@@ -300,22 +314,30 @@ function SessionRow({
    * opening a session and putting it away genuinely are two targets.
    */
   return (
-    <div className={`session-row${selected ? ' selected' : ''}`}>
+    <div className={`session-row${selected ? ' selected' : ''}${shortcut ? ' has-shortcut' : ''}`}>
       <button className="open" type="button" onClick={onOpen}>
         {/*
           The line fades as one piece, not the name inside it. A fade on the
           name alone landed wherever that name ended — short of the provider's
-          initials — while the activity line under it faded at the edge of the
+          mark — while the activity line under it faded at the edge of the
           row, so one row had two different boundaries. Resting here now
-          scrolls the whole line, which is also how the initials come back
-          into view on a title too long to hold them.
+          scrolls the whole line, which is also how the mark comes back into
+          view on a title too long to hold it.
         */}
         <Fading className="line" reveal title={sessionTitle(session)}>
           <span className={`dot ${session.status}`} aria-hidden />
           <span className="label">{sessionTitle(session)}</span>
-          <span className="provider">{initialsOf(providerName(session.provider))}</span>
+          <span className="provider">
+            <ProviderGlyph provider={session.provider} size={13} />
+          </span>
         </Fading>
         <Fading className="activity">{activity}</Fading>
+        {shortcut ? (
+          <span className="session-shortcut" aria-hidden>
+            <span className="cmd">⌘</span>
+            {shortcut}
+          </span>
+        ) : null}
       </button>
       {onArchive && (
         <button
@@ -341,15 +363,3 @@ function useUserProfile(): UserProfile {
 }
 
 const initialOf = (name: string): string => name.trim().charAt(0).toUpperCase() || 'Y';
-
-/** `Claude Code` → `CC`, as the design abbreviates a provider in a tight row. */
-function initialsOf(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word.charAt(0).toUpperCase())
-    .join('');
-}
-
-export const __testables = { initialsOf };
