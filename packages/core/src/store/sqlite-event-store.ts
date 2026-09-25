@@ -251,13 +251,17 @@ export class SqliteEventStore implements EventStore {
     const row = this.get(
       `INSERT INTO events (
          session_id, seq, id, at, kind, summary, detail_json, raw_json,
-         raw_source, raw_byte_offset, raw_line)
+         raw_source, raw_byte_offset, raw_line, raw_ordinal)
        SELECT :sessionId,
               COALESCE((SELECT MAX(seq) FROM events WHERE session_id = :sessionId), 0) + 1,
-              :id, :at, :kind, :summary, :detail, :raw, :source, :byteOffset, :line
+              :id, :at, :kind, :summary, :detail, :raw, :source, :byteOffset,
+              :line, :ordinal
        -- Required: SQLite cannot parse ON CONFLICT after a bare SELECT.
        WHERE true
-       ON CONFLICT (session_id, raw_source, raw_byte_offset) DO NOTHING
+       -- Identity is the physical address plus which of that record's events
+       -- this is. Without the ordinal, a record that produced four events
+       -- stored one and discarded three.
+       ON CONFLICT (session_id, raw_source, raw_byte_offset, raw_ordinal) DO NOTHING
        RETURNING seq`,
       {
         sessionId,
@@ -270,6 +274,7 @@ export class SqliteEventStore implements EventStore {
         source: event.rawRef.source,
         byteOffset: event.rawRef.byteOffset,
         line: event.rawRef.line,
+        ordinal: event.rawRef.ordinal ?? 0,
       },
     );
     if (!row) return null;

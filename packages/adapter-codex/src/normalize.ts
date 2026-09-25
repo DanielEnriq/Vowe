@@ -6,6 +6,7 @@ import {
   isTestCommand,
   oneLine,
   truncate,
+  withOrdinals,
 } from '@vowe/adapter-kit';
 
 import type { CodexLine, CodexPayload } from './rollout.js';
@@ -60,6 +61,12 @@ export class CodexRolloutNormalizer {
   }
 
   normalize(line: CodexLine): AdapterEvent[] {
+    // One record, several events: each needs its own physical identity
+    // or the store keeps the first and drops its siblings.
+    return withOrdinals(this.normalizeRecord(line));
+  }
+
+  private normalizeRecord(line: CodexLine): AdapterEvent[] {
     const { record } = line;
     const type = record.type ?? 'unknown';
     if (IGNORED_TOP_TYPES.has(type)) return [];

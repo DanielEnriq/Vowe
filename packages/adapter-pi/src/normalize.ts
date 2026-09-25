@@ -6,6 +6,7 @@ import {
   isTestCommand,
   oneLine,
   truncate,
+  withOrdinals,
 } from '@vowe/adapter-kit';
 
 import type { PiLine, PiRecord } from './session-file.js';
@@ -74,6 +75,12 @@ export class PiSessionNormalizer {
 
   /** May produce zero, one or several events for a single entry. */
   normalize(line: PiLine): AdapterEvent[] {
+    // One record, several events: each needs its own physical identity
+    // or the store keeps the first and drops its siblings.
+    return withOrdinals(this.normalizeRecord(line));
+  }
+
+  private normalizeRecord(line: PiLine): AdapterEvent[] {
     const { record } = line;
     const type = record.type ?? 'unknown';
     if (IGNORED_ENTRY_TYPES.has(type)) return [];

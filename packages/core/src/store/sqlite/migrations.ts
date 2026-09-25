@@ -401,6 +401,31 @@ CREATE INDEX project_deliveries_entry ON project_conversation_deliveries(entry_i
 CREATE UNIQUE INDEX project_deliveries_ord ON project_conversation_deliveries(project_id, ord);
 `;
 
+/**
+ * A record's events, told apart from the same record read twice.
+ *
+ * `events_raw_ref` exists so restarting Vowe and re-reading a transcript is
+ * idempotent, and it identified an event by where it physically came from.
+ * But one record routinely becomes several events — a worker's message
+ * carrying its reasoning and three tool calls is one line of JSON — and every
+ * one of those shares a byte offset. The index could not tell them apart, so
+ * it kept the first and dropped the rest.
+ *
+ * That was not a replay-only concern: it was live ingestion, and it was
+ * measured on real transcripts at 40% of events lost for pi, 2% for Codex.
+ * What a developer saw was an edit run with no filenames in it.
+ *
+ * `raw_ordinal` is the event's position within its own record, so identity is
+ * now physical address *plus* which of that record's events this is. Existing
+ * rows take 0, which is what they were: the only survivor of their record.
+ */
+const EVENT_RECORD_ORDINAL = `
+ALTER TABLE events ADD COLUMN raw_ordinal INTEGER NOT NULL DEFAULT 0;
+DROP INDEX events_raw_ref;
+CREATE UNIQUE INDEX events_raw_ref
+  ON events (session_id, raw_source, raw_byte_offset, raw_ordinal);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -443,6 +468,11 @@ export const MIGRATIONS: readonly Migration[] = [
     up: (db) => db.exec(OBSERVER_UNDERSTANDING),
   },
   { version: 9, name: '009_project_delivery', up: (db) => db.exec(PROJECT_DELIVERY) },
+  {
+    version: 10,
+    name: '010_event_record_ordinal',
+    up: (db) => db.exec(EVENT_RECORD_ORDINAL),
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

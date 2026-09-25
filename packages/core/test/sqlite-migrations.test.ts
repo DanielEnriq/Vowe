@@ -228,6 +228,56 @@ describe('schema migrations', () => {
     expect(reloaded.meaningfulUpdates[0]!.refs).toHaveLength(1);
   });
 
+  it('recovers a record\u2019s siblings after the ordinal migration', async () => {
+    const root = await temporaryRoot();
+    buildDatabaseAt(root, 9);
+
+    // A v9 Vowe: one event stored at an address, its siblings already lost.
+    const before = new DatabaseSync(databasePath(root));
+    before
+      .prepare(
+        `INSERT INTO events (session_id, seq, id, at, kind, summary, detail_json,
+                             raw_json, raw_source, raw_byte_offset, raw_line)
+         VALUES (?, 1, ?, ?, ?, ?, NULL, NULL, ?, 4096, 12)`,
+      )
+      .run(TEST_SESSION, 'e1', '2026-02-11T09:00:00.000Z', 'agent_message', 'Reworking the pi adapter.', '/fixtures/session.jsonl');
+    before.close();
+
+    const store = await openStore(root);
+
+    // The old row reads back as the only event of its record, which it was.
+    expect(store.getEvents(TEST_SESSION)).toHaveLength(1);
+    expect(store.getEvents(TEST_SESSION)[0]!.rawRef.ordinal).toBe(0);
+
+    // And its siblings can now be stored beside it rather than bouncing off
+    // the identity index.
+    const rawRef = { source: '/fixtures/session.jsonl', byteOffset: 4096, line: 12 };
+    for (const [ordinal, kind] of [[1, 'file_changed'], [2, 'command_started']] as const) {
+      await store.appendEvent(TEST_SESSION, {
+        sessionId: TEST_SESSION,
+        at: '2026-02-11T09:00:00.000Z',
+        kind,
+        summary: `${kind} from the same record`,
+        raw: {},
+        rawRef: { ...rawRef, ordinal },
+      });
+    }
+    expect(store.getEvents(TEST_SESSION)).toHaveLength(3);
+
+    // Re-reading the record is still idempotent.
+    expect(
+      await store.appendEvent(TEST_SESSION, {
+        sessionId: TEST_SESSION,
+        at: '2026-02-11T09:00:00.000Z',
+        kind: 'file_changed',
+        summary: 'file_changed from the same record',
+        raw: {},
+        rawRef: { ...rawRef, ordinal: 1 },
+      }),
+    ).toBeNull();
+    expect(store.getEvents(TEST_SESSION)).toHaveLength(3);
+  });
+
   it('is a no-op the second time it runs', async () => {
     const root = await temporaryRoot();
     const first = await openStore(root);

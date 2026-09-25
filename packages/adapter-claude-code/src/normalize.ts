@@ -6,6 +6,7 @@ import {
   firstLine,
   oneLine,
   truncate,
+  withOrdinals,
 } from '@vowe/adapter-kit';
 
 import type { TranscriptLine } from './transcript.js';
@@ -72,6 +73,12 @@ export class TranscriptNormalizer {
 
   /** May produce zero, one or several events for a single record. */
   normalize(line: TranscriptLine): AdapterEvent[] {
+    // One record, several events: each needs its own physical identity
+    // or the store keeps the first and drops its siblings.
+    return withOrdinals(this.normalizeRecord(line));
+  }
+
+  private normalizeRecord(line: TranscriptLine): AdapterEvent[] {
     const { record } = line;
     const type = record.type ?? 'unknown';
     if (IGNORED_RECORD_TYPES.has(type)) return [];

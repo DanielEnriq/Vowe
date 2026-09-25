@@ -168,6 +168,10 @@ export function toEvent(row: Row): NormalizedEvent {
       source: str(row['raw_source']),
       byteOffset: int(row['raw_byte_offset']),
       line: int(row['raw_line']),
+      // Absent before v10, and 0 is what those rows were.
+      ordinal: row['raw_ordinal'] === null || row['raw_ordinal'] === undefined
+        ? 0
+        : int(row['raw_ordinal']),
     },
   };
   if (row['detail_json'] !== null) {

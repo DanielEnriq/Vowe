@@ -55,6 +55,20 @@ export interface RawEventRef {
   source: string;
   byteOffset: number;
   line: number;
+  /**
+   * Which event this is among those produced by the same raw record.
+   *
+   * One record routinely becomes several events — a worker's message carrying
+   * its reasoning and three tool calls is one line of JSON — and the physical
+   * address is the same for all of them. Without this they are indistinguish-
+   * able, and the store's idempotency index treats them as one record read
+   * repeatedly: the first is kept and the rest are silently dropped.
+   *
+   * It is the index within that record's own output, so it is stable across
+   * re-reads, which is what keeps restart-replay idempotent. Absent means `0`,
+   * which is exactly right for the single-event records that are the majority.
+   */
+  ordinal?: number;
 }
 
 export interface NormalizedEvent {
