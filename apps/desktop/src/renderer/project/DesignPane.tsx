@@ -55,7 +55,7 @@ function DesignHeader({
   revisions: readonly DesignRevision[];
   onView: (ord: number | null) => void;
 }): ReactElement | null {
-  if (pane.mode === 'empty') return <div className="design-kicker">Living design</div>;
+  if (pane.mode === 'empty') return <div className="design-kicker"><span>Living design</span></div>;
 
   const shown = pane.mode === 'streaming' ? null : pane.revision;
   return (
@@ -86,7 +86,7 @@ function DesignHeader({
           </select>
         )}
       </div>
-      {shown && (
+      {shown?.summary && (
         <p className="design-why">
           <span className="label">Why it changed</span> {shown.summary}
         </p>

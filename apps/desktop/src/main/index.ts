@@ -47,6 +47,7 @@ import {
   VoicePreferenceStore,
   VoweRunRecorder,
   type DecisionRouter,
+  type DesignStore,
   type LiveTransport,
   type LiveVoice,
   type PersistedWorkbench,
@@ -1310,14 +1311,18 @@ app.on('before-quit', () => {
  * them, and this asks the one it belongs to.
  */
 function receiptFor(
-  store: EventStore,
+  store: EventStore & Pick<DesignStore, 'getDesignEntries'>,
   run: VoweRun,
   entryId: string,
 ): InvestigationReceipt | undefined {
-  const thread = run.sessionId
-    ? store.getConversation(run.sessionId)
-    : run.projectId
-      ? store.getProjectConversation(run.projectId)
-      : [];
+  // A Studio turn's reply lives in its design's own thread, never the project's.
+  const designId = typeof run.metadata?.['designId'] === 'string' ? run.metadata['designId'] : null;
+  const thread = designId
+    ? store.getDesignEntries(designId)
+    : run.sessionId
+      ? store.getConversation(run.sessionId)
+      : run.projectId
+        ? store.getProjectConversation(run.projectId)
+        : [];
   return thread.find((entry) => entry.id === entryId)?.investigation;
 }

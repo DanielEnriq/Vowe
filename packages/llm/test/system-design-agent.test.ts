@@ -79,10 +79,14 @@ const FINDING: ConsultationFinding = {
 };
 
 const DOCUMENT = '# Project Understanding\n\nAbove the observer ([runner](ref:repo:/r/observer-runner.ts#12)).';
-const REVISE = JSON.stringify({ document: DOCUMENT, summary: 'The observer is per-session, so durable understanding moved above it.' });
+const WHY = 'The observer is per-session, so durable understanding moved above it.';
+/** A revision block, split into the fragments a provider might send. */
+const BLOCK = `\n\n<design_revision>\n<why>${WHY}</why>\n${DOCUMENT}\n</design_revision>`;
+const fragments = (text: string, size: number): string[] =>
+  Array.from({ length: Math.ceil(text.length / size) }, (_, i) => text.slice(i * size, (i + 1) * size));
 
 describe('AnthropicSystemDesignAgent', () => {
-  it('consults, continues with the finding, and ends at the revision without another request', async () => {
+  it('consults, continues with the finding, and streams the revision beside the reply', async () => {
     const bodies: Record<string, unknown>[] = [];
     const asked: { question: string; why: string }[] = [];
     const capabilities: DesignCapabilities = {
@@ -92,8 +96,8 @@ describe('AnthropicSystemDesignAgent', () => {
       start() + thinking(0, ['placement depends on ', 'lifecycle']) +
         text(1, ['That fits. ', 'I want to check the observer.']) +
         tool(2, 'consult_repository', ['{"question":"Is observer coverage durable?",', '"why":"placement"}']) + stop('tool_use'),
-      start() + text(0, ['I checked it: ', 'it is per session.']) +
-        tool(1, 'revise_design', [REVISE.slice(0, 30), REVISE.slice(30, 70), REVISE.slice(70)]) + stop('tool_use'),
+      // The marker itself arrives split, as a real stream may split it.
+      start() + text(0, ['I checked it: ', 'it is per session.', ...fragments(BLOCK, 7)]) + stop('end_turn'),
     ], bodies);
 
     const messages: string[] = [];
@@ -106,9 +110,10 @@ describe('AnthropicSystemDesignAgent', () => {
     });
 
     expect(asked).toEqual([{ question: 'Is observer coverage durable?', why: 'placement' }]);
-    // Exactly two requests: the loop stopped at the proposal.
     expect(bodies).toHaveLength(2);
     expect(bodies.every((body) => body.stream === true)).toBe(true);
+    // One tool only: a revision is text, not a tool call.
+    expect((bodies[0]!.tools as { name: string }[]).map((tool) => tool.name)).toEqual(['consult_repository']);
     // The second request carries the consultation's result.
     const second = bodies[1]!.messages as { role: string; content: unknown }[];
     expect(second.map((turn) => turn.role)).toEqual(['user', 'assistant', 'user']);
@@ -120,14 +125,17 @@ describe('AnthropicSystemDesignAgent', () => {
     expect(opening).toContain('Is it durable?');
     expect(opening).toContain('Developer: I think Project Understanding should sit above the observer.');
 
-    expect(result.reply).toBe('That fits. I want to check the observer.\n\nI checked it: it is per session.');
+    // Whitespace before the block is kept, so the stream and the result match exactly.
+    expect(result.reply.trimEnd()).toBe('That fits. I want to check the observer.\n\nI checked it: it is per session.');
+    // The conversation never saw any of the block, and saw exactly the reply.
     expect(messages.join('')).toBe(result.reply);
+    expect(messages.join('')).not.toContain('<');
     expect(reasoning.join('')).toBe('placement depends on lifecycle');
-    expect(result.revision).toEqual({ document: DOCUMENT, summary: 'The observer is per-session, so durable understanding moved above it.' });
+    expect(result.revision).toEqual({ document: DOCUMENT, summary: WHY });
     // The design streamed as it was written, and the last view is the committed text.
-    expect(documents.length).toBeGreaterThan(1);
+    expect(documents.length).toBeGreaterThan(3);
     expect(documents.at(-1)).toBe(DOCUMENT);
-    expect(DOCUMENT.startsWith(documents[0]!)).toBe(true);
+    for (const partial of documents) expect(DOCUMENT.startsWith(partial.trimEnd())).toBe(true);
   });
 
   it('returns no revision when the design did not change', async () => {
@@ -137,12 +145,12 @@ describe('AnthropicSystemDesignAgent', () => {
   });
 
   it('commits what the provider sent even when a view throws', async () => {
-    const design = agent([start() + text(0, ['one ', 'two']) + tool(1, 'revise_design', [REVISE]) + stop('tool_use')]);
+    const design = agent([start() + text(0, ['one ', 'two', BLOCK]) + stop('end_turn')]);
     const result = await design.turn(INPUT, { consultRepository: async () => FINDING }, undefined, {
       message: () => { throw new Error('view broke'); },
       design: () => { throw new Error('view broke'); },
     });
-    expect(result.reply).toBe('one two');
+    expect(result.reply.trimEnd()).toBe('one two');
     expect(result.revision?.document).toBe(DOCUMENT);
   });
 

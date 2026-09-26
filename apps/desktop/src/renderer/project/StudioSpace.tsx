@@ -142,7 +142,6 @@ export function StudioSpace({ project, presence, designId, narrow, available, on
   const single = narrow;
   const showConversation = !single || narrowShows === 'conversation';
   const showRight = !single || narrowShows === 'design';
-  const current = designs.find((design) => design.id === activeId);
 
   return (
     <main className={`studio-room${single ? ' single' : ''}`}>
@@ -150,7 +149,7 @@ export function StudioSpace({ project, presence, designId, narrow, available, on
         <div className="stack">
           <Fading as="h1">{project.name}</Fading>
           <Fading className="meta" title={tildePath(project.repoRoot)}>
-            {current ? `Studio · ${current.title}` : 'Studio'}
+            Studio
           </Fading>
         </div>
       </RoomIdentity>

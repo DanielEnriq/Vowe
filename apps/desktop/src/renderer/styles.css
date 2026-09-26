@@ -4425,7 +4425,7 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
 
 /* A settled repository check: the finding it rests on, and the files. */
 .exec-step.check.consult .target-label { white-space: normal; text-wrap: pretty; }
-.consult-finding {
+.exec-step .consult-finding {
   margin: 4px 0 2px 8px;
   max-width: 62ch;
   font-size: 12.5px;

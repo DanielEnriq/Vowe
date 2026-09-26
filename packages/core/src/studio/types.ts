@@ -59,7 +59,8 @@ export interface DesignEntry {
 /**
  * One version of the living design. Never updated, never deleted.
  *
- * `summary` is why the design changed — not a paraphrase of it — and `entryId`
+ * `summary` is why the design changed — not a paraphrase of it; empty when the
+ * agent gave no reason, never filled in on its behalf — and `entryId`
  * is the reply that explains the change, committed in the same transaction. The
  * design before a revision is the one with the previous `ord`.
  */

@@ -166,6 +166,13 @@ describe('StudioService', () => {
     expect(outcome.entry!.investigation).toBeUndefined();
   });
 
+  it('keeps a missing reason missing rather than inventing one', async () => {
+    const agent = new FakeAgent(async () => ({ reply: 'Recorded it.', revision: { document: '# d', summary: '  ' } }));
+    const { store, studio, design } = await harness(agent);
+    await studio.converse({ designId: design.id, message: 'Note that.' });
+    expect(store.getDesignRevisions(design.id)[0]!.summary).toBe('');
+  });
+
   it('hands the agent the current design, recent turns, earlier findings and attachments', async () => {
     const agent = new FakeAgent(consultThenRevise);
     const { studio, design, opened } = await harness(agent);

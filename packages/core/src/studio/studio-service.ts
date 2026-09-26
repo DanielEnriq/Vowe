@@ -268,13 +268,15 @@ export class StudioService {
       // Only what this design actually checked may be cited as evidence.
       const allowed = dedupeRefs([...refsOf(history), ...recorder.refs()]);
       const document = result.revision?.document.trim();
-      const summary = result.revision?.summary.trim() || 'Revised in conversation.';
+      // The reason as the agent gave it, or none — never a stand-in. A missing
+      // reason is itself part of the record of how the design changed.
+      const summary = result.revision?.summary.trim() ?? '';
       const entry: DesignEntry = {
         id: randomUUID(),
         designId,
         at: new Date().toISOString(),
         role: 'companion_message',
-        text: groundDesignLinks(result.reply.trim() || summary, allowed),
+        text: groundDesignLinks(result.reply.trim() || summary || 'I revised the design.', allowed),
         ...receipt(),
       };
       const committed = await this.store.commitDesignTurn(
