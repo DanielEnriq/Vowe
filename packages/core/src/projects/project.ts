@@ -22,6 +22,11 @@ export interface Project {
   gitCommonDir?: string;
   remoteUrl?: string;
   createdAt: string;
+  /**
+   * When the developer opened it in the projects panel. Absent means closed,
+   * which is where every discovered project starts. Attention, not identity.
+   */
+  openedAt?: string;
 }
 
 /**

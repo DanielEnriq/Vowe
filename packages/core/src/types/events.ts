@@ -47,9 +47,10 @@ export type NormalizedEventKind =
    */
   | 'session_waiting'
   | 'session_finished'
+  | 'operation_reported'
   | 'unknown';
 
-/** Where the raw record physically lives, so it can be re-read on demand. */
+/** Where this record was captured. Historical reads use immutable Vowe evidence. */
 export interface RawEventRef {
   /** Provider-specific source, e.g. a transcript file path. */
   source: string;
@@ -75,7 +76,7 @@ export interface NormalizedEvent {
   id: string;
   /** Vowe session id (`${provider}:${providerSessionId}`). */
   sessionId: string;
-  /** Monotonic per-session ordering. */
+  /** Monotonic admission order; not a claim of total execution chronology. */
   seq: number;
   at: string;
   kind: NormalizedEventKind;
@@ -85,6 +86,9 @@ export interface NormalizedEvent {
   /** The provider's record, verbatim. */
   raw: unknown;
   rawRef: RawEventRef;
+  /** Immutable admission metadata; additional physical supports live in the evidence ledger. */
+  supportStatus?: 'superseded';
+  evidence?: { factKey: string; basis: string; sourceId: string; captureId: string; supersedes?: string; execution?: string; conflict?: boolean };
 }
 
 /** Everything an adapter knows about an event except its Vowe-side identity. */

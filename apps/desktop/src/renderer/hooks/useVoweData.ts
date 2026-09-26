@@ -87,6 +87,9 @@ export function useAppStatus(): AppStatus | null {
  * The Project Room's whole read model, re-fetched on the three things that
  * can change it. The contract names these exactly.
  */
+/** How long a burst of changes settles before the brief is rebuilt again. */
+const BRIEF_SETTLE_MS = 250;
+
 export function useProjectBrief(projectId: string | null): ProjectBrief | null {
   const [brief, setBrief] = useState<ProjectBrief | null>(null);
 
@@ -96,16 +99,31 @@ export function useProjectBrief(projectId: string | null): ProjectBrief | null {
       return;
     }
     let live = true;
-    let generation = 0;
     setBrief(null);
+    // Coalesced: one rebuild in flight and at most one after it. Events arrive
+    // in bursts (catching up on a long session is hundreds at once), and each
+    // rebuild reads every session in the project.
+    let loading = false;
+    let again = false;
     const load = () => {
-      const request = ++generation;
+      if (loading) {
+        again = true;
+        return;
+      }
+      loading = true;
       void window.vowe
         .getProjectBrief(projectId)
         .then((next) => {
-          if (live && request === generation) setBrief(next);
+          if (live) setBrief(next);
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          loading = false;
+          if (again && live) {
+            again = false;
+            setTimeout(load, BRIEF_SETTLE_MS);
+          }
+        });
     };
 
     load();

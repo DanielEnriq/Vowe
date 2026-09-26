@@ -37,6 +37,7 @@ import {
   writeExpanded,
 } from './state/disclosure.js';
 import { projectOf, reconcileRoute, type Route } from './state/navigation.js';
+import { isOpenProject, panelProjects } from './state/project-visibility.js';
 import { sessionShortcutNumbers, sessionShortcutTargets } from './state/session-shortcuts.js';
 
 import {
@@ -96,7 +97,7 @@ const WIDTHS = {
  * finish and disappear while their room is open.
  */
 export function AppShell(): ReactElement {
-  const { projects, sessions } = useWorkspace();
+  const { projects, sessions, refresh } = useWorkspace();
   const status = useAppStatus();
   const [presence, savePresence] = usePresenceProfile();
   const [appearance, saveAppearance] = useAppearance();
@@ -137,8 +138,9 @@ export function AppShell(): ReactElement {
    * worked in, and every other room is one click away.
    */
   useEffect(() => {
-    if (live.kind !== 'none' || projects.length === 0) return;
-    const newest = mostRecentProject(projects, sessions);
+    const open = projects.filter(isOpenProject);
+    if (live.kind !== 'none' || open.length === 0) return;
+    const newest = mostRecentProject(open, sessions);
     if (newest) setRoute({ kind: 'project', projectId: newest });
   }, [live.kind, projects, sessions]);
 
@@ -150,6 +152,18 @@ export function AppShell(): ReactElement {
    * anything: what the developer opened stays open until they close it.
    */
   const routeProject = projectOf(live, { projects, sessions });
+  const panel = useMemo(() => panelProjects(projects, routeProject), [projects, routeProject]);
+
+  /*
+   * Closing the project you are in leaves it, or the panel's rule for the
+   * room you are in would keep it listed. The store is written and re-read
+   * first, so the landing above chooses among what is actually open.
+   */
+  const closeProject = async (projectId: string) => {
+    await window.vowe.setProjectOpen(projectId, false).catch(() => undefined);
+    await refresh().catch(() => undefined);
+    if (routeProject === projectId) setRoute({ kind: 'none' });
+  };
   useEffect(() => {
     if (!routeProject) return;
     setExpanded((current) => withExpanded(current, routeProject));
@@ -176,13 +190,13 @@ export function AppShell(): ReactElement {
   const shortcutTargets = useMemo(
     () =>
       sessionShortcutTargets({
-        projects,
+        projects: panel,
         sessions,
         expandedProjectIds: expanded,
         now: Date.now(),
         openSessionId: live.kind === 'session' ? live.sessionId : null,
       }),
-    [expanded, live, projects, sessions],
+    [expanded, live, panel, sessions],
   );
   const sessionShortcuts = useMemo(() => sessionShortcutNumbers(shortcutTargets), [shortcutTargets]);
   useEffect(() => {
@@ -291,7 +305,8 @@ export function AppShell(): ReactElement {
           aria-hidden={!sidebarOpen}
         >
           <ProjectSidebar
-            projects={projects}
+            projects={panel}
+            allProjects={projects}
             sessions={sessions}
             route={live}
             expandedProjectIds={expanded}
@@ -303,6 +318,7 @@ export function AppShell(): ReactElement {
             sessionShortcuts={sessionShortcuts}
             showSessionShortcuts={commandHeld && shortcutTargets.length > 0}
             onNavigate={setRoute}
+            onCloseProject={(projectId) => void closeProject(projectId)}
           />
         </aside>
 

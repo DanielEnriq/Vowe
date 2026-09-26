@@ -76,6 +76,9 @@ export class ObservationService extends EventEmitter<ObservationEvents> {
   private readonly runners = new Map<string, ObserverRunner>();
   private readonly onError: (scope: string, error: unknown) => void;
   private listening = false;
+  /** Sessions followed while paused: they resume with observation. */
+  private readonly held = new Set<string>();
+  private paused: (sessionId: string) => boolean = () => false;
 
   constructor(options: ObservationServiceOptions) {
     super();
@@ -100,6 +103,10 @@ export class ObservationService extends EventEmitter<ObservationEvents> {
    * there is nothing left in the queue.
    */
   async start(sessionId: string): Promise<ObservationStatus> {
+    if (this.paused(sessionId)) {
+      this.held.add(sessionId);
+      return this.status(sessionId);
+    }
     this.ensureListening();
 
     let runner = this.runners.get(sessionId);
@@ -152,7 +159,28 @@ export class ObservationService extends EventEmitter<ObservationEvents> {
     return this.status(sessionId);
   }
 
+  /**
+   * Which sessions are paused. Their observers stop, remembered as followed;
+   * observation resumes from each session's stored cursor, so nothing
+   * recorded meanwhile is skipped, only understood later.
+   */
+  async setPaused(paused: (sessionId: string) => boolean): Promise<void> {
+    this.paused = paused;
+    for (const [sessionId, runner] of this.runners)
+      if (paused(sessionId)) {
+        runner.stop();
+        this.runners.delete(sessionId);
+        this.held.add(sessionId);
+      }
+    for (const sessionId of [...this.held])
+      if (!paused(sessionId)) {
+        this.held.delete(sessionId);
+        await this.start(sessionId);
+      }
+  }
+
   stop(sessionId: string): void {
+    this.held.delete(sessionId);
     this.runners.get(sessionId)?.stop();
     this.runners.delete(sessionId);
   }
@@ -236,6 +264,11 @@ export class ObservationService extends EventEmitter<ObservationEvents> {
   private ensureListening(): void {
     if (this.listening) return;
     this.listening = true;
+    this.options.registry.on('evidence:changed', change => {
+      if (change.invalidatedFromSeq === undefined || !this.runners.has(change.sessionId)) return;
+      this.stop(change.sessionId);
+      void this.start(change.sessionId).catch(error => this.onError('recompute',error));
+    });
     this.options.registry.on('event', (event) => {
       // Cheap and synchronous: nudge the runner, never block ingestion.
       this.runners.get(event.sessionId)?.notifyTrace();
@@ -255,6 +288,9 @@ export class ObservationService extends EventEmitter<ObservationEvents> {
       ? effectivePreference(temperament, sessionPreference)
       : sessionPreference;
     const decision = await this.options.policy.evaluate(update, preference, temperament);
+    // A correction can arrive while policy is deciding. Historical candidates
+    // remain stored, but cannot become a fresh notification.
+    if(!this.options.store.getSurfaceUpdates(update.sessionId).some(candidate=>candidate.id===update.id)) return;
     const stored = await this.options.store.recordCommunicationDecision(
       update.sessionId,
       update.id,

@@ -27,6 +27,7 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      {find: '@vowe/adapter-cursor', replacement: new URL('./packages/adapter-cursor/src/index.ts', import.meta.url).pathname},
       // Subpaths first: the array is ordered, and a bare '@vowe/core' find
       // would otherwise swallow '@vowe/core/presence' and rewrite it into a
       // path inside index.ts.

@@ -100,6 +100,18 @@ export class ProjectService {
     return previous.cwd !== session.cwd;
   }
 
+  /**
+   * The project a directory belongs to, found or created.
+   *
+   * How a developer opens a project nobody has run a session in yet: the same
+   * resolution sessions go through, so opening a subdirectory or a worktree
+   * lands on the repository it is part of rather than on a project of its own.
+   */
+  async projectAt(directory: string): Promise<Project | null> {
+    const resolution = await this.resolveCwd(directory);
+    return resolution ? this.upsert(resolution) : null;
+  }
+
   listProjects(): Project[] {
     return this.store.listProjects();
   }

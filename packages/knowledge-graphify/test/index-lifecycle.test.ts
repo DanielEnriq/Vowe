@@ -15,7 +15,15 @@ import {
 } from '../src/index.js';
 
 const PROJECT = 'git:abc123';
-const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+// Completion, not wall-clock speed: parallel SQLite/probe tests can delay I/O.
+const settle = async (provider: GraphifyProjectKnowledgeProvider, file: string) => {
+  await expect.poll(async () => {
+    const state=provider.status(PROJECT);
+    if(state.status==='indexing') return false;
+    try {return JSON.stringify(JSON.parse(await readFile(file,'utf8')))===JSON.stringify(state);}
+    catch {return false;}
+  }, {timeout:5000}).toBe(true);
+};
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -93,7 +101,7 @@ describe('acceptance 1: building persistent repository knowledge', () => {
 
     const state = h.provider.ensureIndexed(PROJECT);
     expect((await state).status).toBe('indexing');
-    await settle();
+    await settle(h.provider,h.statePath);
 
     const [call] = h.calls;
     expect(call!.args[0]).toBe('extract');
@@ -115,7 +123,7 @@ describe('acceptance 1: building persistent repository knowledge', () => {
       h.provider.ensureIndexed(PROJECT),
       h.provider.ensureIndexed(PROJECT),
     ]);
-    await settle();
+    await settle(h.provider,h.statePath);
 
     expect(h.calls.filter((call) => call.args[0] === 'extract')).toHaveLength(1);
   });
@@ -123,7 +131,7 @@ describe('acceptance 1: building persistent repository knowledge', () => {
   it('survives a restart without rebuilding', async () => {
     const h = await harness();
     await h.provider.ensureIndexed(PROJECT);
-    await settle();
+    await settle(h.provider,h.statePath);
     expect(h.calls).toHaveLength(1);
 
     // Quit Vowe, start it again: a new provider over the same directory.
@@ -173,7 +181,7 @@ describe('acceptance 1: building persistent repository knowledge', () => {
     });
 
     await provider.ensureIndexed(PROJECT);
-    await settle();
+    await settle(provider,path.join(root,'data','knowledge','index.json'));
 
     const state = provider.status(PROJECT);
     expect(state.status).toBe('error');
@@ -187,12 +195,12 @@ describe('acceptance 4: the index notices what no session did', () => {
   it('refreshes incrementally when HEAD has moved underneath it', async () => {
     const h = await harness();
     await h.provider.ensureIndexed(PROJECT);
-    await settle();
+    await settle(h.provider,h.statePath);
 
     // A `git pull` or a branch switch. No worker Vowe was watching did this.
     h.moveHead('commit-2');
     await h.provider.ensureIndexed(PROJECT);
-    await settle();
+    await settle(h.provider,h.statePath);
 
     expect(h.calls.map((call) => call.args[0])).toEqual(['extract', 'update']);
     expect(h.provider.status(PROJECT).indexedCommit).toBe('commit-2');
@@ -201,9 +209,9 @@ describe('acceptance 4: the index notices what no session did', () => {
   it('leaves a ready index alone when HEAD has not moved', async () => {
     const h = await harness();
     await h.provider.ensureIndexed(PROJECT);
-    await settle();
+    await settle(h.provider,h.statePath);
     await h.provider.ensureIndexed(PROJECT);
-    await settle();
+    await settle(h.provider,h.statePath);
 
     expect(h.calls).toHaveLength(1);
   });
@@ -211,13 +219,13 @@ describe('acceptance 4: the index notices what no session did', () => {
   it('refreshes a stale index rather than rebuilding it', async () => {
     const h = await harness();
     await h.provider.ensureIndexed(PROJECT);
-    await settle();
+    await settle(h.provider,h.statePath);
 
     h.provider.markStale(PROJECT);
     expect(h.provider.status(PROJECT).status).toBe('stale');
 
     await h.provider.ensureIndexed(PROJECT);
-    await settle();
+    await settle(h.provider,h.statePath);
     expect(h.calls.map((call) => call.args[0])).toEqual(['extract', 'update']);
   });
 
@@ -232,7 +240,7 @@ describe('acceptance 4: the index notices what no session did', () => {
   it('keeps serving the old graph while a refresh runs', async () => {
     const h = await harness();
     await h.provider.ensureIndexed(PROJECT);
-    await settle();
+    await settle(h.provider,h.statePath);
 
     h.provider.markStale(PROJECT);
     void h.provider.refresh(PROJECT);
@@ -241,13 +249,13 @@ describe('acceptance 4: the index notices what no session did', () => {
     // authoritative anyway. Returning nothing here would be worse.
     const hits = await h.provider.search({ projectId: PROJECT, query: 'Thing' });
     expect(hits).toHaveLength(1);
-    await settle();
+    await settle(h.provider,h.statePath);
   });
 
   it('writes its state where the store said, and nowhere near the repository', async () => {
     const h = await harness();
     await h.provider.ensureIndexed(PROJECT);
-    await settle();
+    await settle(h.provider,h.statePath);
 
     const state = JSON.parse(await readFile(h.statePath, 'utf8')) as RepoIndexState;
     expect(state.status).toBe('ready');

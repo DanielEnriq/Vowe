@@ -1,11 +1,20 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 
 import type { AgentSession, PresenceProfile, PresenceState, Project, UserProfile } from '@vowe/core';
 import { DEFAULT_USER_PROFILE } from '@vowe/core/projections';
 
 import { Fading } from '../shell/Fading.js';
 import { VowePresence } from '../presence/index.js';
-import { ArchiveIcon, FolderIcon, RepoIcon, SearchIcon, SettingsIcon } from '../shell/icons.js';
+import {
+  ArchiveIcon,
+  FolderIcon,
+  ObservingIcon,
+  PlusIcon,
+  RepoIcon,
+  SearchIcon,
+  SettingsIcon,
+} from '../shell/icons.js';
+import { ProjectOpener } from './ProjectOpener.js';
 import { SessionFinder } from './SessionFinder.js';
 import { currentSessions } from '../state/session-visibility.js';
 import {
@@ -17,7 +26,10 @@ import { ProviderGlyph, statusLabel } from '../components/ui.js';
 import { sessionActivity, sessionTitle } from '@vowe/core/projections';
 
 interface Props {
+  /** The projects the panel shows: the open ones, and the one being looked at. */
   projects: Project[];
+  /** Every project Vowe knows, which is what the `+` opens from. */
+  allProjects: Project[];
   sessions: AgentSession[];
   route: Route;
   /**
@@ -33,6 +45,7 @@ interface Props {
   sessionShortcuts?: ReadonlyMap<string, number>;
   showSessionShortcuts?: boolean;
   onNavigate: (route: Route) => void;
+  onCloseProject: (projectId: string) => void;
 }
 
 /**
@@ -43,6 +56,7 @@ interface Props {
  */
 export function ProjectSidebar({
   projects,
+  allProjects,
   sessions,
   route,
   expandedProjectIds,
@@ -52,8 +66,10 @@ export function ProjectSidebar({
   sessionShortcuts,
   showSessionShortcuts = false,
   onNavigate,
+  onCloseProject,
 }: Props): ReactElement {
   const user = useUserProfile();
+  const [opening, setOpening] = useState(false);
   const openSessionId = route.kind === 'session' ? route.sessionId : null;
   /*
    * One clock for the whole panel, read once per render.
@@ -63,6 +79,12 @@ export function ProjectSidebar({
    * be recent in one block and old in the next within the same paint.
    */
   const now = Date.now();
+  const [paused, setPaused] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    void window.vowe.getPausedProjects().then((ids) => setPaused(new Set(ids)), () => undefined);
+  }, []);
+  const setObserving = async (projectId: string, observing: boolean) =>
+    setPaused(new Set(await window.vowe.setProjectObserving(projectId, observing)));
   const archive = (sessionId: string, archived: boolean) => {
     void window.vowe.archiveSession(sessionId, archived).catch(() => undefined);
   };
@@ -83,12 +105,38 @@ export function ProjectSidebar({
       */}
       <div className="sidebar-title">
         <span className="eyebrow">Projects</span>
+        {/*
+          Projects are opt-in: every repository a worker runs in is discovered,
+          and none of them is in the panel until it is opened here.
+        */}
+        <button
+          className="icon-button add"
+          type="button"
+          aria-label="Open a project"
+          title="Open a project"
+          aria-haspopup="dialog"
+          aria-expanded={opening}
+          onClick={() => setOpening((open) => !open)}
+        >
+          <PlusIcon />
+        </button>
+        {opening && (
+          <ProjectOpener
+            projects={allProjects}
+            sessions={sessions}
+            now={now}
+            onOpened={(projectId) => onNavigate({ kind: 'project', projectId })}
+            onDismiss={() => setOpening(false)}
+          />
+        )}
       </div>
 
       <nav className="sidebar-nav">
         {projects.length === 0 && unplaced.length === 0 && (
           <p className="empty" style={{ padding: '10px 8px' }}>
-            No coding sessions yet. Start one in any terminal and it appears here.
+            {allProjects.length === 0
+              ? 'No coding sessions yet. Start one in any terminal and it appears here.'
+              : 'No projects open. Use + to open one.'}
           </p>
         )}
 
@@ -103,7 +151,10 @@ export function ProjectSidebar({
             openSessionId={openSessionId}
             onNavigate={onNavigate}
             onToggleExpanded={() => onToggleExpanded(project.id)}
+            paused={paused.has(project.id)}
+            onToggleObserving={() => void setObserving(project.id, paused.has(project.id))}
             onArchive={archive}
+            onClose={() => onCloseProject(project.id)}
             sessionShortcuts={sessionShortcuts}
             showSessionShortcuts={showSessionShortcuts}
           />
@@ -179,7 +230,10 @@ function ProjectBlock({
   openSessionId,
   onNavigate,
   onToggleExpanded,
+  paused,
+  onToggleObserving,
   onArchive,
+  onClose,
   sessionShortcuts,
   showSessionShortcuts,
 }: {
@@ -191,7 +245,10 @@ function ProjectBlock({
   openSessionId: string | null;
   onNavigate: (route: Route) => void;
   onToggleExpanded: () => void;
+  paused: boolean;
+  onToggleObserving: () => void;
   onArchive: (sessionId: string, archived: boolean) => void;
+  onClose: () => void;
   sessionShortcuts?: ReadonlyMap<string, number>;
   showSessionShortcuts: boolean;
 }): ReactElement {
@@ -206,6 +263,8 @@ function ProjectBlock({
   const own = currentSessions(all, { now, openSessionId });
   const live = activeCount(project.id, sessions);
   const [finding, setFinding] = useState(false);
+  /** Where the row was right-clicked, relative to the row. */
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
 
   return (
     <>
@@ -223,6 +282,11 @@ function ProjectBlock({
         className={`project-row${
           route.kind === 'project' && route.projectId === project.id ? ' selected' : ''
         }`}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          const box = event.currentTarget.getBoundingClientRect();
+          setMenuAt({ x: event.clientX - box.left, y: event.clientY - box.top });
+        }}
       >
         <button
           className={`disclose${expanded ? ' expanded' : ''}`}
@@ -243,7 +307,30 @@ function ProjectBlock({
           onClick={() => onNavigate({ kind: 'project', projectId: project.id })}
         >
           <Fading className="name">{project.name}</Fading>
-          {live > 0 && <span className="count">{live}</span>}
+        </button>
+        {/*
+          Whether Vowe is observing this project, and how much of it is live.
+          The count is just the number, beside the eye: how many workers are
+          running here. Paused, the project's sessions are still recorded but
+          nothing reaches a model for them until it is resumed.
+        */}
+        <button
+          className={`observe${paused ? ' paused' : ''}${live > 0 ? ' live' : ''}`}
+          type="button"
+          aria-pressed={!paused}
+          aria-label={`${paused ? 'Resume' : 'Pause'} observing ${project.name}`}
+          title={[
+            live > 0 ? `${live} active` : null,
+            paused
+              ? 'Paused · still recorded, not interpreted. Click to resume'
+              : 'Observing · click to pause',
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+          onClick={onToggleObserving}
+        >
+          {live > 0 && <span className="live-count">{live}</span>}
+          <ObservingIcon paused={paused} />
         </button>
         {/*
           Where everything this project has actually is. The row above shows
@@ -271,6 +358,14 @@ function ProjectBlock({
             onDismiss={() => setFinding(false)}
           />
         )}
+        {menuAt && (
+          <ProjectMenu
+            at={menuAt}
+            name={project.name}
+            onClose={onClose}
+            onDismiss={() => setMenuAt(null)}
+          />
+        )}
       </div>
 
       {expanded && own.length > 0 && (
@@ -288,6 +383,65 @@ function ProjectBlock({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * A project row's right-click menu.
+ *
+ * Closing only takes the project out of the panel. Its sessions are still
+ * observed, and it comes back from the `+` beside the heading.
+ */
+function ProjectMenu({
+  at,
+  name,
+  onClose,
+  onDismiss,
+}: {
+  at: { x: number; y: number };
+  name: string;
+  onClose: () => void;
+  onDismiss: () => void;
+}): ReactElement {
+  const root = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    root.current?.querySelector('button')?.focus({ preventScroll: true });
+    const dismiss = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) onDismiss();
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onDismiss();
+    };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', escape);
+    window.addEventListener('blur', onDismiss);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', escape);
+      window.removeEventListener('blur', onDismiss);
+    };
+  }, [onDismiss]);
+
+  return (
+    <div
+      className="menu row-menu"
+      role="menu"
+      aria-label={`${name} actions`}
+      ref={root}
+      style={{ top: at.y, left: at.x }}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          onDismiss();
+          onClose();
+        }}
+      >
+        Close project
+      </button>
+    </div>
   );
 }
 

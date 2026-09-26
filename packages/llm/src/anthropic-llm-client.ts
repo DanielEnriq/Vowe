@@ -132,6 +132,20 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
     });
   }
 
+  /**
+   * Adaptive thinking and effort, where the model has them. Older and smaller
+   * models (Haiku 4.5, Claude 3) reject both, so they get neither: a cheaper
+   * model answers without them rather than failing every call.
+   */
+  private tuned<C extends object>(effort: 'low' | 'medium' | 'high', config?: C) {
+    const adaptive = !/claude-haiku-4|claude-3/.test(this.model);
+    const output = { ...config, ...(adaptive ? { effort } : {}) };
+    return {
+      ...(adaptive ? { thinking: { type: 'adaptive' as const } } : {}),
+      ...(Object.keys(output).length ? { output_config: output } : {}),
+    };
+  }
+
   async summarizeSession(
     input: SessionInterpretationInput,
     trace?: ModelTrace,
@@ -140,11 +154,7 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
       model: this.model,
       max_tokens: 4000,
       system: SUMMARIZE_SYSTEM,
-      thinking: { type: 'adaptive' as const },
-      output_config: {
-        effort: 'low' as const,
-        format: zodOutputFormat(SemanticUpdateSchema),
-      },
+      ...this.tuned('low', { format: zodOutputFormat(SemanticUpdateSchema) }),
       messages: [
         { role: 'user' as const, content: renderInterpretationPrompt(input) },
       ],
@@ -174,8 +184,7 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
       model: this.model,
       max_tokens: 8000,
       system: withGuidance(ANSWER_SYSTEM, input.guidance),
-      thinking: { type: 'adaptive' as const },
-      output_config: { effort: 'medium' as const },
+      ...this.tuned('medium'),
       messages: [{ role: 'user' as const, content: renderQuestionPrompt(input) }],
     };
     trace?.input(request, { provider: 'anthropic', model: this.model });
@@ -223,8 +232,7 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
       model: this.model,
       max_tokens: 8000,
       system: OBSERVER_SYSTEM,
-      thinking: { type: 'adaptive' },
-      output_config: { effort: this.effort },
+      ...this.tuned(this.effort),
       tools: bound,
       max_iterations: this.maxToolIterations,
       messages: [{ role: 'user', content: renderObserverPrompt(input) }],
@@ -274,11 +282,10 @@ export class AnthropicLlmClient implements LlmClient, ObservationLlm {
         'projectId' in input ? INVESTIGATE_PROJECT_SYSTEM : INVESTIGATE_SYSTEM,
         input.guidance,
       ),
-      thinking: { type: 'adaptive' },
       // A delegated question has someone waiting on the answer out loud, but it
       // is also the call most likely to be wrong if rushed, so it gets one step
       // more effort than routine observation.
-      output_config: { effort: 'projectId' in input ? this.effort : this.effort === 'low' ? 'medium' : this.effort },
+      ...this.tuned('projectId' in input ? this.effort : this.effort === 'low' ? 'medium' : this.effort),
       tools: [recordAnswerTool(capture, 'projectId' in input
         ? 'Now answer the current project question. For a status overview, use 2–4 short sentences, under 80 words: active count, one short clause per active worker, and actual attention. For a deeper question, explain only the requested change or cause using the evidence you opened. Use human titles, not session IDs or reference strings.'
         : undefined), ...readTools(tools)],

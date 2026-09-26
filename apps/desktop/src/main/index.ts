@@ -1,3 +1,6 @@
+import { CursorAdapter } from '@vowe/adapter-cursor';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +13,7 @@ import { loadLocalEnv } from './env.js';
 const envFile = loadLocalEnv();
 
 import {
+  hasCurrentSupport,
   ArtifactResolver,
   AttentionCursorStore,
   CommunicationPolicy,
@@ -28,6 +32,7 @@ import {
   investigationChronology,
   listGitFiles,
   AppearanceStore,
+  ObservingStore,
   PresenceProfileStore,
   ProjectBriefService,
   ProjectKnowledgeService,
@@ -44,6 +49,7 @@ import {
   type LiveTransport,
   type LiveVoice,
   type PersistedWorkbench,
+  type Project,
   type SemanticInterpreter,
   type WorkbenchCandidate,
   type TemperamentProfile,
@@ -137,6 +143,16 @@ interface Services {
   /** Names a session, once, when a person's action asks for a name. */
   titles: SessionTitleService;
   observation: ObservationService;
+  /**
+   * Projects the developer has paused. Their sessions are still recorded, but
+   * interpretation, the Session Observer and naming reach no model for them;
+   * anything the developer explicitly asks still runs.
+   */
+  observing: {
+    paused(): string[];
+    set(projectId: string, observing: boolean): Promise<string[]>;
+    allows(sessionId: string): boolean;
+  };
   live: LiveBridge;
   status: AppStatus;
 }
@@ -252,6 +268,7 @@ async function createServices(): Promise<Services> {
   registry.registerAdapter(new ClaudeCodeAdapter({ onError: onAdapterError }));
   registry.registerAdapter(new PiAdapter({ onError: onAdapterError }));
   registry.registerAdapter(new CodexAdapter({ onError: onAdapterError }));
+  registry.registerAdapter(new CursorAdapter({onError: error => console.error('[cursor] evidence',error)}));
 
   const runner = new InterpretationRunner({
     registry,
@@ -291,6 +308,7 @@ async function createServices(): Promise<Services> {
   const knowledge = new ProjectKnowledgeService({
     provider: knowledgeProvider,
     memory: new ProjectMemoryStore({
+      hasCurrentSupport: ref => hasCurrentSupport(store,ref),
       dataDirFor: (projectId) => store.projectDataDir(projectId),
       mirror,
       onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
@@ -534,9 +552,37 @@ async function createServices(): Promise<Services> {
     }
   });
 
+  const observingStore = new ObservingStore({
+    root: storeRoot,
+    onError: (scope, error) => console.warn(`[vowe] ${scope}`, error),
+  });
+  let paused = new Set((await observingStore.get()).pausedProjects);
+  const isPaused = (sessionId: string) => {
+    const projectId = registry.get(sessionId)?.projectId;
+    return !!projectId && paused.has(projectId);
+  };
+  const applyObserving = async (next: Set<string>) => {
+    paused = next;
+    runner.setPaused(isPaused);
+    await observation.setPaused(isPaused);
+  };
+  await applyObserving(paused);
+
   await registry.start();
 
   return {
+    observing: {
+      paused: () => [...paused],
+      allows: (sessionId) => !isPaused(sessionId),
+      set: async (projectId, observing) => {
+        const next = new Set(paused);
+        if (observing) next.delete(projectId);
+        else next.add(projectId);
+        const stored = await observingStore.set({ pausedProjects: [...next] });
+        await applyObserving(new Set(stored.pausedProjects));
+        return stored.pausedProjects;
+      },
+    },
     store,
     registry,
     runs,
@@ -822,6 +868,39 @@ function registerIpc(): void {
     },
   );
 
+  // Open or close a project in the panel. The panel re-reads projects on the
+  // same announcement sessions use, so that is the one sent.
+  ipcMain.handle(
+    IPC.setProjectOpen,
+    async (_event, projectId: string, open: boolean): Promise<void> => {
+      await (await requireServices()).store.setProjectOpen(projectId, open);
+      broadcastSessions();
+    },
+  );
+
+  // Opening by folder. The path is checked here, because resolution falls back
+  // to the path itself for a folder outside git — and a typo would otherwise
+  // become a project.
+  ipcMain.handle(
+    IPC.openProjectAt,
+    async (_event, directory: string): Promise<Project> => {
+      const services = await requireServices();
+      const trimmed = directory.trim();
+      const absolute = path.resolve(
+        trimmed === '~' || trimmed.startsWith('~/')
+          ? path.join(os.homedir(), trimmed.slice(1))
+          : trimmed,
+      );
+      const stat = await fs.stat(absolute).catch(() => null);
+      if (!stat?.isDirectory()) throw new Error(`No folder at ${absolute}`);
+      const project = await services.projects.projectAt(absolute);
+      if (!project) throw new Error(`Could not open ${absolute}`);
+      await services.store.setProjectOpen(project.id, true);
+      broadcastSessions();
+      return services.projects.listProjectsForDisplay().find((item) => item.id === project.id) ?? project;
+    },
+  );
+
   // The generic artifact open. `ContextNavigator` itself stays off the bridge:
   // the renderer gets display projections, never the read toolset.
   ipcMain.handle(IPC.openArtifact, async (_event, ref: ContextRef) =>
@@ -926,7 +1005,7 @@ function registerIpc(): void {
      * moment. Deliberately not awaited — what the session is called is not a
      * precondition of it having been launched.
      */
-    void services.titles.ensure(session.id);
+    if (services.observing.allows(session.id)) void services.titles.ensure(session.id);
     return session;
     },
   );
@@ -941,8 +1020,14 @@ function registerIpc(): void {
    * failure is invisible to the room that called it.
    */
   ipcMain.handle(IPC.sessionOpened, async (_event, sessionId: string) => {
-    void (await requireServices()).titles.ensure(sessionId);
+    const services = await requireServices();
+    if (services.observing.allows(sessionId)) void services.titles.ensure(sessionId);
   });
+
+  ipcMain.handle(IPC.getPausedProjects, async () => (await requireServices()).observing.paused());
+  ipcMain.handle(IPC.setProjectObserving, async (_event, projectId: string, observing: boolean) =>
+    (await requireServices()).observing.set(projectId, observing === true),
+  );
 
   // ------------------------------------------------------------- observation
 

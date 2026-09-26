@@ -44,64 +44,68 @@ export class IncrementalJsonlReader<T extends JsonlRecord = JsonlRecord> {
   }
 
   async read(): Promise<JsonlReadResult<T>> {
+    const lines: JsonlLine<T>[] = [];
+    let reset = false;
+    for await (const line of this.drain(() => (reset = true))) lines.push(line);
+    return { lines, reset };
+  }
+
+  /**
+   * The complete lines added since the last call, streamed in bounded chunks.
+   * The cursor advances as each line is yielded, so a caller that folds lines
+   * as they arrive holds one chunk, not the file.
+   */
+  async *drain(onReset?: () => void): AsyncGenerator<JsonlLine<T>> {
     let size: number;
     try {
       size = (await stat(this.file)).size;
     } catch {
-      return { lines: [], reset: false };
+      return;
     }
-
     if (size < this.offset) {
       // Truncated or replaced; start over rather than emit garbage.
       this.offset = 0;
       this.lineNumber = 0;
-      return { lines: await this.readFrom(0, size), reset: true };
+      onReset?.();
     }
-    if (size === this.offset) return { lines: [], reset: false };
-    return { lines: await this.readFrom(this.offset, size), reset: false };
-  }
-
-  private async readFrom(from: number, to: number): Promise<JsonlLine<T>[]> {
-    const length = to - from;
-    if (length <= 0) return [];
-
+    if (size === this.offset) return;
     const handle = await open(this.file, 'r');
-    let buffer: Buffer;
     try {
-      buffer = Buffer.alloc(length);
-      await handle.read(buffer, 0, length, from);
+      const buffer = Buffer.allocUnsafe(CHUNK);
+      let carry: Buffer[] = [];
+      let at = this.offset;
+      while (at < size) {
+        const { bytesRead } = await handle.read(buffer, 0, Math.min(CHUNK, size - at), at);
+        if (!bytesRead) break;
+        at += bytesRead;
+        let cursor = 0;
+        for (;;) {
+          const newline = buffer.indexOf(0x0a, cursor);
+          if (newline === -1 || newline >= bytesRead) break;
+          const piece = buffer.subarray(cursor, newline);
+          const whole = carry.length ? Buffer.concat([...carry, piece]) : piece;
+          carry = [];
+          const byteOffset = this.offset;
+          this.offset += whole.length + 1;
+          this.lineNumber += 1;
+          cursor = newline + 1;
+          const text = whole.toString('utf8').trim();
+          if (!text) continue;
+          let record: T;
+          try {
+            record = JSON.parse(text) as T;
+          } catch {
+            continue; // A malformed line is skipped, never fatal.
+          }
+          yield { record, byteOffset, line: this.lineNumber };
+        }
+        // An incomplete trailing line is picked up whole on a later pass.
+        if (cursor < bytesRead) carry.push(Buffer.from(buffer.subarray(cursor, bytesRead)));
+      }
     } finally {
       await handle.close();
     }
-
-    const lastNewline = buffer.lastIndexOf(0x0a);
-    if (lastNewline === -1) return []; // No complete line yet.
-
-    const complete = buffer.subarray(0, lastNewline + 1);
-    const lines: JsonlLine<T>[] = [];
-    let cursor = 0;
-
-    while (cursor < complete.length) {
-      const newline = complete.indexOf(0x0a, cursor);
-      const end = newline === -1 ? complete.length : newline;
-      const text = complete.subarray(cursor, end).toString('utf8').trim();
-      const byteOffset = from + cursor;
-      this.lineNumber += 1;
-      if (text) {
-        try {
-          lines.push({
-            record: JSON.parse(text) as T,
-            byteOffset,
-            line: this.lineNumber,
-          });
-        } catch {
-          // A malformed line is skipped, never fatal.
-        }
-      }
-      cursor = end + 1;
-    }
-
-    this.offset = from + complete.length;
-    return lines;
   }
 }
+
+const CHUNK = 1024 * 1024;

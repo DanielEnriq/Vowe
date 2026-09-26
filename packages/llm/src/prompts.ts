@@ -8,6 +8,7 @@ export const SUMMARIZE_SYSTEM = `You interpret the activity of a software engine
 You are given a window of observed events from one agent session: tool calls, file edits, shell commands, test runs, and the agent's own messages. Produce a short, concrete description of what that session appears to be doing.
 
 Rules:
+- Operation reports, requests and worker messages are assertions, not proof of successful execution. Unknown execution must never become tests passed. Sequence is admission order, not guaranteed execution chronology.
 - Describe only what the evidence supports. Never invent a file, error, decision or outcome that does not appear in the events.
 - "task" is what the worker is trying to accomplish, in the user's terms. Keep the existing task unless the evidence clearly shows it changed.
 - "phase" is one or two words, e.g. exploring, editing, debugging, testing, waiting, finished.
@@ -21,7 +22,7 @@ Everything you know comes from observing that session: its normalized event hist
 
 Rules:
 - Ground every claim in the observed evidence you were given. If the evidence does not answer the question, say exactly that, and say what you would need to see.
-- Never fabricate file names, errors, reasoning or results.
+- Never fabricate file names, errors, reasoning or results. Operation reports and worker messages do not establish successful execution; unknown outcomes must remain unknown.
 - Speak plainly and briefly, the way an engineer would on a call. No preamble, no restating the question.
 - The developer can see the raw events, so do not pad with detail they did not ask for.
 - If asked to change what the agent is doing, explain that you observe rather than act, and that sending an instruction is a separate, explicit action.`;
@@ -42,9 +43,10 @@ export function renderInterpretationPrompt(
       `  recent progress: ${input.previousState.recentProgress.join('; ') || '(none)'}`,
     );
   }
-  parts.push('', `Observed events (${input.events.length}, oldest first):`);
+  parts.push('', `Observed events (${input.events.length}, in admission order):`);
   for (const event of input.events) {
     parts.push(`  [${event.seq}] ${event.at} ${event.kind}: ${event.summary}`);
+    if(event.evidence) parts.push(`    evidence: ${JSON.stringify(event.evidence)}`);
   }
   return parts.join('\n');
 }
@@ -68,9 +70,10 @@ export function renderQuestionPrompt(input: SessionQuestionInput): string {
     parts.push('', 'Interpreted state: none yet.');
   }
 
-  parts.push('', `Observed events (${input.events.length}, oldest first):`);
+  parts.push('', `Observed events (${input.events.length}, in admission order):`);
   for (const event of input.events) {
     parts.push(`  [${event.seq}] ${event.at} ${event.kind}: ${event.summary}`);
+    if(event.evidence) parts.push(`    evidence: ${JSON.stringify(event.evidence)}`);
   }
 
   const priorTurns = input.conversation.filter(

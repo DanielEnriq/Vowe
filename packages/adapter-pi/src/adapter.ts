@@ -1,3 +1,4 @@
+import { jsonlEvidenceSource } from '@vowe/adapter-kit';
 import { randomUUID } from 'node:crypto';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -118,6 +119,22 @@ export class PiAdapter implements AgentAdapter {
     if (!located) return null;
     const meta = await this.pumpMeta(providerSessionId, located.file, located.dir);
     return this.toSession(providerSessionId, meta);
+  }
+
+  evidenceSources(providerSessionId: string) {
+    return [jsonlEvidenceSource({
+      id: 'conversation-log',
+      // The provider only appends to a session log, so catching up reads new bytes.
+      continuity: 'append-log',
+      // This normalizer emits completions from the provider's canonical tool
+      // result records. Preserve that interpretation explicitly on migration.
+      interpret: event => ['command_finished','test_finished'].includes(event.kind) ? {execution:'executed'} : {},
+      file: () => this.meta.get(providerSessionId)?.file ?? '',
+      normalizer: (source) => new PiSessionNormalizer({sessionId: `${PROVIDER}:${providerSessionId}`,source}),
+      recordKey: (record) => typeof record.id === 'string' ? record.id as string : undefined,
+      pollMs: this.pollIntervalMs,
+      onError: (error) => this.onError(`evidence:${providerSessionId}`,error),
+    })];
   }
 
   // ------------------------------------------------------------- observation
@@ -333,8 +350,8 @@ export class PiAdapter implements AgentAdapter {
       this.meta.set(key, meta);
     }
 
-    const { lines } = await meta.reader.read();
-    for (const line of lines) this.applyMeta(meta, line);
+    // Streamed: metadata needs a few fields, never the whole history at once.
+    for await (const line of meta.reader.drain()) this.applyMeta(meta, line);
 
     // Once the header names the session, file it under that id too, so a
     // later lookup by session id finds the same cursor rather than restarting.

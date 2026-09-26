@@ -1,4 +1,6 @@
 export * from './types/index.js';
+export * from './evidence/types.js';
+export * from './evidence/reconcile.js';
 export * from './llm/llm-client.js';
 export * from './llm/observation-llm.js';
 export * from './llm/model-trace.js';
@@ -51,3 +53,5 @@ export * from './live/live-transport.js';
 export * from './live/live-conversation-recorder.js';
 export * from './live/live-bridge.js';
 export * from './live/vo-prompt.js';
+
+export * from './evidence/support.js';

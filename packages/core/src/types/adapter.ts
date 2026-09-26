@@ -1,3 +1,4 @@
+import type { EvidenceSource } from '../evidence/types.js';
 import type { AdapterEvent } from './events.js';
 import type { AgentSession } from './session.js';
 
@@ -36,6 +37,9 @@ export interface AgentAdapter {
   discoverSessions(): Promise<AgentSession[]>;
 
   getSession(providerSessionId: string): Promise<AgentSession | null>;
+
+  /** Observation sources compose independently from worker control. */
+  evidenceSources?(providerSessionId: string): EvidenceSource[];
 
   /**
    * Stream observable activity. Implementations should replay from

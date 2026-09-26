@@ -426,6 +426,26 @@ CREATE UNIQUE INDEX events_raw_ref
   ON events (session_id, raw_source, raw_byte_offset, raw_ordinal);
 `;
 
+/**
+ * A project the developer has opened in the projects panel.
+ *
+ * Projects are discovered, not chosen: every repository a worker runs in
+ * becomes one. So being in the panel is opt-in — `NULL` means closed, which is
+ * what every project discovered before this column existed becomes too.
+ * `upsertProject` names its columns and this is not among them, so discovery
+ * can neither open nor close anything.
+ */
+const PROJECT_OPEN = `
+ALTER TABLE projects ADD COLUMN opened_at TEXT;  -- NULL => key ABSENT
+`;
+
+import {
+  EVIDENCE_RECORDS_SCHEMA,
+  EVIDENCE_SCHEMA,
+  EVIDENCE_SUPPORT_SCHEMA,
+  migrateEvidenceState,
+} from '../../evidence/ledger.js';
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -472,6 +492,18 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 10,
     name: '010_event_record_ordinal',
     up: (db) => db.exec(EVENT_RECORD_ORDINAL),
+  },
+  { version: 11, name: '011_execution_evidence', up: (db) => db.exec(EVIDENCE_SCHEMA) },
+  { version: 12, name: '012_project_open', up: (db) => db.exec(PROJECT_OPEN) },
+  { version: 13, name: '013_evidence_support_history', up: (db) => db.exec(EVIDENCE_SUPPORT_SCHEMA) },
+  { version: 14, name: '014_compressed_evidence_captures', up: db=>db.exec('ALTER TABLE evidence_captures ADD COLUMN body BLOB') },
+  {
+    version: 15,
+    name: '015_evidence_records',
+    up: (db) => {
+      db.exec(EVIDENCE_RECORDS_SCHEMA);
+      migrateEvidenceState(db);
+    },
   },
 ];
 

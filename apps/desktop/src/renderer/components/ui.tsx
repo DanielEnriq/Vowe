@@ -85,6 +85,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   'claude-code': 'Claude Code',
   pi: 'pi',
   codex: 'Codex',
+  cursor: 'Cursor',
 };
 
 export function providerName(provider: string): string {
@@ -100,10 +101,9 @@ export function providerName(provider: string): string {
  * you recognise without reading — which is what a shape does and a pair of
  * initials does not.
  *
- * Each mark evokes its agent rather than reproducing a logo: a burst, a
- * letterform, a rosette. They are drawn in one weight, in `currentColor`, at
- * the same size, so no agent looks more important than another — the mark says
- * which, never how much it matters.
+ * Marks share a monochrome `currentColor` treatment and the same outer size.
+ * Cursor's compact official cube fits directly into this component; the other
+ * marks use the existing drawn treatment.
  */
 export function ProviderGlyph({
   provider,
@@ -182,6 +182,15 @@ function glyphPathsFor(provider: string): ReactElement {
         </g>
       );
 
+    // Official CUBE_2D_LIGHT.svg from https://cursor.com/brand (2026-09-25).
+    // Preserve its geometry; only scale and inherit the surrounding text color.
+    case 'cursor':
+      return (
+        <g fill="currentColor" stroke="none" transform="translate(2.91 2.2) scale(.0218)">
+          <path d="M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z" />
+        </g>
+      );
+
     /*
      * An agent we have no mark for yet.
      *
@@ -218,7 +227,7 @@ export function originLabel(session: AgentSession): string {
     case 'external-live':
       return 'Running outside Vowe';
     case 'external-idle':
-      return 'Not running · can be resumed';
+      return session.capabilities.resume ? 'Not running · can be resumed' : 'Observed externally';
   }
 }
 

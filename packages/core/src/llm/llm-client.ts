@@ -27,6 +27,7 @@ export interface LlmClient {
 
 /** The interpretable shape of an observed event. */
 export interface ObservedEvent {
+  evidence?: NormalizedEvent['evidence'];
   id: string;
   seq: number;
   at: string;
@@ -79,5 +80,6 @@ export function toObservedEvent(event: NormalizedEvent): ObservedEvent {
     at: event.at,
     kind: event.kind,
     summary: event.summary,
+    ...(event.evidence ? {evidence:event.evidence}:{}),
   };
 }

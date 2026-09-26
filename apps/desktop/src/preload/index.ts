@@ -75,6 +75,9 @@ const api: VoweApi = {
 
   getRunActivity: () => ipcRenderer.invoke(IPC.getRunActivity),
 
+  getPausedProjects: () => ipcRenderer.invoke(IPC.getPausedProjects),
+  setProjectObserving: (projectId, observing) =>
+    ipcRenderer.invoke(IPC.setProjectObserving, projectId, observing),
   startObserving: (sessionId) =>
     ipcRenderer.invoke(IPC.startObserving, sessionId),
   stopObserving: (sessionId) => ipcRenderer.invoke(IPC.stopObserving, sessionId),
@@ -87,6 +90,9 @@ const api: VoweApi = {
   // crosses this boundary in either direction.
   archiveSession: (sessionId: string, archived: boolean) =>
     ipcRenderer.invoke(IPC.archiveSession, sessionId, archived),
+  setProjectOpen: (projectId: string, open: boolean) =>
+    ipcRenderer.invoke(IPC.setProjectOpen, projectId, open),
+  openProjectAt: (directory: string) => ipcRenderer.invoke(IPC.openProjectAt, directory),
   openArtifact: (ref: ContextRef) => ipcRenderer.invoke(IPC.openArtifact, ref),
   findFiles: (sessionId: string, query: string) =>
     ipcRenderer.invoke(IPC.findFiles, sessionId, query),

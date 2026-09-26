@@ -561,6 +561,7 @@ export class ContextNavigator {
     };
 
     const lines: string[] = [
+      ...(window.stale ? ['Historical window: support was invalidated; this is what Vowe believed then.'] : []),
       `Window ${window.index} — events ${window.startSeq}..${window.endSeq} (${window.eventCount} events)`,
       `Trace time ${window.startedAt} → ${window.endedAt}, closed by ${window.closedBy}`,
       window.source
@@ -578,7 +579,7 @@ export class ContextNavigator {
 
     if (depth !== 'summary') {
       lines.push('', 'Underlying trace:');
-      for (const event of this.eventsInRange(ref.sessionId, window.startSeq, window.endSeq)) {
+      for (const event of window.eventIds ? this.store.getEventsByIds(ref.sessionId,window.eventIds) : this.eventsInRange(ref.sessionId, window.startSeq, window.endSeq)) {
         lines.push(`  [${event.seq}] ${event.kind}: ${event.summary}`);
       }
     }
@@ -595,7 +596,7 @@ export class ContextNavigator {
 
     const lines: string[] = [];
     for (const event of events) {
-      lines.push(`[${event.seq}] ${event.at} ${event.kind}: ${event.summary}`);
+      lines.push(`[${event.seq}] ${event.at} ${event.kind}: ${event.summary}${event.supportStatus === 'superseded' ? ' [superseded support — historical only]' : ''}`);
       if (depth !== 'summary') {
         const detail = detailText(event);
         if (detail) lines.push(indent(detail));
@@ -640,9 +641,9 @@ export class ContextNavigator {
       if (detail) lines.push('', detail);
     }
 
+    if (event.supportStatus === 'superseded') lines.push('', 'Historical evidence: its support has been superseded. Do not use it as a current fact.');
     if (depth === 'raw') {
-      // The normalizer truncates command output, so the answer to "what did it
-      // actually print?" lives in the provider's file, not in our copy.
+      // The captured raw object is historical evidence; a current external path is not.
       const raw = await this.readRawLine(event);
       lines.push(
         '',
@@ -739,7 +740,7 @@ export class ContextNavigator {
     if (!record) return this.missing(ref, 'No such remembered result.');
 
     const lines: string[] = [
-      `Remembered ${record.at} — ${record.outcome}`,
+      `Remembered ${record.at} — ${record.outcome}${record.supportStatus === 'invalidated' ? ' — historical only: supporting evidence was invalidated; re-investigate before relying on this conclusion' : ''}`,
       '',
       `Question: ${record.question}`,
       `Answer: ${record.answer}`,
@@ -849,22 +850,7 @@ export class ContextNavigator {
    * adapter captured when it first read the line.
    */
   private async readRawLine(event: NormalizedEvent): Promise<string | null> {
-    const { source, byteOffset } = event.rawRef;
-    if (!source) return null;
-    try {
-      const handle = await open(source, 'r');
-      try {
-        const buffer = Buffer.alloc(this.maxOpenBytes);
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, byteOffset);
-        const text = buffer.subarray(0, bytesRead).toString('utf8');
-        const newline = text.indexOf('\n');
-        return newline === -1 ? text : text.slice(0, newline);
-      } finally {
-        await handle.close();
-      }
-    } catch {
-      return null;
-    }
+    return JSON.stringify(event.raw, null, 2) ?? null;
   }
 
   private eventsInRange(
@@ -873,7 +859,7 @@ export class ContextNavigator {
     endSeq: number,
   ): NormalizedEvent[] {
     return this.store
-      .getEvents(sessionId, { sinceSeq: startSeq - 1 })
+      .getEvents(sessionId, { sinceSeq: startSeq - 1, audit: true })
       .filter((event) => event.seq <= endSeq);
   }
 

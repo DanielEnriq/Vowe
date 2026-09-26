@@ -20,6 +20,7 @@ export * from './appearance.js';
 export * from './appearance-store.js';
 export * from './voice-preference.js';
 export * from './voice-preference-store.js';
+export * from './observing-store.js';
 export * from './local-settings.js';
 export * from './user-profile.js';
 export * from './user-profile-store.js';
