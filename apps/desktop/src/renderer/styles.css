@@ -4347,3 +4347,152 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
   overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .project-voice-investigation { margin: 16px 0 24px; max-height: 300px; overflow: auto; }
 .project-voice-investigation .turn { margin: 0; }
+
+/* ------------------------------------------------------------------ studio */
+
+/*
+ * STUDIO — what should this system become?
+ *
+ * Two surfaces and nothing else: the conversation, and the living design
+ * beside it. The design is the primary object, so it gets the larger column and
+ * the desk's surface — the same rail colour, reaching the roof as the desk
+ * does — and the Workbench, when evidence is opened, takes its place in that
+ * column rather than squeezing in as a third. No cards, no dashboard.
+ */
+.studio-room {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(0, 1.2fr);
+  background: var(--pane);
+  /* The identity only lives over the conversation; the band's right is the design's. */
+  --right-column: 50vw;
+  --desk-width: 0px;
+}
+.studio-room.single { grid-template-columns: minmax(0, 1fr); --right-column: 0px; }
+
+.studio-conversation {
+  grid-row: 2;
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline);
+}
+.studio-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px var(--room-gutter, 40px) 0;
+}
+.studio-nav .link-button { font-size: 12px; }
+.studio-nav-designs { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.studio-nav select {
+  max-width: 240px; min-width: 0; background: var(--pane); color: var(--ink-5); border: 0;
+  font: inherit; font-size: 12px; padding: 6px 0; text-overflow: ellipsis;
+}
+.studio-thread { padding-top: 22px; }
+.studio-measure {
+  width: min(660px, 100%);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding-bottom: 24px;
+}
+.studio-composer { padding: 12px var(--room-gutter, 40px) 22px; }
+.studio-composer .studio-measure { padding-bottom: 0; gap: 0; }
+.studio-ask { max-width: none; width: 100%; }
+.studio-stop { font-size: 12px; padding: 4px 8px; align-self: end; color: var(--ink-4); }
+
+.studio-opening { display: flex; flex-direction: column; gap: 12px; padding-top: 10vh; }
+.studio-question { margin: 0; font-size: 24px; line-height: 1.3; color: var(--ink-2); letter-spacing: -0.01em; }
+.studio-hint { margin: 0; max-width: 460px; font-size: 13.5px; line-height: 1.65; color: var(--ink-5); text-wrap: pretty; }
+.studio-opening code { font-family: var(--mono); font-size: 11.5px; }
+.studio-unanswered { color: var(--ink-7); margin-top: -18px; }
+
+/* A repository check in flight: what it asked, and what it is reading now. */
+.consult-pending { display: flex; flex-direction: column; gap: 2px; padding: 1px 8px; }
+.consult-pending .label {
+  font-size: 12.5px; line-height: 1.5; color: var(--ink-5);
+  animation: studio-breathe 2.4s ease-in-out infinite;
+}
+.consult-pending .check-detail { font-size: 11.5px; color: var(--ink-8); }
+@keyframes studio-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+/* A settled repository check: the finding it rests on, and the files. */
+.exec-step.check.consult .target-label { white-space: normal; text-wrap: pretty; }
+.consult-finding {
+  margin: 4px 0 2px 8px;
+  max-width: 62ch;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-4);
+  white-space: pre-line;
+  text-wrap: pretty;
+}
+.consult-refs { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px 8px; }
+.consult-ref {
+  border: 0; border-radius: 4px; padding: 2px 7px;
+  background: var(--fill-1); color: var(--ink-4);
+  font-family: var(--mono); font-size: 11px; cursor: pointer;
+}
+.consult-ref:hover { background: var(--fill-2); color: var(--ink-bright); }
+.consult-ref:disabled { cursor: default; }
+
+/* Vowe's own citation: opens on the desk, never navigates. */
+.markdown .md-ref {
+  border: 0; padding: 0; background: transparent; font: inherit; cursor: pointer;
+  color: var(--ask);
+  border-bottom: 1px solid color-mix(in srgb, var(--ask) 35%, transparent);
+}
+.markdown .md-ref:hover { border-bottom-color: var(--ask); }
+
+/* The living design. */
+.design-pane {
+  grid-row: 1 / -1;
+  grid-column: 2;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--rail);
+  padding-top: var(--chrome-height);
+}
+.studio-room .workbench { grid-column: 2; }
+.studio-room.single .design-pane,
+.studio-room.single .workbench { grid-row: 2; grid-column: 1; padding-top: 0; }
+.design-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 26px 44px 64px; }
+.design-measure { width: min(720px, 100%); margin: 0 auto; }
+.design-kicker {
+  display: flex; align-items: baseline; gap: 12px; min-width: 0;
+  font-size: 11px; color: var(--ink-7);
+}
+.design-kicker > span:first-child {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-6);
+}
+.design-state.revising { color: var(--ink-4); animation: studio-breathe 2.4s ease-in-out infinite; }
+.design-history {
+  margin-left: auto; max-width: 220px; min-width: 0; background: var(--rail); color: var(--ink-6);
+  border: 0; font: inherit; font-size: 11.5px; padding: 4px 0; text-overflow: ellipsis;
+}
+.design-header { padding-bottom: 16px; margin-bottom: 26px; border-bottom: 1px solid var(--divider); }
+.design-why { margin: 10px 0 0; font-size: 12.5px; line-height: 1.6; color: var(--ink-4); text-wrap: pretty; }
+.design-why .label { color: var(--ink-7); margin-right: 4px; }
+.design-back { margin-top: 10px; font-size: 12px; }
+.design-empty { margin: 24px 0 0; font-size: 13.5px; color: var(--ink-6); }
+.design-document .markdown { font-size: 14px; line-height: 1.72; color: var(--ink-2); }
+.design-document .markdown h1 { font-size: 22px; margin: 0 0 14px; color: var(--ink-bright); letter-spacing: -0.01em; }
+.design-document .markdown h2 { font-size: 15px; margin-top: 26px; }
+.design-document .markdown h3 { font-size: 14px; margin-top: 20px; }
+.design-document.streaming .markdown { color: var(--ink-3); }
+.design-document.historical .markdown { color: var(--ink-4); }
+
+.project-places { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .consult-pending .label, .design-state.revising { animation: none; }
+}

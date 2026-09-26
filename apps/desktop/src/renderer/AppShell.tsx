@@ -29,6 +29,7 @@ import { ProjectSpace } from './project/ProjectSpace.js';
 import { ProjectSidebar } from './sidebar/ProjectSidebar.js';
 import { SessionRoom } from './session/SessionRoom.js';
 import { PresenceStudio } from './studio/PresenceStudio.js';
+import { StudioSpace } from './project/StudioSpace.js';
 import {
   prune,
   readExpanded,
@@ -355,6 +356,18 @@ export function AppShell(): ReactElement {
             }
             narrow={paneWidth < NARROW_PANE}
           />
+        ) : project && live.kind === 'project' && live.view === 'studio' ? (
+          <StudioSpace
+            key={project.id}
+            project={project}
+            presence={presence}
+            designId={live.designId}
+            narrow={paneWidth < NARROW_PANE}
+            available={status?.studioAvailable ?? true}
+            onSelectDesign={(designId) => setRoute({ kind: 'project', projectId: project.id, view: 'studio', ...(designId ? { designId } : {}) })}
+            onHome={() => setRoute({ kind: 'project', projectId: project.id })}
+            onOpenSession={(sessionId) => setRoute({ kind: 'session', sessionId })}
+          />
         ) : project ? (
           <ProjectSpace
             key={project.id}
@@ -362,10 +375,11 @@ export function AppShell(): ReactElement {
             brief={brief}
             presence={presence}
             presenceState={presenceState}
-            view={live.kind === 'project' ? live.view ?? 'home' : 'home'}
-            entryId={live.kind === 'project' ? live.entryId : undefined}
+            view={live.kind === 'project' && live.view !== 'studio' ? live.view ?? 'home' : 'home'}
+            entryId={live.kind === 'project' && live.view !== 'studio' ? live.entryId : undefined}
             narrow={paneWidth < NARROW_PANE}
             onNavigate={(view, entryId) => setRoute({ kind: 'project', projectId: project.id, view, ...(entryId ? { entryId } : {}) })}
+            onOpenStudio={(designId) => setRoute({ kind: 'project', projectId: project.id, view: 'studio', ...(designId ? { designId } : {}) })}
             onOpenSession={(sessionId) => setRoute({ kind: 'session', sessionId })}
           />
         ) : live.kind === 'presence' ? (

@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 
+import { formatRef } from '@vowe/core/refs';
 import type { ContextRef } from '@vowe/core';
 
 import { Fading } from '../shell/Fading.js';
@@ -278,6 +279,9 @@ function Check({
   row: Extract<TimelineRow, { kind: 'check' }>;
   onOpenRef?: (ref: ContextRef) => void;
 }): ReactElement {
+  if (row.check.kind === 'consult') {
+    return <ConsultCheck row={row} {...(onOpenRef ? { onOpenRef } : {})} />;
+  }
   const ref = row.check.refs[0];
   const detail = row.check.detail;
 
@@ -305,6 +309,60 @@ function Check({
       {detail && <span className="check-detail">{detail}</span>}
     </div>
   );
+}
+
+/**
+ * A question put to a coding harness about the repository, and its answer.
+ *
+ * Unlike Vowe's own lookups this one carries a finding — what the harness
+ * reported, in its own words — because that is what the design now rests on,
+ * and the files it cited, each of which opens on the desk. Which harness
+ * answered is the last and quietest thing in it: the conversation is one
+ * Vowe, and the provider is provenance, not a participant.
+ */
+function ConsultCheck({
+  row,
+  onOpenRef,
+}: {
+  row: Extract<TimelineRow, { kind: 'check' }>;
+  onOpenRef?: (ref: ContextRef) => void;
+}): ReactElement {
+  const { check } = row;
+  const provenance = [check.finding ? null : check.detail, check.via ? `via ${check.via}` : null]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <div className="exec-step check consult">
+      <span className="check-row">
+        <span className="target-label">{check.label}</span>
+      </span>
+      {check.finding && <p className="consult-finding">{check.finding}</p>}
+      {check.refs.length > 0 && (
+        <span className="consult-refs">
+          {check.refs.map((ref) => (
+            <button
+              key={formatRef(ref)}
+              className="consult-ref"
+              type="button"
+              disabled={!onOpenRef}
+              title={ref.kind === 'repo' ? ref.path : formatRef(ref)}
+              onClick={() => onOpenRef?.(ref)}
+            >
+              {refName(ref)}
+            </button>
+          ))}
+        </span>
+      )}
+      {provenance && <span className="check-detail">{provenance}</span>}
+    </div>
+  );
+}
+
+/** A file's own name and the line to look at: `observer-runner.ts:120`. */
+function refName(ref: ContextRef): string {
+  if (ref.kind !== 'repo') return formatRef(ref);
+  const name = ref.path.split('/').pop() || ref.path;
+  return ref.line === undefined ? name : `${name}:${ref.line}`;
 }
 
 /**

@@ -3,6 +3,11 @@ import type {
   AppearanceSetting,
   ContextRef,
   ConversationChange,
+  DesignChange,
+  DesignSummary,
+  DesignTurnOutcome,
+  DesignView,
+  StudioProgress,
   ConversationDelivery,
   ConversationEntry,
   InstructionResult,
@@ -384,6 +389,27 @@ export interface VoweApi {
   onProjectConversationChanged(
     listener: (change: ProjectConversationChange) => void,
   ): () => void;
+
+  // ----------------------------------------------------------------- studio
+
+  /**
+   * Studio: think about what the system should become, with a living design.
+   *
+   * A third path, beside asking and instructing, and separate from both: a
+   * design turn can check the repository read-only through a coding harness,
+   * but can neither instruct a worker nor reach Project Ask or project memory.
+   */
+  listDesigns(projectId: string): Promise<DesignSummary[]>;
+  getDesign(designId: string): Promise<DesignView | null>;
+  createDesign(projectId: string): Promise<DesignSummary>;
+  /** Resolves when the turn is committed, cancelled or has failed. */
+  converseDesign(designId: string, message: string, contextRefs?: ContextRef[]): Promise<DesignTurnOutcome>;
+  /** Stop the running turn. False when nothing was running. */
+  cancelDesignTurn(designId: string): Promise<boolean>;
+  /** A turn in flight. Transient; the committed design is re-read on change. */
+  onStudioProgress(listener: (progress: StudioProgress) => void): () => void;
+  /** A design's conversation or revisions changed, after commit. */
+  onDesignChanged(listener: (change: DesignChange) => void): () => void;
 }
 
 /**
@@ -437,6 +463,8 @@ export interface AppStatus {
    * may be put behind a button.
    */
   launchCapableProviders: string[];
+  /** False when no model is configured: Studio says so rather than pretending. */
+  studioAvailable: boolean;
 }
 
 /**
@@ -524,4 +552,11 @@ export const IPC = {
   conversationChanged: 'vowe:session:conversation-changed',
   runActivityChanged: 'vowe:runs:activity-changed',
   projectConversationChanged: 'vowe:project:conversation-changed',
+  listDesigns: 'vowe:studio:list',
+  getDesign: 'vowe:studio:get',
+  createDesign: 'vowe:studio:create',
+  converseDesign: 'vowe:studio:converse',
+  cancelDesignTurn: 'vowe:studio:cancel',
+  studioProgress: 'vowe:studio:progress',
+  designChanged: 'vowe:studio:design-changed',
 } as const;

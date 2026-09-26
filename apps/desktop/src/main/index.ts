@@ -40,6 +40,7 @@ import {
   ProjectService,
   SessionRegistry,
   SessionTitleService,
+  StudioService,
   TemperamentStore,
   UserProfileStore,
   UnavailableLiveTransport,
@@ -55,11 +56,11 @@ import {
   type TemperamentProfile,
   type VoicePreference,
 } from '@vowe/core';
-import { ClaudeCodeAdapter } from '@vowe/adapter-claude-code';
+import { ClaudeCodeAdapter, ClaudeCodeConsultant } from '@vowe/adapter-claude-code';
 import { CodexAdapter } from '@vowe/adapter-codex';
 import { PiAdapter } from '@vowe/adapter-pi';
 import { createGraphifyKnowledge } from '@vowe/knowledge-graphify';
-import { AnthropicLlmClient, AnthropicTitleModel } from '@vowe/llm';
+import { AnthropicLlmClient, AnthropicSystemDesignAgent, AnthropicTitleModel } from '@vowe/llm';
 import { JevDecisionRouter } from '@vowe/decision-jev';
 import { OpenAiLiveTransport } from '@vowe/live-openai';
 
@@ -154,6 +155,12 @@ interface Services {
     allows(sessionId: string): boolean;
   };
   live: LiveBridge;
+  /**
+   * Studio, when a model is configured. Holds a design store, a read-only
+   * repository consultant and a way to open attachments — never the registry,
+   * project memory or the live bridge.
+   */
+  studio: StudioService | null;
   status: AppStatus;
 }
 
@@ -476,6 +483,33 @@ async function createServices(): Promise<Services> {
 
   const companion = new CompanionService({ store, delegated });
 
+  /*
+   * Studio: system design with a living document.
+   *
+   * The consultant is constructed here and handed to Studio alone. It is
+   * never registered with the session registry, so checking the repository
+   * for a design can never become instructing a worker — and Studio holds
+   * nothing that reaches project memory or voice.
+   */
+  const designAgent = AnthropicSystemDesignAgent.fromEnvironment();
+  const studio = designAgent
+    ? new StudioService({
+        store,
+        agent: designAgent,
+        consultant: new ClaudeCodeConsultant(),
+        attachments: navigator,
+        runs,
+        temperament: () => temperament,
+        onProgress: (progress) => {
+          window?.webContents.send(IPC.studioProgress, progress);
+        },
+        onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
+      })
+    : null;
+  store.onDesignChanged((change) => {
+    window?.webContents.send(IPC.designChanged, change);
+  });
+
   const live = new LiveBridge({
     transport: liveTransport,
     projectBrief: (projectId) => brief.get(projectId),
@@ -610,6 +644,7 @@ async function createServices(): Promise<Services> {
     titles,
     observation,
     live,
+    studio,
     status: {
       llmConfigured: llm !== undefined,
       voiceConfigured: liveTransport.available,
@@ -620,6 +655,7 @@ async function createServices(): Promise<Services> {
       storeRoot,
       providers: registry.providers(),
       launchCapableProviders: registry.launchCapableProviders(),
+      studioAvailable: studio !== null,
     },
   };
 }
@@ -826,6 +862,33 @@ function registerIpc(): void {
         .catch((error) => console.error('[vowe] live:typed-context', error));
       return { entry: result.entry, refs: result.refs, failed: result.failed };
     },
+  );
+
+  // Studio. A third path beside asking and instructing: it can check the
+  // repository read-only for a design, and reach nothing else.
+  const requireStudio = async (): Promise<StudioService> => {
+    const { studio } = await requireServices();
+    if (!studio) throw new Error('Studio needs a model configured.');
+    return studio;
+  };
+  ipcMain.handle(IPC.listDesigns, async (_event, projectId: string) =>
+    (await requireServices()).studio?.listDesigns(projectId) ?? [],
+  );
+  ipcMain.handle(IPC.getDesign, async (_event, designId: string) =>
+    (await requireServices()).studio?.getDesign(designId) ?? null,
+  );
+  ipcMain.handle(IPC.createDesign, async (_event, projectId: string) => {
+    const studio = await requireStudio();
+    const design = await studio.createDesign(projectId);
+    return studio.listDesigns(projectId).find((summary) => summary.id === design.id)!;
+  });
+  ipcMain.handle(
+    IPC.converseDesign,
+    async (_event, designId: string, message: string, contextRefs?: ContextRef[]) =>
+      (await requireStudio()).converse({ designId, message, ...(contextRefs?.length ? { contextRefs } : {}) }),
+  );
+  ipcMain.handle(IPC.cancelDesignTurn, async (_event, designId: string) =>
+    (await requireServices()).studio?.cancel(designId) ?? false,
   );
 
   ipcMain.handle(IPC.getProjectConversation, async (_event, projectId: string) =>

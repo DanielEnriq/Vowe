@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from 'react';
 
 import type { ContextRef, InvestigationReceipt, InvestigationStep } from '@vowe/core';
 
-import { settledRows } from '../state/investigation-timeline.js';
+import { receiptSummary, settledRows } from '../state/investigation-timeline.js';
 import { CaretIcon } from '../shell/icons.js';
 import { InvestigationTimeline } from './InvestigationTimeline.js';
 
@@ -68,9 +68,7 @@ export function SettledInvestigation({
         onClick={() => setOpen((was) => !was)}
       >
         <CaretIcon />
-        <span>
-          Checked {count} {count === 1 ? 'thing' : 'things'} · {seconds(receipt.durationMs)}
-        </span>
+        <span>{receiptSummary(receipt)}</span>
       </button>
 
       {/*
@@ -111,12 +109,6 @@ function useGrown(ready: boolean): boolean {
   }, [ready]);
 
   return grown;
-}
-
-/** One decimal below ten seconds; whole seconds above. */
-function seconds(ms: number): string {
-  const value = ms / 1000;
-  return value < 10 ? `${value.toFixed(1)}s` : `${Math.round(value)}s`;
 }
 
 /** `null` until the chronology has been read — including while unopened. */
