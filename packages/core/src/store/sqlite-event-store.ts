@@ -1,3 +1,11 @@
+import {decodeCapture} from '../evidence/capture-codec.js';
+import {gzipSync} from 'node:zlib';
+import {setImmediate as yieldToIo} from 'node:timers/promises';
+import { evidenceCoverage } from '../evidence/types.js';
+import { fingerprint } from '../evidence/reconcile.js';
+import { EvidenceLedger } from '../evidence/ledger.js';
+import type { EvidenceBatch, EvidenceChange, EvidenceStatus } from '../evidence/types.js';
+import { hasCurrentSupport } from '../evidence/support.js';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
@@ -68,6 +76,10 @@ export interface SqliteEventStoreOptions {
  * that — `seq` is assigned inside the insert rather than by a counter — and the
  * renderer reaches this only through typed IPC.
  */
+/** Every events column, with the raw payload read as absent. */
+const EVENTS_WITHOUT_RAW = `session_id, seq, id, at, kind, summary, detail_json, NULL AS raw_json,
+  raw_source, raw_byte_offset, raw_line, raw_ordinal, logical_key, active, evidence_json`;
+
 export class SqliteEventStore implements EventStore {
   private readonly root: string;
   private readonly onError: (scope: string, error: unknown) => void;
@@ -80,6 +92,7 @@ export class SqliteEventStore implements EventStore {
   >();
   private readonly cache = new Map<string, StatementSync>();
   private db: DatabaseSync | null = null;
+  private evidence: EvidenceLedger | null = null;
 
   constructor(root: string, options: SqliteEventStoreOptions = {}) {
     this.root = root;
@@ -92,6 +105,33 @@ export class SqliteEventStore implements EventStore {
     this.db = openDatabase(this.root, {
       ...(this.migrations ? { migrations: this.migrations } : {}),
     });
+    // Recovery is independent of the provider still being present. Failed
+    // decodings remain captured and diagnosable, never acknowledged as admitted.
+    if (this.db.prepare("SELECT name FROM sqlite_master WHERE name='evidence_journal'").get()) {
+      const ledger = this.ledger();
+      // Staged segments of a snapshot that never completed carry no admitted
+      // meaning; their source did not advance its checkpoint and re-reads.
+      ledger.discardStaging();
+      for (const capture of ledger.pending()) {
+        try {
+          if (!capture.legacy) ledger.recover(capture.sessionId, capture.sourceId, capture.captureId);
+          else {
+            const row=this.db.prepare('SELECT payload,body FROM evidence_captures WHERE session_id=? AND source_id=? AND capture_id=?')
+              .get(capture.sessionId,capture.sourceId,capture.captureId)!;
+            ledger.ingest(capture.sessionId,decodeCapture({payload:row.payload,body:row.body}));
+          }
+        } catch(error) {this.onError('evidence:recovery',error);}
+        await yieldToIo();
+      }
+      // Losslessly encode captures written by the development-era JSON schema.
+      // Their digests, observation bytes and historical meaning do not change.
+      const unpacked=this.db.prepare('SELECT rowid FROM evidence_captures WHERE body IS NULL').all();
+      for(const address of unpacked) {
+        const row=this.db.prepare(`SELECT payload,json_remove(payload,'$.records','$.rawText') AS metadata FROM evidence_captures WHERE rowid=?`).get(address.rowid!)!;
+        this.db.prepare('UPDATE evidence_captures SET payload=?,body=? WHERE rowid=?').run(String(row.metadata),gzipSync(String(row.payload),{level:1}),address.rowid!);
+        await yieldToIo();
+      }
+    }
   }
 
   /**
@@ -104,6 +144,7 @@ export class SqliteEventStore implements EventStore {
   async close(): Promise<void> {
     if (!this.db) return;
     this.cache.clear();
+    this.evidence = null;
     this.db.close();
     this.db = null;
   }
@@ -132,6 +173,19 @@ export class SqliteEventStore implements EventStore {
         createdAt: project.createdAt,
       },
     );
+  }
+
+  /**
+   * Open a project in the projects panel, or close it.
+   *
+   * Attention only, like archiving a session: a closed project is still
+   * discovered, still observed, and keeps everything it had.
+   */
+  async setProjectOpen(projectId: string, open: boolean): Promise<void> {
+    this.run('UPDATE projects SET opened_at = :at WHERE id = :id', {
+      id: projectId,
+      at: open ? new Date().toISOString() : null,
+    });
   }
 
   listProjects(): Project[] {
@@ -223,12 +277,17 @@ export class SqliteEventStore implements EventStore {
   }
 
   listSessions(): AgentSession[] {
-    return this.all('SELECT * FROM sessions ORDER BY ord').map(rows.toSession);
+    return this.all('SELECT * FROM sessions ORDER BY ord').map(row => this.withCoverage(rows.toSession(row)));
   }
 
   getSession(sessionId: string): AgentSession | null {
     const row = this.get('SELECT * FROM sessions WHERE id = ?', sessionId);
-    return row ? rows.toSession(row) : null;
+    return row ? this.withCoverage(rows.toSession(row)) : null;
+  }
+
+  private withCoverage(session: AgentSession): AgentSession {
+    const coverage = evidenceCoverage(this.evidenceStatus(session.id));
+    return coverage.length ? {...session, observationCoverage:coverage} : session;
   }
 
   // ------------------------------------------------------------------ events
@@ -243,10 +302,48 @@ export class SqliteEventStore implements EventStore {
    * no sequence number, and `RETURNING` yields nothing — which is exactly the
    * `null` this method promises, and what makes restart-and-replay safe.
    */
+  private ledger(): EvidenceLedger {
+    this.evidence ??= new EvidenceLedger(this.connection());
+    return this.evidence;
+  }
+
+  async ingestEvidence(sessionId: string, batch: EvidenceBatch): Promise<EvidenceChange> {
+    return this.ledger().ingest(sessionId, batch);
+  }
+
+  evidenceStatus(sessionId: string): EvidenceStatus { return this.ledger().status(sessionId); }
+
+  /** Evidence revision against the observer's watermark, before source catch-up is known. */
+  evidenceFreshness(sessionId: string): { evidenceRevision: number; derivedThroughRevision: number } {
+    const processed = this.getObservationState(sessionId)?.processedThroughSeq ?? 0;
+    return {
+      evidenceRevision: this.ledger().revision(sessionId),
+      derivedThroughRevision: this.ledger().derivedThrough(sessionId, processed),
+    };
+  }
+
+  evidenceProvenance(sessionId: string, eventId: string): unknown[] {
+    const event = this.getEventsByIds(sessionId, [eventId])[0];
+    if (!event?.evidence) return event ? [event.raw] : [];
+    const current = this.ledger().provenance(sessionId, eventId);
+    // Development-era captures stored whole batches; return only the records
+    // at this event's raw address rather than the entire historical snapshot.
+    const legacy = this.all(`SELECT DISTINCT c.payload,c.body FROM evidence_event_support s JOIN evidence_captures c
+      ON c.session_id=s.session_id AND c.source_id=s.source_id AND c.capture_id=s.capture_id
+      WHERE s.session_id=? AND s.event_id=? AND s.obs IS NULL AND c.format IS NULL`, sessionId, eventId)
+      .map(r => decodeCapture({payload:r['payload'],body:r['body']}))
+      .map(batch => ({...batch, rawText: undefined, records: batch.records.filter(r =>
+        r.location.source === event.rawRef.source && r.location.byteOffset === event.rawRef.byteOffset)}));
+    return [...legacy, ...current];
+  }
+
   async appendEvent(
     sessionId: string,
     event: AdapterEvent,
   ): Promise<NormalizedEvent | null> {
+    const adopted = this.get(`SELECT * FROM events WHERE session_id=? AND raw_source=? AND raw_byte_offset=? AND raw_ordinal=? AND logical_key IS NOT NULL`,
+      sessionId,event.rawRef.source,event.rawRef.byteOffset,event.rawRef.ordinal ?? 0);
+    if (adopted && fingerprint(rows.toEvent(adopted).raw)===fingerprint(event.raw)) return null;
     const id = randomUUID();
     const row = this.get(
       `INSERT INTO events (
@@ -261,7 +358,7 @@ export class SqliteEventStore implements EventStore {
        -- Identity is the physical address plus which of that record's events
        -- this is. Without the ordinal, a record that produced four events
        -- stored one and discarded three.
-       ON CONFLICT (session_id, raw_source, raw_byte_offset, raw_ordinal) DO NOTHING
+       ON CONFLICT (session_id, raw_source, raw_byte_offset, raw_ordinal) WHERE logical_key IS NULL DO NOTHING
        RETURNING seq`,
       {
         sessionId,
@@ -286,11 +383,17 @@ export class SqliteEventStore implements EventStore {
     // `limit` means the last N, so the query takes them from the end and the
     // result is flipped back into ascending order.
     return this.tail(
-      `SELECT * FROM events
-        WHERE session_id = :sessionId
-          AND (:sinceSeq IS NULL OR seq > :sinceSeq)`,
+      `SELECT ${query.omitRaw ? EVENTS_WITHOUT_RAW : '*'} FROM events
+        WHERE session_id = :sessionId AND (:audit = 1 OR active = 1)
+          AND (:sinceSeq IS NULL OR seq > :sinceSeq)
+          AND (:untilSeq IS NULL OR seq <= :untilSeq)`,
       'seq',
-      { sessionId, sinceSeq: rows.num(query.sinceSeq) },
+      {
+        sessionId,
+        sinceSeq: rows.num(query.sinceSeq),
+        untilSeq: rows.num(query.untilSeq),
+        audit: query.audit ? 1 : 0,
+      },
       query.limit,
     ).map(rows.toEvent);
   }
@@ -775,10 +878,10 @@ export class SqliteEventStore implements EventStore {
       `INSERT INTO windows (
          session_id, idx, id, start_seq, end_seq, event_count, approx_tokens,
          source, start_offset, end_offset, started_at, ended_at, closed_by,
-         created_at)
+         created_at,event_ids_json)
        VALUES (:sessionId, :idx, :id, :startSeq, :endSeq, :eventCount,
                :approxTokens, :source, :startOffset, :endOffset, :startedAt,
-               :endedAt, :closedBy, :createdAt)
+               :endedAt, :closedBy, :createdAt, :eventIds)
        -- Appending the same window twice is a no-op, not a duplicate.
        ON CONFLICT (session_id, idx) DO NOTHING`,
       {
@@ -795,6 +898,7 @@ export class SqliteEventStore implements EventStore {
         startedAt: window.startedAt,
         endedAt: window.endedAt,
         closedBy: window.closedBy,
+        eventIds: rows.json(window.eventIds),
         createdAt: window.createdAt,
       },
     );
@@ -803,7 +907,7 @@ export class SqliteEventStore implements EventStore {
   getWindows(sessionId: string, query: WindowQuery = {}): TraceWindow[] {
     return this.tail(
       `SELECT * FROM windows
-        WHERE session_id = :sessionId
+        WHERE session_id = :sessionId AND stale=0
           AND (:sinceIndex IS NULL OR idx > :sinceIndex)`,
       'idx',
       { sessionId, sinceIndex: rows.num(query.sinceIndex) },
@@ -832,18 +936,7 @@ export class SqliteEventStore implements EventStore {
               :windowId, :windowIndex, :summary, :understanding, :currentActivity,
               :notableChange, :refs, :investigated, :createdAt
        WHERE true
-       -- One note per window. Re-noting a window replaces its note rather than
-       -- leaving the list and the per-window lookup disagreeing.
-       ON CONFLICT (session_id, window_id) DO UPDATE SET
-         id               = excluded.id,
-         window_index     = excluded.window_index,
-         summary          = excluded.summary,
-         understanding    = excluded.understanding,
-         current_activity = excluded.current_activity,
-         notable_change   = excluded.notable_change,
-         refs_json        = excluded.refs_json,
-         investigated     = excluded.investigated,
-         created_at       = excluded.created_at`,
+       ON CONFLICT (id) DO NOTHING`,
       {
         id: note.id,
         sessionId: note.sessionId,
@@ -862,7 +955,9 @@ export class SqliteEventStore implements EventStore {
 
   getWindowNotes(sessionId: string, limit?: number): WindowNote[] {
     return this.tail(
-      'SELECT * FROM window_notes WHERE session_id = :sessionId',
+      `SELECT * FROM window_notes n WHERE session_id = :sessionId
+       AND NOT EXISTS(SELECT 1 FROM windows w WHERE w.id=n.window_id AND w.stale=1)
+       AND ord=(SELECT MAX(n2.ord) FROM window_notes n2 WHERE n2.session_id=n.session_id AND n2.window_id=n.window_id)`,
       'ord',
       { sessionId },
       limit,
@@ -874,7 +969,7 @@ export class SqliteEventStore implements EventStore {
     windowId: string,
   ): WindowNote | null {
     const row = this.get(
-      'SELECT * FROM window_notes WHERE session_id = ? AND window_id = ?',
+      'SELECT * FROM window_notes WHERE session_id = ? AND window_id = ? ORDER BY ord DESC LIMIT 1',
       sessionId,
       windowId,
     );
@@ -963,11 +1058,11 @@ export class SqliteEventStore implements EventStore {
     // Ordered by createdAt with `ord` as the tiebreak, which reproduces the
     // stable insertion order the in-memory Map gave on equal timestamps.
     return this.tail(
-      'SELECT * FROM surface_updates WHERE session_id = :sessionId',
+      `SELECT * FROM surface_updates u WHERE session_id = :sessionId AND NOT EXISTS(SELECT 1 FROM windows w WHERE w.id=u.window_id AND w.stale=1)`,
       'created_at, ord',
       { sessionId },
-      limit,
-    ).map(rows.toSurfaceUpdate);
+      undefined,
+    ).map(rows.toSurfaceUpdate).filter(update=>update.refs.every(ref=>hasCurrentSupport(this,ref))).slice(limit ? -limit : 0);
   }
 
   getObservationState(sessionId: string): ObservationState | null {

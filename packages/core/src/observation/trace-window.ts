@@ -22,6 +22,8 @@ import type { ContextRef } from '../context/refs.js';
  * transcript can be re-read directly without going through Vowe's store at all.
  */
 export interface TraceWindow {
+  eventIds?: string[];
+  stale?: boolean;
   id: string;
   sessionId: string;
   /** 0-based position in the session. The ordering invariant. */

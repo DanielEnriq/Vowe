@@ -166,7 +166,7 @@ export class ProjectKnowledgeService {
   async listMemories(projectId: string, limit?: number): Promise<ProjectMemoryRecord[]> {
     if (!this.memory) return [];
     try {
-      const records = await this.memory.list(projectId);
+      const records = (await this.memory.list(projectId)).filter(record=>record.supportStatus!=='invalidated');
       const newestFirst = [...records].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
       return typeof limit === 'number' ? newestFirst.slice(0, limit) : newestFirst;
     } catch (error) {

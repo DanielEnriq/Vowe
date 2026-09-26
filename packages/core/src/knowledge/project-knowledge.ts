@@ -123,6 +123,8 @@ export interface ProjectKnowledgeProvider {
  * mirror it for its own purposes, but the copy here is the canonical one.
  */
 export interface ProjectMemoryRecord {
+  /** Read-time eligibility; historical memory bytes are never rewritten. */
+  supportStatus?: 'invalidated';
   id: string;
   projectId: string;
   at: string;

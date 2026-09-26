@@ -73,6 +73,19 @@ export class PiSessionNormalizer {
     this.context = context;
   }
 
+  /** Context carried from earlier records: tool calls still awaiting a result. */
+  state(): { pending: Array<[string, PendingTool]>; sawOpeningPrompt: boolean } {
+    return { pending: [...this.pending], sawOpeningPrompt: this.sawOpeningPrompt };
+  }
+
+  /** Continue as if every record before a checkpoint had been read here. */
+  restore(state: unknown): void {
+    const saved = state as ReturnType<this['state']>;
+    this.pending.clear();
+    for (const [id, tool] of saved.pending) this.pending.set(id, tool);
+    this.sawOpeningPrompt = saved.sawOpeningPrompt;
+  }
+
   /** May produce zero, one or several events for a single entry. */
   normalize(line: PiLine): AdapterEvent[] {
     // One record, several events: each needs its own physical identity

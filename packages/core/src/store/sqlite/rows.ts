@@ -107,6 +107,9 @@ export function toProject(row: Row): Project {
     project.gitCommonDir = str(row['git_common_dir']);
   }
   if (row['remote_url'] !== null) project.remoteUrl = str(row['remote_url']);
+  if (row['opened_at'] !== null && row['opened_at'] !== undefined) {
+    project.openedAt = str(row['opened_at']);
+  }
   return project;
 }
 
@@ -174,6 +177,8 @@ export function toEvent(row: Row): NormalizedEvent {
         : int(row['raw_ordinal']),
     },
   };
+  if (row['active'] === 0) event.supportStatus = 'superseded';
+  if (row['evidence_json']) event.evidence = JSON.parse(String(row['evidence_json']));
   if (row['detail_json'] !== null) {
     event.detail = parse<Record<string, unknown>>(
       row['detail_json'],
@@ -321,6 +326,8 @@ export function toDelivery(row: Row): ConversationDelivery {
 
 export function toWindow(row: Row): TraceWindow {
   return {
+    ...(row['event_ids_json'] ? {eventIds:JSON.parse(String(row['event_ids_json']))}:{}),
+    ...(row['stale'] === 1 ? {stale:true}:{}),
     id: str(row['id']),
     sessionId: str(row['session_id']),
     index: int(row['idx']),

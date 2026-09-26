@@ -527,7 +527,7 @@ export class DelegatedQuestionRunner {
   private projectRoster(projectId: string): ProjectSessionLine[] {
     let recent = 0;
     return this.sessionsFor(projectId)
-      .map((session) => projectSessionSummary(session, this.store.getEvents(session.id), projectId))
+      .map((session) => projectSessionSummary(session, this.store.getEvents(session.id, { omitRaw: true }), projectId))
       .sort((a, b) => Number(isCurrentProjectWork(b, b.needsAttention)) - Number(isCurrentProjectWork(a, a.needsAttention))
         || Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt))
       .filter((session) => isCurrentProjectWork(session, session.needsAttention) || recent++ < 3)

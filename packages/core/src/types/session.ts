@@ -145,6 +145,10 @@ export interface AgentSession {
   archivedAt?: string;
   /** Populated by the interpretation layer, not by the adapter. */
   semanticState: SemanticState | null;
+  /** Coverage of captured surfaces; it never asserts complete execution. */
+  observationCoverage?: import('../evidence/types.js').EvidenceCoverage[];
+  /** Whether derived understanding reflects admitted evidence; derived, never stored. */
+  evidenceFreshness?: import('../evidence/types.js').EvidenceFreshness;
 }
 
 /**

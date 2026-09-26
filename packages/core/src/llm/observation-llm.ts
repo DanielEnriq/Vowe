@@ -103,6 +103,7 @@ export interface ObserverWindowSlice {
 }
 
 export interface ObserverEventLine {
+  ref?: string;
   seq: number;
   at: string;
   kind: string;
@@ -112,6 +113,7 @@ export interface ObserverEventLine {
 }
 
 export interface ObserveWindowInput {
+  coverage?: import('../evidence/types.js').EvidenceCoverage[];
   sessionId: string;
   /** The developer's own words about what the work is for. */
   task: string | null;

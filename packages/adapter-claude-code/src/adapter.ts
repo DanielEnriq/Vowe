@@ -1,3 +1,4 @@
+import { jsonlEvidenceSource } from '@vowe/adapter-kit';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -132,6 +133,22 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       return this.toSession(providerSessionId, null);
     }
     return null;
+  }
+
+  evidenceSources(providerSessionId: string) {
+    return [jsonlEvidenceSource({
+      id: 'conversation-log',
+      // The provider only appends to a session log, so catching up reads new bytes.
+      continuity: 'append-log',
+      // This normalizer emits completions from the provider's canonical tool
+      // result records. Preserve that interpretation explicitly on migration.
+      interpret: event => ['command_finished','test_finished'].includes(event.kind) ? {execution:'executed'} : {},
+      file: () => this.meta.get(providerSessionId)?.file ?? '',
+      normalizer: (source) => new TranscriptNormalizer({sessionId: `${PROVIDER}:${providerSessionId}`,source}),
+      recordKey: (record) => typeof record.uuid === 'string' ? record.uuid as string : undefined,
+      pollMs: this.pollIntervalMs,
+      onError: (error) => this.onError(`evidence:${providerSessionId}`,error),
+    })];
   }
 
   // ------------------------------------------------------------- observation
@@ -369,8 +386,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       this.meta.set(sessionId, meta);
     }
 
-    const { lines } = await meta.reader.read();
-    for (const line of lines) this.applyMeta(meta, line);
+    // Streamed: metadata needs a few fields, never the whole history at once.
+    for await (const line of meta.reader.drain()) this.applyMeta(meta, line);
     return meta;
   }
 

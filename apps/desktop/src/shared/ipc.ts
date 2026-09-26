@@ -93,6 +93,12 @@ export interface VoweApi {
   // ----------------------------------------------------------- observation
 
   /** Begin following a session's trace. Returns as soon as it has started. */
+  /**
+   * Projects whose sessions Vowe is not observing on its own. Paused, it
+   * keeps recording them but makes no model calls for them unless asked.
+   */
+  getPausedProjects(): Promise<string[]>;
+  setProjectObserving(projectId: string, observing: boolean): Promise<string[]>;
   startObserving(sessionId: string): Promise<ObservationStatus>;
   stopObserving(sessionId: string): Promise<void>;
   getObservation(sessionId: string): Promise<ObservationView>;
@@ -280,6 +286,20 @@ export interface VoweApi {
    */
   archiveSession(sessionId: string, archived: boolean): Promise<void>;
 
+  /**
+   * Open a project in the projects panel, or close it.
+   *
+   * Projects start closed. Attention, not data: a closed project is still
+   * observed and is opened again from the `+` beside the panel's heading.
+   */
+  setProjectOpen(projectId: string, open: boolean): Promise<void>;
+
+  /**
+   * Open the project a folder belongs to, discovering it if nobody has worked
+   * there yet. `~` is the home directory. Rejects when there is no such folder.
+   */
+  openProjectAt(directory: string): Promise<Project>;
+
   openArtifact(ref: ContextRef): Promise<WorkbenchArtifact>;
 
   /**
@@ -449,6 +469,8 @@ export const IPC = {
   ask: 'vowe:companion:ask',
   sendInstruction: 'vowe:agent:send-instruction',
   launch: 'vowe:agent:launch',
+  getPausedProjects: 'vowe:observing:paused',
+  setProjectObserving: 'vowe:observing:set',
   startObserving: 'vowe:observe:start',
   stopObserving: 'vowe:observe:stop',
   getObservation: 'vowe:observe:state',
@@ -468,6 +490,8 @@ export const IPC = {
   getAppearance: 'vowe:appearance:get',
   setAppearance: 'vowe:appearance:set',
   archiveSession: 'vowe:session:archive',
+  setProjectOpen: 'vowe:project:set-open',
+  openProjectAt: 'vowe:project:open-at',
   openArtifact: 'vowe:artifact:open',
   findFiles: 'vowe:workbench:find-files',
   getWorkbench: 'vowe:workbench:get',

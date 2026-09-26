@@ -106,6 +106,13 @@ export interface ProjectBriefServiceOptions {
 const DEFAULT_RECENT_LIMIT = 5;
 const MAX_DETAIL_LINES = 3;
 
+/**
+ * What a brief reads of each session: its recent trace, without payloads. The
+ * brief speaks about current work and the latest developments; a long
+ * session's full history is neither needed nor affordable on every refresh.
+ */
+const BRIEF_EVENTS = { limit: 2000, omitRaw: true } as const;
+
 export class ProjectBriefService {
   private readonly store: ProjectBriefServiceOptions['store'];
   private readonly sessionsFor: (projectId: string) => AgentSession[];
@@ -129,7 +136,7 @@ export class ProjectBriefService {
   async get(projectId: string): Promise<ProjectBrief> {
     const sessions = [...this.sessionsFor(projectId)].sort(byMostRecent);
 
-    const events = new Map(sessions.map((session) => [session.id, this.store.getEvents(session.id)]));
+    const events = new Map(sessions.map((session) => [session.id, this.store.getEvents(session.id, BRIEF_EVENTS)]));
     const summaries = new Map(sessions.map((session) => [session.id,
       projectSessionSummary(session, events.get(session.id)!, projectId),
     ]));

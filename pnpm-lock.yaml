@@ -23,6 +23,9 @@ importers:
       '@vowe/adapter-codex':
         specifier: workspace:*
         version: link:../../packages/adapter-codex
+      '@vowe/adapter-cursor':
+        specifier: workspace:*
+        version: link:../../packages/adapter-cursor
       '@vowe/adapter-pi':
         specifier: workspace:*
         version: link:../../packages/adapter-pi
@@ -108,6 +111,22 @@ importers:
         version: 5.9.3
 
   packages/adapter-codex:
+    dependencies:
+      '@vowe/adapter-kit':
+        specifier: workspace:*
+        version: link:../adapter-kit
+      '@vowe/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.3
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/adapter-cursor:
     dependencies:
       '@vowe/adapter-kit':
         specifier: workspace:*

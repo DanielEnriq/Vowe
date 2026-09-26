@@ -51,6 +51,8 @@ export class InterpretationRunner {
   private readonly pending = new Map<string, { count: number; timer: NodeJS.Timeout }>();
   private readonly inFlight = new Set<string>();
   private stopped = false;
+  /** Paused sessions keep the fast, model-free lane; nothing reaches a model. */
+  private paused: (sessionId: string) => boolean = () => false;
 
   constructor(options: InterpretationRunnerOptions) {
     this.options = {
@@ -64,6 +66,9 @@ export class InterpretationRunner {
   }
 
   start(): void {
+    this.options.registry.on('evidence:changed', change => {
+      if (change.invalidatedFromSeq !== undefined) void this.refresh(change.sessionId);
+    });
     this.options.registry.on('event', (event) => {
       // Fast first, and never awaited: the event lane is ingestion, and a
       // developer watching a worker move should see it move.
@@ -98,13 +103,27 @@ export class InterpretationRunner {
     this.pending.clear();
   }
 
+  /**
+   * Which sessions get no model-backed interpretation. Pausing drops what was
+   * scheduled for them; resuming waits for their next event rather than
+   * replaying every session at once.
+   */
+  setPaused(paused: (sessionId: string) => boolean): void {
+    this.paused = paused;
+    for (const [sessionId, { timer }] of this.pending)
+      if (paused(sessionId)) {
+        clearTimeout(timer);
+        this.pending.delete(sessionId);
+      }
+  }
+
   /** Force an interpretation pass now, e.g. when the user opens a session. */
   async refresh(sessionId: string): Promise<void> {
     await this.run(sessionId);
   }
 
   private schedule(sessionId: string): void {
-    if (this.stopped) return;
+    if (this.stopped || this.paused(sessionId)) return;
     const existing = this.pending.get(sessionId);
     if (existing) clearTimeout(existing.timer);
     const count = (existing?.count ?? 0) + 1;
@@ -124,6 +143,7 @@ export class InterpretationRunner {
   }
 
   private async run(sessionId: string): Promise<void> {
+    if (this.paused(sessionId)) return;
     if (this.inFlight.has(sessionId)) {
       // Coalesce: whatever arrived during the in-flight pass is picked up next.
       this.schedule(sessionId);
@@ -135,11 +155,13 @@ export class InterpretationRunner {
       const session = registry.get(sessionId);
       if (!session) return;
       const events = store.getEvents(sessionId, { limit: windowSize });
+      const revision = store.evidenceStatus?.(sessionId).revision ?? 0;
       const state = await interpreter.interpret({
         session,
         previous: session.semanticState,
         events,
       });
+      if (revision !== (store.evidenceStatus?.(sessionId).revision ?? 0)) { this.schedule(sessionId); return; }
       await registry.applySemanticState(sessionId, state);
     } catch (error) {
       this.options.onError(error);

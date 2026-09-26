@@ -1,7 +1,10 @@
+import { evidenceCoverage } from '../evidence/types.js';
 import { EventEmitter } from 'node:events';
+import { setImmediate as yieldToIo } from 'node:timers/promises';
 import { randomUUID } from 'node:crypto';
 
 import type { AgentAdapter, InstructionResult, LaunchOptions, Unsubscribe } from '../types/adapter.js';
+import type { EvidenceBatch, EvidenceChange } from '../evidence/types.js';
 import type { NormalizedEvent } from '../types/events.js';
 import type { WorkerActivity } from '../product/worker-activity.js';
 import {
@@ -30,11 +33,20 @@ export interface SessionRegistryOptions {
   onError?: (scope: string, error: unknown) => void;
 }
 
+/** Sessions active this recently compete for admission ahead of history. */
+const FOREGROUND_WINDOW_MS = 15 * 60_000;
+/** Waiting background catch-up gets at least one of this many turns. */
+const BACKGROUND_SHARE = 4;
+/** Acquired-but-unadmitted segments across all sources. */
+const ACQUISITION_TURNS = 2;
+const EVENT_PAGE = 500;
+
 export type SessionRegistryEvents = {
   'session:added': [AgentSession];
   'session:updated': [AgentSession];
   'session:removed': [AgentSession];
   event: [NormalizedEvent];
+  'evidence:changed': [EvidenceChange];
 };
 
 /**
@@ -54,7 +66,26 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
   private readonly reconcileIntervalMs: number;
   private readonly onError: (scope: string, error: unknown) => void;
   private timer: NodeJS.Timeout | null = null;
+  /**
+   * Evidence work in two stages. Acquisition (read, parse, normalize) takes a
+   * turn: ACQUISITION_TURNS at once, held until the acquired batch is
+   * admitted, so memory is bounded by that many segments. Live and recently
+   * active sessions get turns first, but waiting historical catch-up gets at
+   * least one turn in BACKGROUND_SHARE, so a busy worker cannot starve it.
+   * Admission is one SQLite writer, in arrival order.
+   */
+  private readonly waiting: Record<'foreground' | 'background', Array<() => void>> = {
+    foreground: [],
+    background: [],
+  };
+  private turnsHeld = 0;
+  private foregroundStreak = 0;
+  private writer: Promise<void> = Promise.resolve();
+  /** Sources that have not yet delivered everything they can observe, per session. */
+  private readonly catchingUp = new Map<string, Set<string>>();
   private reconciling = false;
+  /** Sessions discovered during startup, subscribed once discovery settles. */
+  private deferred: AgentSession[] | null = null;
 
   constructor(options: SessionRegistryOptions) {
     super();
@@ -87,13 +118,24 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
       .map((adapter) => adapter.provider);
   }
 
-  /** Rehydrate previously known sessions, then begin discovering. */
+  /**
+   * Rehydrate previously known sessions, then discover. Catching up on
+   * evidence starts only after the first discovery pass: opening Vowe shows
+   * what it already knows without first replaying provider history.
+   */
   async start(): Promise<void> {
     for (const stored of this.store.listSessions()) {
       // Nothing is live until an adapter says so.
       this.sessions.set(stored.id, { ...stored, status: 'unknown' });
     }
-    await this.reconcile();
+    this.deferred = [];
+    try {
+      await this.reconcile();
+    } finally {
+      const deferred = this.deferred;
+      this.deferred = null;
+      for (const session of deferred) this.subscribe(session);
+    }
     this.timer = setInterval(() => {
       void this.reconcile();
     }, this.reconcileIntervalMs);
@@ -105,6 +147,7 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
     this.timer = null;
     for (const unsubscribe of this.subscriptions.values()) unsubscribe();
     this.subscriptions.clear();
+    await this.writer;
     for (const adapter of this.adapters.values()) {
       try {
         await adapter.dispose?.();
@@ -115,13 +158,29 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
   }
 
   list(): AgentSession[] {
-    return [...this.sessions.values()].sort(
-      (a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt),
-    );
+    return [...this.sessions.values()]
+      .sort((a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt))
+      .map((session) => this.withFreshness(session));
   }
 
   get(sessionId: string): AgentSession | null {
-    return this.sessions.get(sessionId) ?? null;
+    const session = this.sessions.get(sessionId);
+    return session ? this.withFreshness(session) : null;
+  }
+
+  /**
+   * Derived on read: whether this session's understanding reflects what its
+   * sources have. Last-known state is usable immediately; this says when it
+   * is not yet current rather than presenting it as such.
+   */
+  private withFreshness(session: AgentSession): AgentSession {
+    const { evidenceRevision, derivedThroughRevision } = this.store.evidenceFreshness(session.id);
+    const status = this.catchingUp.has(session.id)
+      ? 'catching-up'
+      : derivedThroughRevision < evidenceRevision
+        ? 'behind'
+        : 'current';
+    return { ...session, evidenceFreshness: { status, evidenceRevision, derivedThroughRevision } };
   }
 
   /**
@@ -154,7 +213,7 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
 
   /**
    * Ask every adapter what it can see and fold the answer in. Sessions that
-   * disappear are marked finished rather than deleted: their observed history
+   * disappear have unknown liveness rather than being deleted: their observed history
    * stays meaningful after the worker is gone.
    */
   async reconcile(): Promise<void> {
@@ -179,10 +238,10 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
       for (const session of this.sessions.values()) {
         if (seen.has(session.id)) continue;
         if (!this.adapters.has(session.provider)) continue;
-        if (session.status === 'finished') continue;
+        if (session.status === 'finished' || session.status === 'unknown') continue;
         const next: AgentSession = {
           ...session,
-          status: 'finished',
+          status: 'unknown',
           capabilities: { ...session.capabilities, sendInstruction: false, interrupt: false },
         };
         this.sessions.set(next.id, next);
@@ -302,6 +361,7 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
     const previous = this.sessions.get(discovered.id) ?? stored;
     const merged: AgentSession = {
       ...discovered,
+      ...(stored?.observationCoverage ? {observationCoverage:stored.observationCoverage}:{}),
       // Semantic state is owned by the interpretation layer, not the adapter.
       semanticState: previous?.semanticState ?? stored?.semanticState ?? null,
       /*
@@ -380,8 +440,55 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
 
   private subscribe(session: AgentSession): void {
     if (!session.capabilities.observe) return;
+    if (this.deferred) {
+      if (!this.deferred.some((s) => s.id === session.id)) this.deferred.push(session);
+      // Registered now so later discovery passes do not subscribe it twice.
+      this.subscriptions.set(session.id, () => undefined);
+      return;
+    }
     const adapter = this.adapters.get(session.provider);
     if (!adapter) return;
+
+    if (adapter.evidenceSources) {
+      const sources = adapter.evidenceSources(session.providerSessionId);
+      const pending = new Set(sources.map((source) => source.id));
+      if (pending.size) this.catchingUp.set(session.id, pending);
+      const settled = (sourceId: string) => {
+        if (!pending.delete(sourceId) || pending.size) return;
+        this.catchingUp.delete(session.id);
+        const current = this.sessions.get(session.id);
+        if (current) this.emit('session:updated', this.withFreshness(current));
+      };
+      const stops = sources.map((source) => {
+        const accept = async (batch: EvidenceBatch) => {
+          await this.admit(session.id, batch);
+          // A source that cannot say when it is idle is caught up once it has
+          // delivered anything complete.
+          if (!source.continuity && !(batch.part && !batch.part.final)) settled(source.id);
+        };
+        const subscription = {
+          idle: () => settled(source.id),
+          turn: () => this.turn(session.id),
+        };
+        const checkpoint = this.store
+          .evidenceStatus(session.id)
+          .sources.find((s) => s.sourceId === source.id)?.checkpoint;
+        if (checkpoint !== undefined && source.resumeAfter)
+          return source.resumeAfter(checkpoint, accept, subscription);
+        if (source.subscribe) return source.subscribe(accept, subscription);
+        if (source.read)
+          void source
+            .read()
+            .then(async (batch) => {
+              await accept(batch);
+              subscription.idle();
+            })
+            .catch((error) => this.onError(`source:${source.id}`, error));
+        return () => undefined;
+      });
+      this.subscriptions.set(session.id, () => stops.forEach(stop => stop()));
+      return;
+    }
 
     const unsubscribe = adapter.subscribeToEvents(
       session.providerSessionId,
@@ -392,6 +499,76 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
       },
     );
     this.subscriptions.set(session.id, unsubscribe);
+  }
+
+  /** A turn to acquire evidence for this session; call the result to give it back. */
+  private turn(sessionId: string): Promise<() => void> {
+    const session = this.sessions.get(sessionId);
+    const active =
+      session !== undefined &&
+      (session.status === 'working' ||
+        session.status === 'starting' ||
+        Date.now() - Date.parse(session.lastActivityAt) < FOREGROUND_WINDOW_MS);
+    return new Promise((resolve) => {
+      this.waiting[active ? 'foreground' : 'background'].push(() => {
+        let released = false;
+        resolve(() => {
+          if (released) return;
+          released = true;
+          this.turnsHeld--;
+          this.grant();
+        });
+      });
+      this.grant();
+    });
+  }
+
+  private grant(): void {
+    const { foreground, background } = this.waiting;
+    while (this.turnsHeld < ACQUISITION_TURNS && (foreground.length || background.length)) {
+      const lane =
+        foreground.length && (!background.length || this.foregroundStreak < BACKGROUND_SHARE - 1)
+          ? foreground
+          : background;
+      this.foregroundStreak = lane === foreground ? this.foregroundStreak + 1 : 0;
+      this.turnsHeld++;
+      lane.shift()!();
+    }
+  }
+
+  private admit(sessionId: string, batch: EvidenceBatch): Promise<void> {
+    const admitted = this.writer.then(async () => {
+      // Admission is synchronous SQLite work; let IPC and timers run first.
+      await yieldToIo();
+      await this.applyEvidence(sessionId, batch);
+    });
+    this.writer = admitted.catch(() => undefined);
+    return admitted;
+  }
+
+  private async applyEvidence(sessionId: string, batch: EvidenceBatch): Promise<void> {
+    const before = this.store.evidenceStatus(sessionId).revision;
+    const change = await this.store.ingestEvidence(sessionId, batch);
+    if (change.revision === before) return;
+    const current = this.sessions.get(sessionId);
+    if (current) {
+      const updated: AgentSession = {
+        ...current,
+        ...(change.invalidatedFromSeq !== undefined ? { semanticState: null } : {}),
+        observationCoverage: evidenceCoverage(this.store.evidenceStatus(sessionId)),
+      };
+      this.sessions.set(sessionId, updated);
+      this.emit('session:updated', this.withFreshness(updated));
+    }
+    this.emit('evidence:changed', change);
+    // Read added events back in pages rather than holding a catch-up in memory.
+    if (change.added)
+      for (let seq = change.added.fromSeq - 1; seq < change.added.throughSeq; seq += EVENT_PAGE)
+        for (const event of this.store.getEvents(sessionId, {
+          sinceSeq: seq,
+          untilSeq: Math.min(seq + EVENT_PAGE, change.added.throughSeq),
+        }))
+          this.emit('event', event);
   }
 
   private async ingest(

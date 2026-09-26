@@ -61,6 +61,9 @@ export function SessionHeader({ session, observing, inVoice }: Props): ReactElem
             <span className={`dot ${session.status}`} aria-hidden />
             {inVoice ? 'In voice' : observing ? 'Observing' : 'Not observing'}
           </span>
+          {session.observationCoverage?.some(c => c.status !== 'complete') && (
+            <span title={session.observationCoverage.map(c => `${c.scope}: ${c.reason}`).join('\n')}> · Partial history</span>
+          )}
         </Fading>
       </div>
     </RoomIdentity>

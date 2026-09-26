@@ -1,3 +1,4 @@
+import type { EvidenceBatch, EvidenceChange, EvidenceStatus } from '../evidence/types.js';
 import type { AdapterEvent, NormalizedEvent } from '../types/events.js';
 import type { AgentSession, SemanticState } from '../types/session.js';
 import type {
@@ -42,10 +43,19 @@ export interface ConversationChange {
 }
 
 export interface EventQuery {
+  /** Historical audit, including superseded events. Default reads current support. */
+  audit?: boolean;
   /** Return at most this many events, taken from the end of the stream. */
   limit?: number;
   /** Only events with `seq` strictly greater than this. */
   sinceSeq?: number;
+  /** Only events with `seq` at or below this. */
+  untilSeq?: number;
+  /**
+   * Leave out raw provider payloads, for readers that use only normalized
+   * fields. A long session's payloads can be gigabytes; its events are not.
+   */
+  omitRaw?: boolean;
 }
 
 /**
@@ -98,6 +108,11 @@ export interface EventStore {
   getEvents(sessionId: string, query?: EventQuery): NormalizedEvent[];
   getEventsByIds(sessionId: string, ids: string[]): NormalizedEvent[];
   lastSeq(sessionId: string): number;
+  ingestEvidence(sessionId: string, batch: EvidenceBatch): Promise<EvidenceChange>;
+  evidenceStatus(sessionId: string): EvidenceStatus;
+  /** Admitted evidence revision against the Session Observer's derived watermark. */
+  evidenceFreshness(sessionId: string): { evidenceRevision: number; derivedThroughRevision: number };
+  evidenceProvenance(sessionId: string, eventId: string): unknown[];
 
   appendSemanticState(sessionId: string, state: SemanticState): Promise<void>;
   getSemanticHistory(sessionId: string, limit?: number): SemanticState[];
@@ -301,6 +316,14 @@ export interface EventStore {
   upsertProject(project: Project): Promise<void>;
   listProjects(): Project[];
   getProject(projectId: string): Project | null;
+
+  /**
+   * Open a project in the projects panel, or close it.
+   *
+   * Every discovered project starts closed. Attention, not data: nothing is
+   * deleted and its sessions are still observed.
+   */
+  setProjectOpen(projectId: string, open: boolean): Promise<void>;
 
   /**
    * Where a project's *derived* knowledge belongs — a code graph, what Vowe has

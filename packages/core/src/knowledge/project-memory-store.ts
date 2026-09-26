@@ -11,6 +11,8 @@ import type {
 } from './project-knowledge.js';
 
 export interface ProjectMemoryStoreOptions {
+  /** Invalidated citations stay in the audit file but cannot support current retrieval. */
+  hasCurrentSupport?: (ref: string) => boolean;
   /** `<storeRoot>/projects/<safeId>` — handed over by the store. */
   dataDirFor: (projectId: string) => string;
   /**
@@ -44,6 +46,7 @@ const DEFAULT_REFLECT_EVERY = 3;
  * believes now.
  */
 export class ProjectMemoryStore {
+  private readonly hasCurrentSupport: (ref: string) => boolean;
   private readonly dataDirFor: (projectId: string) => string;
   private readonly mirror: ProjectMemoryMirror | null;
   private readonly reflectEvery: number;
@@ -56,6 +59,7 @@ export class ProjectMemoryStore {
 
   constructor(options: ProjectMemoryStoreOptions) {
     this.dataDirFor = options.dataDirFor;
+    this.hasCurrentSupport = options.hasCurrentSupport ?? (() => true);
     this.mirror = options.mirror ?? null;
     this.reflectEvery = options.reflectEvery ?? DEFAULT_REFLECT_EVERY;
     this.onError = options.onError ?? (() => undefined);
@@ -192,7 +196,7 @@ export class ProjectMemoryStore {
 
     const scored: { score: number; record: ProjectMemoryRecord }[] = [];
     for (const record of all) {
-      if (superseded.has(record.id)) continue;
+      if (superseded.has(record.id) || !await this.current(record,new Set())) continue;
       const haystack = [
         record.question,
         record.answer,
@@ -231,11 +235,31 @@ export class ProjectMemoryStore {
 
   async get(projectId: string, recordId: string): Promise<ProjectMemoryRecord | null> {
     const all = await this.load(projectId);
-    return all.find((record) => record.id === recordId) ?? null;
+    const record=all.find((record) => record.id === recordId);
+    return record ? await this.project(record) : null;
   }
 
   async list(projectId: string): Promise<ProjectMemoryRecord[]> {
-    return [...(await this.load(projectId))];
+    return Promise.all((await this.load(projectId)).map(record=>this.project(record)));
+  }
+
+  private async project(record:ProjectMemoryRecord):Promise<ProjectMemoryRecord> {
+    return await this.current(record,new Set()) ? {...record} : {...record,supportStatus:'invalidated'};
+  }
+
+  private async current(record:ProjectMemoryRecord,seen:Set<string>):Promise<boolean> {
+    const identity=JSON.stringify([record.projectId,record.id]);
+    if(seen.has(identity)) return false; // A citation cycle supplies no grounding.
+    const next=new Set(seen).add(identity);
+    if((await this.load(record.projectId)).some(r=>r.supersedes===record.id)) return false;
+    for(const raw of record.refs) {
+      const ref=parseRef(raw);
+      if(ref?.kind==='lesson') {
+        const source=(await this.load(ref.projectId)).find(r=>r.id===ref.recordId);
+        if(!source || !await this.current(source,next)) return false;
+      } else if(!this.hasCurrentSupport(raw)) return false;
+    }
+    return true;
   }
 
   // --------------------------------------------------------------- private

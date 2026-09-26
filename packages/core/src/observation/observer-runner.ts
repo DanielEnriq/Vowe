@@ -1,3 +1,4 @@
+import { evidenceCoverage } from '../evidence/types.js';
 import { randomUUID } from 'node:crypto';
 
 import type { ContextNavigator } from '../context/context-navigator.js';
@@ -149,6 +150,10 @@ export class ObserverRunner {
   /** Set while draining if more trace arrived; drives one more pass. */
   private moreArrived = false;
   private stopped = false;
+  private evidenceGeneration = 0;
+  private supportIsCurrent(): boolean {
+    return !this.stopped && this.store.evidenceStatus(this.sessionId).generation === this.evidenceGeneration;
+  }
 
   /**
    * The understanding carried between passes.
@@ -170,6 +175,7 @@ export class ObserverRunner {
   constructor(options: ObserverRunnerOptions) {
     this.sessionId = options.sessionId;
     this.store = options.store;
+    this.evidenceGeneration = this.store.evidenceStatus(this.sessionId).generation;
     this.observer = options.observer;
     this.navigator = options.navigator;
     this.router = options.router;
@@ -189,6 +195,14 @@ export class ObserverRunner {
       this.store.getObservationState(options.sessionId) ??
       emptyObservationState(options.sessionId);
     this.ingestedThroughSeq = this.state.processedThroughSeq;
+    // A crash may occur after a window (or its note) is durable but before its
+    // cursor. Reuse that exact immutable window before building any new ones.
+    const pending=this.store.getWindows(this.sessionId).filter(w=>w.endSeq>this.state.processedThroughSeq);
+    if(pending.length) {
+      this.queue.push(...pending);
+      this.ingestedThroughSeq=Math.max(...pending.map(w=>w.endSeq));
+      this.builder=new WindowBuilder({sessionId:this.sessionId,startIndex:Math.max(this.state.lastClosedWindowIndex,...pending.map(w=>w.index)),...(this.policy?{policy:this.policy}:{})});
+    }
   }
 
   get observationState(): ObservationState {
@@ -229,7 +243,7 @@ export class ObserverRunner {
    * the cursor says where to resume.
    */
   async catchUp(options: { closeTail?: boolean } = {}): Promise<void> {
-    if (this.stopped) return;
+    if (!this.supportIsCurrent()) return;
     this.startCheckpoints();
     this.ingest(options.closeTail ?? false);
     await this.drain();
@@ -242,7 +256,7 @@ export class ObserverRunner {
    * made to wait on a model call.
    */
   notifyTrace(): void {
-    if (this.stopped) return;
+    if (!this.supportIsCurrent()) return;
     this.startCheckpoints();
     this.ingest(false);
     if (this.draining) {
@@ -335,18 +349,34 @@ export class ObserverRunner {
           }
         }
       } while (this.moreArrived && !this.stopped);
+      // Retractions can leave only superseded audit rows beyond the cursor.
+      // They are accounted for without pretending another window was understood.
+      if(this.supportIsCurrent() && !this.queue.length && !this.builder?.pendingCount &&
+        !this.store.getEvents(this.sessionId,{sinceSeq:this.state.processedThroughSeq}).length) {
+        this.state={...this.state,processedThroughSeq:this.store.lastSeq(this.sessionId),updatedAt:new Date().toISOString()};
+        await this.store.setObservationState(this.state);
+      }
     } finally {
       this.draining = false;
     }
   }
 
   private async processWindow(window: TraceWindow): Promise<void> {
+    if (!this.supportIsCurrent()) return;
     await this.store.appendWindow(window);
+    if (!this.supportIsCurrent()) return;
+    const committed=this.store.getWindowNoteForWindow(this.sessionId,window.id);
+    if(committed) {
+      await this.advanceCursor(window);
+      if(this.supportIsCurrent()) this.publishUnderstanding(committed.understanding ?? null,committed.notableChange ? {id:committed.id,text:committed.notableChange,at:committed.createdAt,refs:committed.refs}:null);
+      return;
+    }
 
     const session = this.getSession(this.sessionId);
     const events = this.eventsInRange(window.startSeq, window.endSeq);
 
     const input: ObserveWindowInput = {
+      coverage: evidenceCoverage(this.store.evidenceStatus(this.sessionId)),
       sessionId: this.sessionId,
       task: session?.task ?? null,
       cwd: session?.cwd ?? null,
@@ -385,14 +415,10 @@ export class ObserverRunner {
       throw error;
     }
     await run?.complete();
+    if (!this.supportIsCurrent()) return;
 
     const refs: ContextRef[] = [
-      {
-        kind: 'trace',
-        sessionId: this.sessionId,
-        startSeq: window.startSeq,
-        endSeq: window.endSeq,
-      },
+      ...this.windowRefs(window),
       ...collectedRefs,
       ...(observation.refs ?? [])
         .map((value) => parseRef(value))
@@ -417,6 +443,7 @@ export class ObserverRunner {
 
     await this.store.appendWindowNote(note);
     await this.advanceCursor(window);
+    if (!this.supportIsCurrent()) return;
     this.onNote?.(note);
     this.publishUnderstanding(
       observation.understanding ?? null,
@@ -533,6 +560,7 @@ export class ObserverRunner {
     const nextIndex = this.state.lastClosedWindowIndex + 1;
 
     const input: ObserveWindowInput = {
+      coverage: evidenceCoverage(this.store.evidenceStatus(this.sessionId)),
       sessionId: this.sessionId,
       task: session?.task ?? null,
       cwd: session?.cwd ?? null,
@@ -579,6 +607,7 @@ export class ObserverRunner {
       startSeq,
       endSeq,
       eventCount: events.length,
+      eventIds: events.map(event=>event.id),
       approxTokens: 0,
       source: events[0]!.rawRef.source || null,
       startOffset: events[0]!.rawRef.byteOffset,
@@ -601,6 +630,7 @@ export class ObserverRunner {
       throw error;
     }
     await run?.complete();
+    if (!this.supportIsCurrent()) return;
 
     const durable = this.admitDurableUpdate(observation.notableChange);
     this.publishUnderstanding(
@@ -613,7 +643,7 @@ export class ObserverRunner {
             text: durable,
             at: new Date().toISOString(),
             refs: dedupeRefs([
-              { kind: 'trace', sessionId: this.sessionId, startSeq, endSeq },
+              ...this.windowRefs(pseudoWindow),
               ...collected,
             ]),
           }
@@ -639,6 +669,7 @@ export class ObserverRunner {
   }
 
   private async advanceCursor(window: TraceWindow): Promise<void> {
+    if (!this.supportIsCurrent()) return;
     this.state = {
       ...this.state,
       lastClosedWindowIndex: window.index,
@@ -687,6 +718,7 @@ export class ObserverRunner {
         run,
       );
       await run?.complete();
+      if (!this.supportIsCurrent()) return false;
       if (!result) return heuristic;
       return result.noul >= 0.5;
     } catch (error) {
@@ -734,6 +766,7 @@ export class ObserverRunner {
         run,
       );
       await run?.complete();
+      if (!this.supportIsCurrent()) return [];
       if (!result || result.choice === 'none') return [];
       const chosen = shortlist.find(
         (note) => `w${note.windowIndex}` === result.choice,
@@ -774,6 +807,17 @@ export class ObserverRunner {
    * the resulting note, so the note can always be checked against the material
    * that produced it.
    */
+  private windowRefs(window:TraceWindow):ContextRef[] {
+    if(window.eventIds && window.eventCount !== window.endSeq-window.startSeq+1) {
+      // A corrected view can contain holes in admission sequence. Citing its
+      // whole range would accidentally include superseded audit members.
+      return this.store.getWindow(this.sessionId,window.id)
+        ? [{kind:'window',sessionId:this.sessionId,windowId:window.id}]
+        : window.eventIds.map(eventId=>({kind:'event',sessionId:this.sessionId,eventId}));
+    }
+    return [{kind:'trace',sessionId:this.sessionId,startSeq:window.startSeq,endSeq:window.endSeq}];
+  }
+
   private buildToolset(
     window: TraceWindow,
     collected: ContextRef[],
@@ -782,13 +826,9 @@ export class ObserverRunner {
   ): ObserverToolset {
     const toolset: ObserverToolset = {
       surfaceUpdate: async (input) => {
+        if (!this.supportIsCurrent()) throw new Error('Evidence changed during observation');
         const refs = dedupeRefs([
-          {
-            kind: 'trace',
-            sessionId: this.sessionId,
-            startSeq: window.startSeq,
-            endSeq: window.endSeq,
-          },
+          ...this.windowRefs(window),
           ...(input.refs ?? [])
             .map((value) => parseRef(value))
             .filter((ref): ref is ContextRef => ref !== null),

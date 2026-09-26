@@ -344,3 +344,22 @@ export function ExpandPanelIcon({ side }: { side: 'left' | 'right' }): ReactElem
     </svg>
   );
 }
+
+/** Observing: an open eye. Paused: the same eye, struck through. */
+export function ObservingIcon({ paused }: { paused: boolean }): ReactElement {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...stroke}
+    >
+      <path d="M1.8 8s2.3-4.2 6.2-4.2S14.2 8 14.2 8 11.9 12.2 8 12.2 1.8 8 1.8 8z" />
+      <circle cx="8" cy="8" r="1.9" />
+      {paused && <path d="M3 13 13 3" />}
+    </svg>
+  );
+}

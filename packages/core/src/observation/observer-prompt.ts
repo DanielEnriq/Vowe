@@ -93,19 +93,25 @@ export function renderObserverPrompt(input: ObserveWindowInput): string {
     }
   }
 
+  if (input.coverage?.length) {
+    parts.push('', 'Evidence coverage (do not infer missing activity):', ...input.coverage.map(c => `${c.scope}: ${c.status} — ${c.reason}`));
+  }
   const { window } = input;
   parts.push(
     '',
+    'Operation reports describe assertions. Unknown execution or a request is never evidence that a command ran or tests passed. Corrections supersede support, not the historical audit.',
     `New portion of the trace — window ${window.windowIndex}, events ${window.startSeq}..${window.endSeq}, ${window.startedAt} to ${window.endedAt}:`,
   );
   for (const line of window.events) {
-    parts.push(`  [${line.seq}] ${line.at} ${line.kind}: ${line.summary}`);
+    parts.push(`  [${line.seq}] ${line.at} ${line.kind}: ${line.summary}${line.ref ? ` (${line.ref})` : ''}`);
     if (line.detail) parts.push(`        ${line.detail}`);
   }
 
   parts.push(
     '',
-    `You can cite this window as trace:${input.sessionId}:${window.startSeq}-${window.endSeq}, or any individual event you were shown.`,
+    window.events.length === window.endSeq-window.startSeq+1
+      ? `You can cite this window as trace:${input.sessionId}:${window.startSeq}-${window.endSeq}, or any individual event you were shown.`
+      : 'This current view has gaps in admission sequence. Cite the individual event references shown above; a whole sequence range would include superseded audit records.',
   );
 
   return parts.join('\n');
@@ -118,7 +124,7 @@ export function observerDetail(
 ): string | undefined {
   if (!detail) return undefined;
   const interesting: string[] = [];
-  for (const key of ['command', 'output', 'text', 'file_path', 'failed', 'input']) {
+  for (const key of ['command', 'output', 'text', 'file_path', 'failed', 'input', 'execution', 'reportedSummary', 'conflict', 'evidenceBasis', 'correctionOf']) {
     const value = detail[key];
     if (value === undefined || value === null || value === '') continue;
     const rendered =
@@ -140,14 +146,18 @@ function safeJson(value: unknown): string {
 }
 
 export function toObserverEventLine(event: {
+  id?: string;
+  sessionId?: string;
+  evidence?: {basis: string; supersedes?: string};
   seq: number;
   at: string;
   kind: string;
   summary: string;
   detail?: Record<string, unknown>;
 }): ObserverEventLine {
-  const detail = observerDetail(event.detail);
+  const detail = observerDetail({...event.detail, ...(event.evidence ? {evidenceBasis:event.evidence.basis,correctionOf:event.evidence.supersedes}: {})});
   const line: ObserverEventLine = {
+    ...(event.id && event.sessionId ? {ref:`event:${event.sessionId}:${event.id}`} : {}),
     seq: event.seq,
     at: event.at,
     kind: event.kind,

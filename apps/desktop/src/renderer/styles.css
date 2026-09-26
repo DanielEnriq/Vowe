@@ -593,6 +593,7 @@ textarea, input { font: inherit; color: inherit; }
   flex: 0 0 var(--chrome-control);
   border-radius: 6px;
 }
+
 /* The desk's control sits against the window's right edge, not the room's. */
 .chrome-actions { margin-left: auto; }
 /*
@@ -1034,7 +1035,11 @@ textarea, input { font: inherit; color: inherit; }
    */
   min-height: 30px;
   padding: 14px 8px 6px 16px;
+  position: relative;
 }
+/* Opening a project: against the heading's right edge, in line with it. */
+.sidebar-title .add { margin-left: auto; color: var(--ink-8); }
+.sidebar-title .add[aria-expanded='true'] { background: var(--selected); color: var(--ink); }
 
 .eyebrow {
   font-family: var(--mono);
@@ -1171,16 +1176,42 @@ textarea, input { font: inherit; color: inherit; }
   color: var(--ink-3);
 }
 .project-row.selected .name { color: var(--ink); }
-.project-row .count {
-  min-width: 18px;
+/*
+ * Observing, beside the search. The eye stays visible while it has something
+ * to say (workers running here, or observation paused) and otherwise appears
+ * with the row's other controls. The count is plain text, not a badge.
+ */
+.project-row .observe {
+  flex: 0 0 auto;
+  height: 24px;
+  min-width: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
   padding: 0 5px;
-  border-radius: 9px;
-  background: var(--fill-2);
-  color: var(--ink-4);
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-8);
+  opacity: 0;
+}
+.project-row:hover .observe,
+.project-row:focus-within .observe,
+.project-row .observe.live,
+.project-row .observe.paused { opacity: 1; }
+.project-row .observe.live { color: var(--ink-4); }
+.project-row .observe.paused { color: var(--ink-8); }
+.project-row .observe:hover { background: var(--fill-2); color: var(--ink-2); }
+/* Paused, the count is there only for whoever asks by hovering the eye. */
+.project-row .observe.paused .live-count { display: none; }
+.project-row .observe.paused:hover .live-count,
+.project-row .observe.paused:focus-visible .live-count { display: inline; }
+.project-row .observe .live-count {
   font-size: 10.5px;
-  font-weight: 600;
-  line-height: 17px;
-  text-align: center;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 /*
@@ -3201,6 +3232,32 @@ button.check-row:hover .target-label { color: var(--ink-4); }
   font-size: 10px;
   letter-spacing: 0.06em;
   color: var(--ink-9);
+}
+
+/*
+ * The `+` beside the panel's heading. The finder's surface and rows, hung
+ * under the heading rather than a project row, with one standing action at
+ * the foot: the native folder picker.
+ */
+.menu.finder.project-opener { top: 44px; left: 8px; right: 8px; }
+.menu.finder.project-opener .why { width: 100%; min-width: 0; }
+.menu.finder.project-opener .line svg { flex: 0 0 auto; color: var(--ink-7); }
+.menu.finder.project-opener .empty.error { color: var(--attention); }
+.menu.finder.project-opener .opener-folder {
+  margin-top: 4px;
+  border-top: 1px solid var(--divider);
+  border-radius: 0 0 7px 7px;
+  padding-top: 9px;
+  color: var(--ink-4);
+}
+.menu.finder.project-opener .opener-folder svg { color: var(--ink-7); }
+
+/* A row's right-click menu, opened where the click was. */
+.menu.row-menu {
+  bottom: auto;
+  z-index: 8;
+  min-width: 150px;
+  gap: 1px;
 }
 
 

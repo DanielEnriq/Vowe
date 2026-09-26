@@ -130,12 +130,28 @@ export function usePresenceSignals(options: {
     let cancelled = false;
     const ids = projectKey ? projectKey.split(',') : [];
 
+    // Coalesced like the room's brief: one pass in flight, at most one after.
+    let reading = false;
+    let again = false;
     const read = async (): Promise<void> => {
-      const briefs = await Promise.all(
-        ids.map((id) => window.vowe.getProjectBrief(id).catch(() => null)),
-      );
-      if (!cancelled) {
-        setNeedsAttention(briefs.some((brief) => (brief?.needsAttention.length ?? 0) > 0));
+      if (reading) {
+        again = true;
+        return;
+      }
+      reading = true;
+      try {
+        const briefs = await Promise.all(
+          ids.map((id) => window.vowe.getProjectBrief(id).catch(() => null)),
+        );
+        if (!cancelled) {
+          setNeedsAttention(briefs.some((brief) => (brief?.needsAttention.length ?? 0) > 0));
+        }
+      } finally {
+        reading = false;
+        if (again && !cancelled) {
+          again = false;
+          setTimeout(() => void read(), 250);
+        }
       }
     };
 

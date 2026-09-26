@@ -20,7 +20,7 @@ function shapeOf(provider: string): string {
   return JSON.stringify(children[1]);
 }
 
-const KNOWN = ['claude-code', 'pi', 'codex'];
+const KNOWN = ['claude-code', 'pi', 'codex', 'cursor'];
 
 describe('Provider marks', () => {
   it('gives every agent a shape of its own', () => {
@@ -42,6 +42,7 @@ describe('Provider marks', () => {
   });
 
   it('carries the agent’s name, so the mark is never the only way to tell', () => {
+    expect(providerName('cursor')).toBe('Cursor');
     for (const provider of [...KNOWN, 'some-future-agent']) {
       const rendered = JSON.stringify(ProviderGlyph({ provider }));
       expect(rendered).toContain(providerName(provider));
