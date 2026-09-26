@@ -6,6 +6,7 @@ import type {
   InvestigationCheck,
   InvestigationReceipt,
 } from '../types/conversation.js';
+import type { ConsultationFinding } from '../studio/consultation.js';
 
 /**
  * What the investigator actually looked at, in the order it looked.
@@ -101,6 +102,42 @@ export class InvestigationRecorder {
   }
 
   /**
+   * A read-only question put to a coding harness, and what it reported.
+   *
+   * The label is the question, said as what Vowe did — "Checked the
+   * repository: …" — because the conversation is one Vowe and which harness
+   * answered is secondary detail (`via`). A check that did not complete says
+   * so in its label rather than borrowing the wording of one that did.
+   */
+  consulted(question: string, finding: ConsultationFinding): void {
+    const asked = question.trim().replace(/\s+/g, ' ');
+    if (finding.status === 'answered') {
+      const cited = finding.refs.length;
+      this.record({
+        kind: 'consult',
+        label: `${CONSULTED}${asked}`,
+        detail: cited === 0 ? 'No files cited' : `${cited} file${cited === 1 ? '' : 's'} cited`,
+        refs: finding.refs,
+        finding: finding.answer,
+        via: finding.provider,
+      });
+      return;
+    }
+    const verb = finding.status === 'cancelled'
+      ? 'Stopped checking the repository'
+      : finding.status === 'unavailable'
+        ? 'Could not check the repository'
+        : 'Could not finish checking the repository';
+    this.record({
+      kind: 'consult',
+      label: `${verb}: ${asked}`,
+      detail: finding.reason,
+      refs: [],
+      via: finding.provider,
+    });
+  }
+
+  /**
    * Every ref touched, in the order it was touched.
    *
    * This is what the answer's own `refs` are built from, so the receipt and the
@@ -139,11 +176,19 @@ export class InvestigationRecorder {
   }
 }
 
+const CONSULTED = 'Checked the repository: ';
+
+/** The question an answered `consult` check asked, as its label records it. */
+export function consultedQuestion(check: InvestigationCheck): string {
+  return check.label.startsWith(CONSULTED) ? check.label.slice(CONSULTED.length) : check.label;
+}
+
 function sameCheck(a: InvestigationCheck, b: InvestigationCheck): boolean {
   return (
     a.kind === b.kind &&
     a.label === b.label &&
     a.detail === b.detail &&
+    a.finding === b.finding &&
     a.refs.length === b.refs.length &&
     a.refs.every((ref, index) => formatRef(ref) === formatRef(b.refs[index]!))
   );

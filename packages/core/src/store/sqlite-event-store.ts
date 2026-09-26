@@ -34,6 +34,13 @@ import type {
 import type { Project } from '../projects/project.js';
 import type { PersistedWorkbench } from '../workbench/persisted.js';
 import type {
+  Design,
+  DesignChange,
+  DesignEntry,
+  DesignRevision,
+  DesignStore,
+} from '../studio/types.js';
+import type {
   ConversationChange,
   EventQuery,
   ProjectConversationChange,
@@ -80,7 +87,7 @@ export interface SqliteEventStoreOptions {
 const EVENTS_WITHOUT_RAW = `session_id, seq, id, at, kind, summary, detail_json, NULL AS raw_json,
   raw_source, raw_byte_offset, raw_line, raw_ordinal, logical_key, active, evidence_json`;
 
-export class SqliteEventStore implements EventStore {
+export class SqliteEventStore implements EventStore, DesignStore {
   private readonly root: string;
   private readonly onError: (scope: string, error: unknown) => void;
   private readonly migrations: readonly Migration[] | undefined;
@@ -90,6 +97,7 @@ export class SqliteEventStore implements EventStore {
   private readonly projectConversationListeners = new Set<
     (change: ProjectConversationChange) => void
   >();
+  private readonly designListeners = new Set<(change: DesignChange) => void>();
   private readonly cache = new Map<string, StatementSync>();
   private db: DatabaseSync | null = null;
   private evidence: EvidenceLedger | null = null;
@@ -645,6 +653,125 @@ export class SqliteEventStore implements EventStore {
         listener(change);
       } catch (error) {
         this.onError('project-conversation-listener', error);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------ studio
+
+  async createDesign(design: Design): Promise<Design> {
+    this.run(
+      'INSERT INTO designs (id, project_id, created_at) VALUES (:id, :projectId, :createdAt)',
+      { id: design.id, projectId: design.projectId, createdAt: design.createdAt },
+    );
+    this.notifyDesign({ designId: design.id, projectId: design.projectId });
+    return design;
+  }
+
+  getDesign(designId: string): Design | null {
+    const row = this.get('SELECT * FROM designs WHERE id = ?', designId);
+    return row ? rows.toDesign(row) : null;
+  }
+
+  listDesigns(projectId: string): Design[] {
+    return this.all(
+      'SELECT * FROM designs WHERE project_id = ? ORDER BY created_at DESC, rowid DESC',
+      projectId,
+    ).map(rows.toDesign);
+  }
+
+  getDesignEntries(designId: string, limit?: number): DesignEntry[] {
+    return this.tail(
+      'SELECT * FROM design_entries WHERE design_id = :designId',
+      'ord',
+      { designId },
+      limit,
+    ).map(rows.toDesignEntry);
+  }
+
+  getDesignRevisions(designId: string): DesignRevision[] {
+    return this.all(
+      'SELECT * FROM design_revisions WHERE design_id = ? ORDER BY ord',
+      designId,
+    ).map(rows.toDesignRevision);
+  }
+
+  async appendDesignEntry(entry: DesignEntry): Promise<DesignEntry> {
+    const stored = this.transaction(() => this.insertDesignEntry(entry));
+    this.notifyDesign(this.designChange(entry.designId));
+    return stored;
+  }
+
+  async commitDesignTurn(
+    entry: DesignEntry,
+    revision?: Omit<DesignRevision, 'ord'>,
+  ): Promise<{ entry: DesignEntry; revision?: DesignRevision }> {
+    if (revision && (revision.designId !== entry.designId || revision.entryId !== entry.id)) {
+      throw new Error('vowe: a design revision must belong to the reply committed with it');
+    }
+    const committed = this.transaction(() => {
+      const storedEntry = this.insertDesignEntry(entry);
+      if (!revision) return { entry: storedEntry };
+      const inserted = this.get(
+        `INSERT INTO design_revisions (id, design_id, ord, at, document, summary, entry_id)
+         SELECT :id, :designId,
+                COALESCE((SELECT MAX(ord) FROM design_revisions WHERE design_id = :designId), 0) + 1,
+                :at, :document, :summary, :entryId
+         RETURNING *`,
+        {
+          id: revision.id,
+          designId: revision.designId,
+          at: revision.at,
+          document: revision.document,
+          summary: revision.summary,
+          entryId: revision.entryId,
+        },
+      );
+      return { entry: storedEntry, revision: rows.toDesignRevision(inserted!) };
+    });
+    this.notifyDesign(this.designChange(entry.designId));
+    return committed;
+  }
+
+  onDesignChanged(listener: (change: DesignChange) => void): () => void {
+    this.designListeners.add(listener);
+    return () => {
+      this.designListeners.delete(listener);
+    };
+  }
+
+  private insertDesignEntry(entry: DesignEntry): DesignEntry {
+    const inserted = this.get(
+      `INSERT INTO design_entries (id, design_id, ord, at, role, text, refs_json, investigation_json)
+       SELECT :id, :designId,
+              COALESCE((SELECT MAX(ord) FROM design_entries WHERE design_id = :designId), 0) + 1,
+              :at, :role, :text, :refs, :investigation
+       RETURNING *`,
+      {
+        id: entry.id,
+        designId: entry.designId,
+        at: entry.at,
+        role: entry.role,
+        text: entry.text,
+        refs: rows.json(entry.refs),
+        investigation: rows.json(entry.investigation),
+      },
+    );
+    return rows.toDesignEntry(inserted!);
+  }
+
+  private designChange(designId: string): DesignChange {
+    const design = this.getDesign(designId);
+    if (!design) throw new Error(`vowe: no design ${designId}`);
+    return { designId, projectId: design.projectId };
+  }
+
+  private notifyDesign(change: DesignChange): void {
+    for (const listener of this.designListeners) {
+      try {
+        listener(change);
+      } catch (error) {
+        this.onError('design-listener', error);
       }
     }
   }

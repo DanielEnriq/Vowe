@@ -368,7 +368,7 @@ export function AppShell(): ReactElement {
             onNavigate={(view, entryId) => setRoute({ kind: 'project', projectId: project.id, view, ...(entryId ? { entryId } : {}) })}
             onOpenSession={(sessionId) => setRoute({ kind: 'session', sessionId })}
           />
-        ) : live.kind === 'studio' ? (
+        ) : live.kind === 'presence' ? (
           <PresenceStudio
             profile={presence}
             appearance={appearance}

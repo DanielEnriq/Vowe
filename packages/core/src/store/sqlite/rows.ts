@@ -24,6 +24,7 @@ import type {
   SessionCapabilities,
 } from '../../types/session.js';
 import type { Project } from '../../projects/project.js';
+import type { Design, DesignEntry, DesignRevision } from '../../studio/types.js';
 import type {
   CommunicationDecision,
   ObservationState,
@@ -300,6 +301,48 @@ export function toProjectConversationEntry(row: Row): ProjectConversationEntry {
     };
   }
   return entry;
+}
+
+export function toDesign(row: Row): Design {
+  return {
+    id: str(row['id']),
+    projectId: str(row['project_id']),
+    createdAt: str(row['created_at']),
+  };
+}
+
+export function toDesignEntry(row: Row): DesignEntry {
+  const id = str(row['id']);
+  const entry: DesignEntry = {
+    id,
+    designId: str(row['design_id']),
+    at: str(row['at']),
+    role: str(row['role']) as DesignEntry['role'],
+    text: str(row['text']),
+  };
+  if (row['refs_json'] !== null) {
+    entry.refs = parse<ContextRef[]>(row['refs_json'], 'design_entries', id);
+  }
+  if (row['investigation_json'] !== null) {
+    entry.investigation = parse<DesignEntry['investigation']>(
+      row['investigation_json'],
+      'design_entries',
+      id,
+    );
+  }
+  return entry;
+}
+
+export function toDesignRevision(row: Row): DesignRevision {
+  return {
+    id: str(row['id']),
+    designId: str(row['design_id']),
+    ord: Number(row['ord']),
+    at: str(row['at']),
+    document: str(row['document']),
+    summary: str(row['summary']),
+    entryId: str(row['entry_id']),
+  };
 }
 
 export function toDelivery(row: Row): ConversationDelivery {

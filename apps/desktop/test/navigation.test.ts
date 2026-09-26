@@ -68,13 +68,13 @@ describe('Navigation', () => {
   });
 
   it('leaves the studio alone', () => {
-    expect(reconcileRoute({ kind: 'studio' }, context)).toEqual({ kind: 'studio' });
+    expect(reconcileRoute({ kind: 'presence' }, context)).toEqual({ kind: 'presence' });
   });
 
   it('knows which project a route is in', () => {
     expect(projectOf({ kind: 'session', sessionId: 'b' }, context)).toBe('git:abc');
     expect(projectOf({ kind: 'project', projectId: 'git:abc' }, context)).toBe('git:abc');
-    expect(projectOf({ kind: 'studio' }, context)).toBeNull();
+    expect(projectOf({ kind: 'presence' }, context)).toBeNull();
   });
 
   it('orders live work first, then the rest, each newest first', () => {

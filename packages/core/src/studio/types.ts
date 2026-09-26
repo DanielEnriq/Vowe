@@ -1,0 +1,111 @@
+/**
+ * Studio: a place to think about what a system should become.
+ *
+ * Three durable things and nothing else. A design is a thread of conversation
+ * with a living document beside it; the document is a projection of that
+ * conversation, kept as an append-only list of revisions so that "what did the
+ * design say before, and why did it change?" is always answerable.
+ *
+ * None of this is project truth. A design is exploratory by construction: it
+ * lives in its own tables, nothing reads it but Studio, and nothing in it is
+ * admitted to project memory or handed to Project Ask. Discussing an idea here
+ * must not quietly turn it into something Vowe believes about the project.
+ *
+ * This module imports nothing but types, so the renderer can share the shapes.
+ */
+
+import type { ContextRef } from '../context/refs.js';
+import type { InvestigationReceipt } from '../types/conversation.js';
+
+/** One design: a conversation and the document it maintains. */
+export interface Design {
+  id: string;
+  projectId: string;
+  createdAt: string;
+}
+
+/**
+ * A design as a picker shows it.
+ *
+ * Derived on read and never stored: the title comes from the current document's
+ * first heading, falling back to how the conversation opened, and "updated" is
+ * the latest turn. Nothing here can disagree with the rows it is built from.
+ */
+export interface DesignSummary extends Design {
+  title: string;
+  updatedAt: string;
+  revisions: number;
+}
+
+/**
+ * A turn in a design conversation.
+ *
+ * `user_message` / `companion_message` rather than question and answer: Studio
+ * is a conversation about a design, not a sequence of questions. A Vowe turn
+ * that consulted the repository carries the account of it as an ordinary
+ * `InvestigationReceipt`, whose `consult` checks name the question, the finding
+ * and the files it rests on.
+ */
+export interface DesignEntry {
+  id: string;
+  designId: string;
+  at: string;
+  role: 'user_message' | 'companion_message';
+  text: string;
+  refs?: ContextRef[];
+  investigation?: InvestigationReceipt;
+}
+
+/**
+ * One version of the living design. Never updated, never deleted.
+ *
+ * `summary` is why the design changed — not a paraphrase of it — and `entryId`
+ * is the reply that explains the change, committed in the same transaction. The
+ * design before a revision is the one with the previous `ord`.
+ */
+export interface DesignRevision {
+  id: string;
+  designId: string;
+  /** 1-based, gap-free within a design. Assigned by the store. */
+  ord: number;
+  at: string;
+  document: string;
+  summary: string;
+  entryId: string;
+}
+
+export interface DesignChange {
+  designId: string;
+  projectId: string;
+}
+
+/**
+ * The durable half of Studio.
+ *
+ * Narrow on purpose: `StudioService` is handed this and a project lookup, not
+ * the whole event store, so it cannot read or write anything else Vowe keeps.
+ */
+export interface DesignStore {
+  createDesign(design: Design): Promise<Design>;
+  getDesign(designId: string): Design | null;
+  /** Newest first. */
+  listDesigns(projectId: string): Design[];
+  /** Oldest first; `limit` keeps the most recent. */
+  getDesignEntries(designId: string, limit?: number): DesignEntry[];
+  /** Oldest first. The current design is the last one. */
+  getDesignRevisions(designId: string): DesignRevision[];
+  appendDesignEntry(entry: DesignEntry): Promise<DesignEntry>;
+  /**
+   * A reply and the revision it explains, in one transaction.
+   *
+   * Either both are durable or neither is: a design that changed without the
+   * reply saying why, or a reply describing a change that never landed, would
+   * each be a history that lies.
+   */
+  commitDesignTurn(
+    entry: DesignEntry,
+    revision?: Omit<DesignRevision, 'ord'>,
+  ): Promise<{ entry: DesignEntry; revision?: DesignRevision }>;
+  /** Fires after `COMMIT`, never before. */
+  onDesignChanged(listener: (change: DesignChange) => void): () => void;
+}

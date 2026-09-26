@@ -4,3 +4,4 @@ export * from './live-sessions.js';
 export * from './normalize.js';
 export * from './paths.js';
 export * from './transcript.js';
+export * from './consultant.js';

@@ -124,9 +124,24 @@ export interface InvestigationCheck {
   detail?: string;
   /** What that one lookup turned up. Empty when it found nothing. */
   refs: ContextRef[];
+  /**
+   * What a repository consultation reported, in the consulted harness's own
+   * words. Only a `consult` check has one: it is the finding Vowe was handed,
+   * kept verbatim so the design can be traced back to what was actually said.
+   */
+  finding?: string;
+  /**
+   * Which coding harness answered a `consult` check. Secondary detail for the
+   * receipt's expanded view; the conversation itself is always one Vowe.
+   */
+  via?: string;
 }
 
-export type InvestigationCheckKind = 'search' | 'open' | 'diff';
+/**
+ * `consult` is a read-only question put to a coding harness, which inspected
+ * the repository itself; the other three are Vowe's own lookups.
+ */
+export type InvestigationCheckKind = 'search' | 'open' | 'diff' | 'consult';
 
 /** True for the roles that were delivered to the underlying worker. */
 export function reachedWorker(role: ConversationRole): boolean {
