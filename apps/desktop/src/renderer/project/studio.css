@@ -22,6 +22,14 @@
   --right-column: 0px;
   --desk-width: 0px;
   --studio-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* A boundary: a shade apart from the field, never a card. */
+  --studio-group: color-mix(in srgb, var(--studio-card) 42%, transparent);
+  --studio-group-edge: var(--studio-card-edge);
+  /* What you do not run: the card, lighter. */
+  --studio-external: color-mix(in srgb, var(--studio-card) 55%, var(--studio-field));
+  /* The small structural marks a kind draws. */
+  --studio-glyph: color-mix(in srgb, var(--ink-8) 70%, transparent);
+  --studio-client-band: color-mix(in srgb, var(--ink-bright) 2.5%, var(--studio-card));
 }
 .studio-room.workspace {
   /*
@@ -374,16 +382,147 @@ span.design-shape.empty { width: 56px; height: 42px; box-sizing: border-box; }
 }
 
 /*
- * Kinds, drawn as silhouettes rather than labels: things you keep have a
- * heavier base, hand-offs a lighter one, what you do not run is drawn in
- * outline, where people are gets a softer shape.
+ * Kinds, felt rather than read. A service is the plain card every design
+ * drew before kinds existed; the others differ from it by one quiet
+ * structural cue each, never by a label or a colour. What you do not run is
+ * drawn lighter, and its place outside your boundaries says the rest.
  */
-.system-part.kind-store { border-radius: 13px 13px 16px 16px; }
-.system-part.kind-store .system-part-face { border-bottom: 3px double var(--studio-card-edge); padding-bottom: 13px; }
-.system-part.kind-queue .system-part-face { background-image: linear-gradient(90deg, transparent 0 16px, var(--studio-card-edge) 16px calc(100% - 16px), transparent 0); background-size: 100% 1px; background-repeat: no-repeat; background-position: 0 calc(100% - 7px); }
-.system-part.kind-external { background: transparent; box-shadow: 0 0 0 1px var(--border-3); }
-.system-part.kind-external .system-part-face { padding-top: 13px; }
-.system-part.kind-client { border-radius: 20px; }
+.system-part::before, .system-part::after { content: none; position: absolute; pointer-events: none; }
+
+/* Where people are: a screen — softer corners, and the faintest glass along the top. */
+.system-part.kind-client {
+  border-radius: 17px;
+  background:
+    linear-gradient(to bottom, var(--studio-client-band) 0 6px, transparent 6px),
+    var(--studio-card);
+}
+
+/* What you keep: a second edge beneath it, like the next plate in a stack. */
+.system-part.kind-store::after {
+  content: '';
+  left: 9px; right: 9px; bottom: -5px; height: 5px;
+  border-radius: 0 0 11px 11px;
+  background: var(--studio-card);
+  box-shadow: 0 0 0 1px var(--studio-card-edge), 0 4px 10px rgba(0, 0, 0, 0.04);
+  z-index: -1;
+}
+
+/* A hand-off: a channel, open at both ends — two quiet rails just inside them. */
+.system-part.kind-queue { border-radius: 22px; }
+.system-part.kind-queue::before, .system-part.kind-queue::after {
+  content: '';
+  top: 12px; bottom: 12px; width: 1px;
+  background: var(--studio-card-edge);
+}
+.system-part.kind-queue::before { left: 9px; }
+.system-part.kind-queue::after { right: 9px; }
+.system-part.kind-queue .system-part-face { padding-left: 22px; padding-right: 22px; }
+
+/* What you use but do not run: present, lighter, lower. */
+.system-part.kind-external {
+  background: var(--studio-external);
+  box-shadow: 0 0 0 1px var(--studio-card-edge);
+}
+.system-part.kind-external:hover { box-shadow: 0 0 0 1px var(--border-3); }
+.system-part.kind-external .system-part-name { color: var(--ink-2); font-weight: 560; }
+
+.system-focus-role { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink-3); }
+
+/* Which technology: a mark in the canvas's own ink, and its name, quietly. */
+.system-tech-mark { width: 11px; height: 11px; flex: none; fill: currentColor; opacity: 0.72; }
+.system-part-name .system-tech-mark { display: inline-block; vertical-align: -1px; margin-left: 6px; color: var(--ink-7); }
+.system-part-tech {
+  display: flex; align-items: center; gap: 5px; margin-top: 3px;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.01em; color: var(--ink-7);
+  min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.system-part-tech > span { overflow: hidden; text-overflow: ellipsis; }
+.system-part-tech.changed { animation: system-tech-swap 900ms var(--studio-ease) both; }
+@keyframes system-tech-swap {
+  0% { opacity: 0; transform: translateY(3px); color: var(--studio-accent); }
+  40% { opacity: 1; transform: none; color: var(--studio-accent); }
+  100% { color: var(--ink-7); }
+}
+
+/*
+ * Boundaries. A group is not a card: it is the region its parts share, a
+ * shade apart from the field, with its name set inside its top edge. It
+ * grows and shrinks with what it holds, on the same easing as the parts.
+ */
+.system-groups { position: absolute; }
+.system-group {
+  position: absolute; left: 0; top: 0;
+  box-sizing: border-box;
+  border-radius: 20px;
+  background: var(--studio-group);
+  box-shadow: inset 0 0 0 1px var(--studio-group-edge);
+  cursor: default;
+  user-select: none;
+  outline: none;
+}
+.system-canvas.measured .system-group {
+  transition:
+    transform 560ms var(--studio-ease),
+    width 560ms var(--studio-ease),
+    height 560ms var(--studio-ease),
+    opacity 280ms ease,
+    background-color 320ms ease,
+    box-shadow 320ms ease;
+}
+.system-group-labels { position: absolute; }
+.system-group-label {
+  position: absolute; left: 0; top: 0;
+  display: flex; align-items: baseline; gap: 8px; min-width: 0;
+  padding: 4px 6px; border-radius: 7px;
+  /* The boundary's own shade, opaque, so a line runs behind the name. */
+  background: color-mix(in srgb, var(--studio-card) 42%, var(--studio-field));
+  cursor: default; user-select: none;
+}
+.system-canvas.measured .system-group-label { transition: transform 560ms var(--studio-ease), opacity 280ms ease; }
+.system-group-name {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.005em; color: var(--ink-4);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.system-group-tech {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  font-family: var(--mono); font-size: 10px; color: var(--ink-8);
+}
+.system-group-tech .system-tech-mark { width: 10px; height: 10px; align-self: center; }
+.system-group:hover { box-shadow: inset 0 0 0 1px var(--border-3); }
+.system-group-label:hover .system-group-name { color: var(--ink-2); }
+.system-group:focus-visible { box-shadow: inset 0 0 0 2px var(--studio-accent); }
+
+/* An empty boundary waits, the size of a card, drawn only as its edge. */
+.system-group.empty { background: transparent; box-shadow: inset 0 0 0 1px var(--studio-group-edge); border-radius: 16px; }
+.system-group-label.empty { background: transparent; justify-content: center; margin-top: -12px; }
+
+.system-group.selected { box-shadow: inset 0 0 0 1.5px var(--studio-line-lit); }
+.system-group-label.selected .system-group-name { color: var(--ink-bright); }
+.system-group.far, .system-group-label.far { opacity: 0.45; }
+.system-group.faint, .system-group-label.faint { opacity: 0.8; }
+.system-group-label.entering { animation: system-group-in 700ms var(--studio-ease) var(--arrive-delay, 0ms) both; }
+
+/* A part dragged well inside: this is where it would go. */
+.system-group.drop-target {
+  background: color-mix(in srgb, var(--studio-accent) 7%, var(--studio-group));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--studio-accent) 70%, transparent);
+}
+.system-group-label.drop-target .system-group-name { color: var(--studio-accent); }
+/* A member dragged well outside: its boundary lets it go. */
+.system-group.releasing { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--studio-accent) 35%, transparent); }
+
+/* Just took a part in, or just appeared: brighten once and settle. */
+.system-group.receiving, .system-group.touched { animation: system-group-receive 1600ms var(--studio-ease) both; }
+@keyframes system-group-receive {
+  0%, 100% { box-shadow: inset 0 0 0 1px var(--studio-group-edge); }
+  30% { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--studio-accent) 55%, transparent), 0 0 0 5px color-mix(in srgb, var(--studio-accent) 7%, transparent); }
+}
+.system-group.entering { animation: system-group-in 700ms var(--studio-ease) var(--arrive-delay, 0ms) both; }
+@keyframes system-group-in { from { opacity: 0; scale: 0.985; } to { opacity: 1; scale: 1; } }
+.system-group.lens-added { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--studio-accent) 60%, transparent); }
+
+/* A part moving across a boundary rides above everything while it travels. */
+.system-part.regrouped { z-index: 2; }
 
 /* Selection: we are thinking about this. */
 .system-part.selected {

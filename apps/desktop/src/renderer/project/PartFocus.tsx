@@ -110,7 +110,7 @@ export function PartFocus({
       : 'In the code today';
   const where = place(anchor, bounds, size, obstacles);
   // Only what there is: a part with nothing more to say gets a small panel, not an empty one.
-  const full = duties.length > 0 || Boolean(part.detail) || refs.length > 0 || Boolean(note) || (history && changes.length > 0);
+  const full = duties.length > 0 || (part.kind === 'group' && Boolean(part.role)) || Boolean(part.detail) || refs.length > 0 || Boolean(note) || (history && changes.length > 0);
   const long = (part.detail?.length ?? 0) > 280;
   return (
     <aside
@@ -120,6 +120,12 @@ export function PartFocus({
       onPointerDown={(event) => event.stopPropagation()}
       aria-label={`${part.name}`}
     >
+      {/* A boundary's card is its edge, which has no room for what it is for. */}
+      {part.kind === 'group' && part.role && (
+        <section className="system-focus-section">
+          <p className="system-focus-role">{part.role}</p>
+        </section>
+      )}
       {note && (
         <section className="system-focus-section system-focus-note">
           <NoteText text={note.text} onDismiss={note.onDismiss} />

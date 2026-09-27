@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactElement } from 'react';
 
-import type { ContextRef, DesignOp, DesignRevision, DesignSlot, PresenceProfile, Project } from '@vowe/core';
+import type { ContextRef, DesignOp, DesignRevision, PresenceProfile, Project } from '@vowe/core';
 import { formatRef } from '@vowe/core/refs';
 import { diffModels, elementLabel, EMPTY_MODEL } from '@vowe/core/studio-model';
 
@@ -570,9 +570,16 @@ export function StudioSpace({ project, presence, designId, narrow, available, on
             onShowChange={(ord) => setLens({ kind: 'move', ord })}
             onRename={(id, name) => void manipulate([{ op: 'part', id, name }])}
             onRelocateDuty={(dutyId, partId) => void manipulate([{ op: 'duty', id: dutyId, part: partId }])}
-            onPin={(id, slot: DesignSlot) => {
+            onArrange={(layout) => {
               if (!activeId) return;
-              void window.vowe.setDesignLayout(activeId, { ...(current?.layout ?? {}), [id]: slot }).catch((cause) => setError(errorText(cause)));
+              void window.vowe.setDesignLayout(activeId, layout).catch((cause) => setError(errorText(cause)));
+            }}
+            onRegroup={(id, group, layout) => {
+              if (!activeId) return;
+              // Arranged first, so the part joins or leaves the boundary where it was dropped.
+              void window.vowe.setDesignLayout(activeId, layout)
+                .then(() => manipulate([{ op: 'part', id, within: group }]))
+                .catch((cause) => setError(errorText(cause)));
             }}
             onOpenRef={(ref) => void openRef(ref)}
             onAsk={ask}

@@ -30,7 +30,7 @@ function pierces(points: readonly Point[], card: Placed): boolean {
 }
 
 function noneThroughCards(geometry: ReturnType<typeof lay>, links: ReturnType<typeof link>[]) {
-  const routes = routeLinks(links, geometry.placed, geometry.rows);
+  const routes = routeLinks(links, geometry);
   for (const each of links) {
     const route = routes.get(each.id)!;
     for (const card of geometry.placed.values()) {
@@ -69,7 +69,7 @@ describe('canvas geometry', () => {
 describe('link routing', () => {
   it('always draws the same command sequence, so any route can morph into any other', () => {
     const geometry = lay({ a: [0, 0], b: [1, 2], c: [0, 1], d: [3, 0], x: [1, 0], y: [2, 0] });
-    const routes = routeLinks([link('a', 'b'), link('a', 'c'), link('a', 'd'), link('d', 'a')], geometry.placed, geometry.rows);
+    const routes = routeLinks([link('a', 'b'), link('a', 'c'), link('a', 'd'), link('d', 'a')], geometry);
     const shapes = new Set([...routes.values()].map((route) => commands(route.d)));
     shapes.add(commands(looseRoute(geometry.placed.get('a')!, geometry.placed.get('b')!).d));
     expect(shapes.size).toBe(1);
@@ -78,7 +78,7 @@ describe('link routing', () => {
 
   it('leaves the bottom of a part and enters the top of the one below', () => {
     const geometry = lay({ a: [0, 0], b: [1, 1] });
-    const route = routeLinks([link('a', 'b')], geometry.placed, geometry.rows).get('a->b')!;
+    const route = routeLinks([link('a', 'b')], geometry).get('a->b')!;
     const a = geometry.placed.get('a')!;
     const b = geometry.placed.get('b')!;
     expect(route.points[0]).toEqual({ x: a.x + a.w / 2, y: a.y + a.h });
@@ -94,7 +94,7 @@ describe('link routing', () => {
 
   it('fans links out of one part from a single trunk on one track', () => {
     const geometry = lay({ hub: [0, 1], a: [1, 0], b: [1, 1], c: [1, 2] });
-    const routes = routeLinks([link('hub', 'a'), link('hub', 'b'), link('hub', 'c')], geometry.placed, geometry.rows);
+    const routes = routeLinks([link('hub', 'a'), link('hub', 'b'), link('hub', 'c')], geometry);
     const starts = new Set([...routes.values()].map((route) => `${route.points[0]!.x},${route.points[0]!.y}`));
     const tracks = new Set([...routes.values()].map((route) => route.points[2]!.y));
     expect(starts.size).toBe(1);
@@ -103,7 +103,7 @@ describe('link routing', () => {
 
   it('merges links into one part onto one entry, and keeps unrelated runs on their own tracks', () => {
     const geometry = lay({ a: [0, 0], b: [0, 1], c: [0, 2], sink: [1, 1], other: [1, 3], feeder: [0, 3] });
-    const routes = routeLinks([link('a', 'sink'), link('c', 'sink'), link('b', 'other')], geometry.placed, geometry.rows);
+    const routes = routeLinks([link('a', 'sink'), link('c', 'sink'), link('b', 'other')], geometry);
     const into = [routes.get('a->sink')!, routes.get('c->sink')!];
     expect(into[0]!.points[5]).toEqual(into[1]!.points[5]);
     expect(into[0]!.points[2]!.y).toBe(into[1]!.points[2]!.y);
@@ -112,7 +112,7 @@ describe('link routing', () => {
 
   it('keeps a side that sends and receives from reading as one line', () => {
     const geometry = lay({ a: [0, 0], b: [1, 0] });
-    const routes = routeLinks([link('a', 'b'), link('b', 'a')], geometry.placed, geometry.rows);
+    const routes = routeLinks([link('a', 'b'), link('b', 'a')], geometry);
     expect(routes.get('a->b')!.points[0]!.x).not.toBe(routes.get('b->a')!.points[5]!.x);
   });
 
@@ -139,7 +139,7 @@ describe('label placement', () => {
   it('puts labels where they fit, never on another label or a card, and drops what cannot be read', () => {
     const geometry = lay({ hub: [0, 1], a: [1, 0], b: [1, 1], c: [1, 2] });
     const links = [link('hub', 'a'), link('hub', 'b'), link('hub', 'c')];
-    const routes = routeLinks(links, geometry.placed, geometry.rows);
+    const routes = routeLinks(links, geometry);
     const placed = placeLabels(links.map((each) => ({ id: each.id, text: 'reads and writes' })), routes, [...geometry.placed.values()]);
     const boxes = [...placed.values()].map((at) => ({ x: at.anchor === 'middle' ? at.x - 50 : at.x, y: at.y - 10, w: 100, h: 12 }));
     for (const [index, box] of boxes.entries()) {

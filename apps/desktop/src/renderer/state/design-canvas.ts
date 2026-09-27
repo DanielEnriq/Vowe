@@ -15,6 +15,10 @@ export const COL_GAP = 64;
 export const ROW_GAP = 76;
 const DEFAULT_HEIGHT = 64;
 const PITCH = CARD_WIDTH + COL_GAP;
+/** A boundary's inner margin beside and beneath what it holds. */
+export const GROUP_PAD = 22;
+/** Above what it holds: room for the boundary's name. */
+export const GROUP_HEAD = 42;
 
 export interface Placed {
   id: string;
@@ -27,27 +31,66 @@ export interface Placed {
   col: number;
 }
 
+/**
+ * A boundary around the parts inside it, or — while it holds none — a
+ * compact boundary where it waits. `span` is the grid it covers, normalised.
+ */
+export interface Frame {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  span: { top: number; bottom: number; left: number; right: number };
+  empty: boolean;
+}
+
+/** A row or column band: where cards sit, and the extra room a boundary edge takes on either side. */
+export interface Band {
+  top: number;
+  bottom: number;
+  /** Room a boundary takes above the band (rows) or before it (columns). */
+  before: number;
+  /** Room a boundary takes below the band, or after it. */
+  after: number;
+}
+
 export interface CanvasGeometry {
   placed: Map<string, Placed>;
+  /** Groups, drawn around their members. */
+  frames: Map<string, Frame>;
   width: number;
   height: number;
   /** Each occupied-or-between row's top and bottom, by normalised row index. */
-  rows: { top: number; bottom: number }[];
+  rows: Band[];
+  /** Each column's left (`top`) and right (`bottom`), by normalised column index. */
+  cols: Band[];
   /** The slot under a point on the stage. */
   slotAt(x: number, y: number): { row: number; col: number };
   /** Where a slot's card would sit, for previewing a drop. */
   slotRect(slot: { row: number; col: number }): { x: number; y: number; w: number; h: number };
 }
 
+/**
+ * Where everything is drawn. A group with members takes no slot: it is drawn
+ * around them, and a row or column boundary that a group's edge lies on is
+ * widened by the boundary's margin, so the grid stays a grid and a design
+ * without groups is drawn exactly as before. An empty group is drawn where
+ * it waits, the size of a card.
+ */
 export function canvasGeometry(
   ids: readonly string[],
   layout: DesignLayout,
   heights: Readonly<Record<string, number>>,
+  groups: ReadonlyMap<string, readonly string[]> = new Map(),
 ): CanvasGeometry {
-  const slots = ids.flatMap((id) => (layout[id] ? [[id, layout[id]!] as const] : []));
+  const drawn = new Set(ids);
+  const members = new Map([...groups].map(([id, list]) => [id, list.filter((member) => drawn.has(member) && layout[member])]));
+  const populated = new Set([...members].filter(([, list]) => list.length).map(([id]) => id));
+  const slots = ids.flatMap((id) => (layout[id] && !populated.has(id) ? [[id, layout[id]!] as const] : []));
   if (!slots.length) {
     return {
-      placed: new Map(), width: 0, height: 0, rows: [],
+      placed: new Map(), frames: new Map(), width: 0, height: 0, rows: [], cols: [],
       slotAt: () => ({ row: 0, col: 0 }),
       slotRect: () => ({ x: 0, y: 0, w: CARD_WIDTH, h: DEFAULT_HEIGHT }),
     };
@@ -57,25 +100,55 @@ export function canvasGeometry(
   const minCol = Math.min(...slots.map(([, slot]) => slot.col));
   const maxCol = Math.max(...slots.map(([, slot]) => slot.col));
 
+  // Each populated group's box, and the margins its edges take.
+  const boxes = new Map<string, Frame['span']>();
+  for (const id of populated) {
+    const cells = members.get(id)!.map((member) => layout[member]!);
+    boxes.set(id, {
+      top: Math.min(...cells.map((slot) => slot.row)),
+      bottom: Math.max(...cells.map((slot) => slot.row)),
+      left: Math.min(...cells.map((slot) => slot.col)),
+      right: Math.max(...cells.map((slot) => slot.col)),
+    });
+  }
+  const edge = (side: keyof Frame['span'], at: number) => [...boxes.values()].some((box) => box[side] === at);
+
   const rowHeight = new Map<number, number>();
   for (const [id, slot] of slots) {
     rowHeight.set(slot.row, Math.max(rowHeight.get(slot.row) ?? 0, heights[id] ?? DEFAULT_HEIGHT));
   }
   const rowTop = new Map<number, number>();
-  const rows: { top: number; bottom: number }[] = [];
+  const rows: Band[] = [];
   let y = 0;
   for (let row = minRow; row <= maxRow; row += 1) {
+    const before = edge('top', row) ? GROUP_HEAD : 0;
+    const after = edge('bottom', row) ? GROUP_PAD : 0;
+    y += before;
     const height = rowHeight.get(row) ?? DEFAULT_HEIGHT;
     rowTop.set(row, y);
-    rows.push({ top: y, bottom: y + height });
-    y += height + ROW_GAP;
+    rows.push({ top: y, bottom: y + height, before, after });
+    y += height + after + ROW_GAP;
   }
+  const height = y - ROW_GAP;
+
+  const colLeft = new Map<number, number>();
+  const cols: Band[] = [];
+  let x = 0;
+  for (let col = minCol; col <= maxCol; col += 1) {
+    const before = edge('left', col) ? GROUP_PAD : 0;
+    const after = edge('right', col) ? GROUP_PAD : 0;
+    x += before;
+    colLeft.set(col, x);
+    cols.push({ top: x, bottom: x + CARD_WIDTH, before, after });
+    x += CARD_WIDTH + after + COL_GAP;
+  }
+  const width = x - COL_GAP;
 
   const placed = new Map<string, Placed>();
   for (const [id, slot] of slots) {
     placed.set(id, {
       id,
-      x: (slot.col - minCol) * PITCH,
+      x: colLeft.get(slot.col)!,
       y: rowTop.get(slot.row)!,
       w: CARD_WIDTH,
       // A row is one height: cards that sit together end together.
@@ -85,28 +158,75 @@ export function canvasGeometry(
     });
   }
 
+  const frames = new Map<string, Frame>();
+  for (const [id, box] of boxes) {
+    const left = colLeft.get(box.left)! - GROUP_PAD;
+    const top = rowTop.get(box.top)! - GROUP_HEAD;
+    const right = colLeft.get(box.right)! + CARD_WIDTH + GROUP_PAD;
+    const bottom = rowTop.get(box.bottom)! + rowHeight.get(box.bottom)! + GROUP_PAD;
+    frames.set(id, {
+      id, x: left, y: top, w: right - left, h: bottom - top, empty: false,
+      span: { top: box.top - minRow, bottom: box.bottom - minRow, left: box.left - minCol, right: box.right - minCol },
+    });
+  }
+  for (const id of groups.keys()) {
+    const at = placed.get(id);
+    if (!at || populated.has(id)) continue;
+    frames.set(id, { id, x: at.x, y: at.y, w: at.w, h: at.h, empty: true, span: { top: at.row, bottom: at.row, left: at.col, right: at.col } });
+  }
+
   const step = DEFAULT_HEIGHT + ROW_GAP;
+  const xOf = (col: number) =>
+    col < minCol ? (col - minCol) * PITCH : col > maxCol ? width + COL_GAP + (col - maxCol - 1) * PITCH : colLeft.get(col)!;
   return {
     placed,
-    width: (maxCol - minCol) * PITCH + CARD_WIDTH,
-    height: y - ROW_GAP,
+    frames,
+    width,
+    height,
     rows,
+    cols,
     slotAt(px, py) {
-      const col = Math.round((px - CARD_WIDTH / 2) / PITCH) + minCol;
+      // Beyond the drawing, columns continue at the plain pitch.
+      const lastEdge = width + COL_GAP / 2;
+      let col = maxCol;
+      if (px < -COL_GAP / 2) col = minCol - 1 - Math.floor((-COL_GAP / 2 - px) / PITCH);
+      else if (px >= lastEdge) col = maxCol + 1 + Math.floor((px - lastEdge) / PITCH);
+      else {
+        for (let candidate = minCol; candidate <= maxCol; candidate += 1) {
+          const band = cols[candidate - minCol]!;
+          if (px < band.bottom + band.after + COL_GAP / 2) { col = candidate; break; }
+        }
+      }
       if (py < 0) return { row: minRow + Math.floor(py / step), col };
       for (let row = minRow; row <= maxRow; row += 1) {
-        const bottom = rowTop.get(row)! + (rowHeight.get(row) ?? DEFAULT_HEIGHT) + ROW_GAP / 2;
-        if (py < bottom) return { row, col };
+        const band = rows[row - minRow]!;
+        if (py < band.bottom + band.after + ROW_GAP / 2) return { row, col };
       }
-      return { row: maxRow + 1 + Math.floor((py - y) / step), col };
+      return { row: maxRow + 1 + Math.floor((py - height - ROW_GAP) / step), col };
     },
     slotRect({ row, col }) {
-      const x = (col - minCol) * PITCH;
+      const x = xOf(col);
       if (row < minRow) return { x, y: (row - minRow) * step, w: CARD_WIDTH, h: DEFAULT_HEIGHT };
-      if (row > maxRow) return { x, y: y + (row - maxRow - 1) * step, w: CARD_WIDTH, h: DEFAULT_HEIGHT };
+      if (row > maxRow) return { x, y: height + ROW_GAP + (row - maxRow - 1) * step, w: CARD_WIDTH, h: DEFAULT_HEIGHT };
       return { x, y: rowTop.get(row)!, w: CARD_WIDTH, h: rowHeight.get(row) ?? DEFAULT_HEIGHT };
     },
   };
+}
+
+/**
+ * The boundary a point is well inside, if any: `inset` in from its edge, so
+ * crossing a boundary is not the same as entering it.
+ */
+export function frameAt(frames: ReadonlyMap<string, Frame>, x: number, y: number, inset: number): string | null {
+  for (const frame of frames.values()) {
+    if (x > frame.x + inset && x < frame.x + frame.w - inset && y > frame.y + inset && y < frame.y + frame.h - inset) return frame.id;
+  }
+  return null;
+}
+
+/** Whether a point is clearly outside a boundary: `margin` beyond its edge. */
+export function outsideFrame(frame: Frame, x: number, y: number, margin: number): boolean {
+  return x < frame.x - margin || x > frame.x + frame.w + margin || y < frame.y - margin || y > frame.y + frame.h + margin;
 }
 
 /** The nearest slot in a row not held by another part. */
@@ -157,11 +277,53 @@ const ARRIVE = 3;
  * between columns — the only space no card can ever occupy — and runs that
  * share a gap take separate tracks, so two links never read as one line.
  */
-export function routeLinks(links: readonly RoutedLink[], placed: ReadonlyMap<string, Placed>, rows: readonly { top: number; bottom: number }[]): Map<string, Route> {
-  const drawable = links.filter((link) => placed.has(link.from) && placed.has(link.to) && link.from !== link.to);
-  const gapAbove = (row: number) => (row <= 0 ? (rows[0]?.top ?? 0) - ROW_GAP / 2 : (rows[row - 1]!.bottom + rows[row]!.top) / 2);
-  const gapBelow = (row: number) => (row >= rows.length - 1 ? (rows[rows.length - 1]?.bottom ?? 0) + ROW_GAP / 2 : (rows[row]!.bottom + rows[row + 1]!.top) / 2);
-  const laneX = (boundary: number) => boundary * PITCH - COL_GAP / 2;
+export function routeLinks(
+  links: readonly RoutedLink[],
+  geometry: Pick<CanvasGeometry, 'placed' | 'rows' | 'cols' | 'frames'>,
+): Map<string, Route> {
+  const { rows, cols, frames } = geometry;
+  // A link to a group ends on its boundary, at the row nearest the other end.
+  const centreRow = (id: string): number | null => {
+    const card = geometry.placed.get(id);
+    if (card) return card.row;
+    const frame = frames.get(id);
+    return frame ? (frame.span.top + frame.span.bottom) / 2 : null;
+  };
+  const endOf = (id: string, other: string): Placed | undefined => {
+    const card = geometry.placed.get(id);
+    if (card) return card;
+    const frame = frames.get(id);
+    const toward = centreRow(other);
+    if (!frame || toward === null) return undefined;
+    const row = Math.min(frame.span.bottom, Math.max(frame.span.top, Math.round(toward)));
+    return { id, x: frame.x, y: frame.y, w: frame.w, h: frame.h, row, col: Math.round((frame.span.left + frame.span.right) / 2) };
+  };
+  const ends = new Map<string, { a: Placed; b: Placed }>();
+  for (const link of links) {
+    if (link.from === link.to) continue;
+    const a = endOf(link.from, link.to);
+    const b = endOf(link.to, link.from);
+    if (a && b) ends.set(link.id, { a, b });
+  }
+  const drawable = links.filter((link) => ends.has(link.id));
+  const placed = geometry.placed;
+  // Runs travel the free part of each gap: clear of any boundary's margin.
+  const gapAbove = (row: number) => (row <= 0 ? (rows[0] ? rows[0].top - rows[0].before : 0) - ROW_GAP / 2 : gapBelow(row - 1));
+  const gapBelow = (row: number): number => {
+    const here = rows[row];
+    if (!here) return (rows[rows.length - 1]?.bottom ?? 0) + ROW_GAP / 2;
+    const next = rows[row + 1];
+    return next ? (here.bottom + here.after + next.top - next.before) / 2 : here.bottom + here.after + ROW_GAP / 2;
+  };
+  const laneX = (boundary: number): number => {
+    if (!cols.length) return boundary * PITCH - COL_GAP / 2;
+    if (boundary <= 0) return cols[0]!.top - cols[0]!.before - COL_GAP / 2 + boundary * PITCH;
+    if (boundary >= cols.length) {
+      const last = cols[cols.length - 1]!;
+      return last.bottom + last.after + COL_GAP / 2 + (boundary - cols.length) * PITCH;
+    }
+    return (cols[boundary - 1]!.bottom + cols[boundary - 1]!.after + cols[boundary]!.top - cols[boundary]!.before) / 2;
+  };
 
   // 1. Which side each end uses, and the shape of the route.
   interface Plan {
@@ -175,8 +337,7 @@ export function routeLinks(links: readonly RoutedLink[], placed: ReadonlyMap<str
   }
   const plans: Plan[] = [];
   for (const link of drawable) {
-    const a = placed.get(link.from)!;
-    const b = placed.get(link.to)!;
+    const { a, b } = ends.get(link.id)!;
     if (a.row === b.row) {
       const between = [...placed.values()].some((card) => card.row === a.row && card.id !== a.id && card.id !== b.id && card.col > Math.min(a.col, b.col) && card.col < Math.max(a.col, b.col));
       if (!between) {
@@ -225,16 +386,16 @@ export function routeLinks(links: readonly RoutedLink[], placed: ReadonlyMap<str
     roles.set(`${plan.link.from}:${plan.fromSide}`, (roles.get(`${plan.link.from}:${plan.fromSide}`) ?? new Set()).add('from'));
     roles.set(`${plan.link.to}:${plan.toSide}`, (roles.get(`${plan.link.to}:${plan.toSide}`) ?? new Set()).add('to'));
   }
-  const portOf = (id: string, side: Side, end: 'from' | 'to'): Point => {
-    const point = sidePoint(placed.get(id)!, side);
+  const portOf = (id: string, other: string, side: Side, end: 'from' | 'to'): Point => {
+    const point = sidePoint(endOf(id, other)!, side);
     if (roles.get(`${id}:${side}`)!.size < 2) return point;
     const shift = end === 'from' ? -SPLIT : SPLIT;
     return side === 'top' || side === 'bottom' ? { x: point.x + shift, y: point.y } : { x: point.x, y: point.y + shift };
   };
   const port = new Map<string, Point>();
   for (const plan of plans) {
-    port.set(`${plan.link.id}:from`, portOf(plan.link.from, plan.fromSide, 'from'));
-    port.set(`${plan.link.id}:to`, portOf(plan.link.to, plan.toSide, 'to'));
+    port.set(`${plan.link.id}:from`, portOf(plan.link.from, plan.link.to, plan.fromSide, 'from'));
+    port.set(`${plan.link.id}:to`, portOf(plan.link.to, plan.link.from, plan.toSide, 'to'));
   }
 
   // 3. Tracks. Runs through one gap that share a source branch from one
@@ -395,9 +556,16 @@ export function placeLabels(
   routes: ReadonlyMap<string, Route>,
   cards: readonly Pick<Placed, 'x' | 'y' | 'w' | 'h'>[],
 ): Map<string, PlacedLabel> {
-  const taken: { x: number; y: number; w: number; h: number }[] = cards.map((card) => ({ x: card.x - 2, y: card.y - 2, w: card.w + 4, h: card.h + 4 }));
-  const clashes = (box: { x: number; y: number; w: number; h: number }) =>
-    taken.some((other) => box.x < other.x + other.w && box.x + box.w > other.x && box.y < other.y + other.h && box.y + box.h > other.y);
+  type Box = { x: number; y: number; w: number; h: number };
+  const taken: Box[] = cards.map((card) => ({ x: card.x - 2, y: card.y - 2, w: card.w + 4, h: card.h + 4 }));
+  const overlaps = (box: Box, other: Box) => box.x < other.x + other.w && box.x + box.w > other.x && box.y < other.y + other.h && box.y + box.h > other.y;
+  // Every other line's runs: a label sitting across another link's line reads as that link's.
+  const lines = [...routes].flatMap(([id, route]) => route.points.slice(0, -1).map((a, index) => {
+    const b = route.points[index + 1]!;
+    return { id, box: { x: Math.min(a.x, b.x) - 1, y: Math.min(a.y, b.y) - 1, w: Math.abs(b.x - a.x) + 2, h: Math.abs(b.y - a.y) + 2 } };
+  }));
+  const clashes = (box: Box, own: string) =>
+    taken.some((other) => overlaps(box, other)) || lines.some((line) => line.id !== own && overlaps(box, line.box));
   const placed = new Map<string, PlacedLabel>();
   for (const { id, text } of labels) {
     const route = routes.get(id);
@@ -417,7 +585,7 @@ export function placeLabels(
         const box = flat
           ? { x: x - width / 2, y: y - LABEL_HEIGHT - 3, w: width, h: LABEL_HEIGHT }
           : { x: x + 6, y: y - LABEL_HEIGHT / 2, w: width, h: LABEL_HEIGHT };
-        if (clashes(box)) continue;
+        if (clashes(box, id)) continue;
         chosen = { box, label: flat ? { x, y: y - 7, anchor: 'middle' } : { x: x + 8, y: y + 3.5, anchor: 'start' } };
         break;
       }

@@ -12,9 +12,10 @@ import type {
   DesignPart,
   DesignSlot,
 } from '@vowe/core';
-import { live } from '@vowe/core/studio-model';
+import { groupMembers, live, settleGroups } from '@vowe/core/studio-model';
 
-import { canvasGeometry, freeSlot, looseRoute, placeLabels, routeLinks, type CanvasGeometry, type Placed, type Route } from '../state/design-canvas.js';
+import { canvasGeometry, frameAt, freeSlot, looseRoute, outsideFrame, placeLabels, routeLinks, type CanvasGeometry, type Placed, type Route } from '../state/design-canvas.js';
+import { partLook, technologyLine, type TechnologyLine } from '../state/part-presentation.js';
 import { canvasChanges, NO_CHANGES, type CanvasChanges } from '../state/studio-motion.js';
 import { neighborhood, nextSelection, visibleLabels, type LensView } from '../state/studio.js';
 import { usePrefersReducedMotion } from '../shell/theme.js';
@@ -50,7 +51,10 @@ interface Props {
   onShowChange: (ord: number) => void;
   onRename: (id: string, name: string) => void;
   onRelocateDuty: (dutyId: string, partId: string) => void;
-  onPin: (id: string, slot: DesignSlot) => void;
+  /** The drawing rearranged by hand: view state only. */
+  onArrange: (layout: DesignLayout) => void;
+  /** A part dropped into a boundary, or out of one (null): a change to the design, arranged as dropped. */
+  onRegroup: (id: string, group: string | null, layout: DesignLayout) => void;
   onOpenRef: (ref: ContextRef) => void;
   /** Put a question in the composer about what is selected. */
   onAsk: (question: string) => void;
@@ -66,6 +70,10 @@ const PAD = 64;
 const DEPTH_BAND = 0.4;
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 1.12;
+/** How far inside a boundary a dragged part must be before dropping it there joins it. */
+const ENTER = 24;
+/** How far outside its boundary a member must be before dropping it there takes it out. */
+const EXIT = 24;
 
 /**
  * The system being designed, drawn so that a developer who knows nothing
@@ -132,24 +140,39 @@ export function SystemCanvas(props: Props): ReactElement {
   // --------------------------------------------------------------- geometry
   const lensEntries = useMemo(() => new Map((lens?.diff.entries ?? []).map((entry) => [entry.id, entry])), [lens]);
   const ghostParts = useMemo(
-    () => (lens ? live(lens.before.parts).filter((part) => lensEntries.get(part.id)?.change === 'removed') : []),
+    () => (lens ? live(lens.before.parts).filter((part) => part.kind !== 'group' && lensEntries.get(part.id)?.change === 'removed') : []),
     [lens, lensEntries],
   );
-  const parts = useMemo(() => live(shown.parts), [shown]);
-  const drawnIds = useMemo(() => [...parts.map((part) => part.id), ...ghostParts.map((part) => part.id)], [parts, ghostParts]);
+  // Parts are cards; groups are the boundaries drawn around them.
+  const parts = useMemo(() => live(shown.parts).filter((part) => part.kind !== 'group'), [shown]);
+  const boundaries = useMemo(() => live(shown.parts).filter((part) => part.kind === 'group'), [shown]);
+  const groups = useMemo(() => groupMembers(shown), [shown]);
+  // An empty group waits in a slot of its own, the size of a card.
+  const waiting = useMemo(() => boundaries.filter((group) => !groups.get(group.id)?.length).map((group) => group.id), [boundaries, groups]);
+  const drawnIds = useMemo(
+    () => [...parts.map((part) => part.id), ...ghostParts.map((part) => part.id), ...waiting],
+    [parts, ghostParts, waiting],
+  );
+  const slotted = useMemo(() => [...parts.map((part) => part.id), ...waiting], [parts, waiting]);
 
-  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number; slot: DesignSlot | null } | null>(null);
+  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number; slot: DesignSlot | null; into: string | null; out: boolean } | null>(null);
   const [pinned, setPinned] = useState<DesignLayout | null>(null);
   useEffect(() => setPinned(null), [layout]);
   const effectiveLayout = pinned ?? layout;
-  const geometry = useMemo(() => canvasGeometry(drawnIds, effectiveLayout, heights), [drawnIds, effectiveLayout, heights]);
+  const geometry = useMemo(() => canvasGeometry(drawnIds, effectiveLayout, heights, groups), [drawnIds, effectiveLayout, heights, groups]);
+  /** Where something is drawn: a card, or a boundary. */
+  const boundsOf = (id: string): Pick<Placed, 'x' | 'y' | 'w' | 'h'> | undefined => geometry.placed.get(id) ?? geometry.frames.get(id);
 
-  const links = useMemo(() => live(shown.links), [shown]);
+  // A link between a group and a part inside it says nothing a boundary does not.
+  const links = useMemo(() => {
+    const within = new Map(shown.parts.map((part) => [part.id, part.within]));
+    return live(shown.links).filter((link) => within.get(link.from) !== link.to && within.get(link.to) !== link.from);
+  }, [shown]);
   const ghostLinks = useMemo(
     () => (lens ? live(lens.before.links).filter((link) => lensEntries.get(link.id)?.change === 'removed') : []),
     [lens, lensEntries],
   );
-  const routes = useMemo(() => routeLinks([...ghostLinks, ...links], geometry.placed, geometry.rows), [ghostLinks, links, geometry]);
+  const routes = useMemo(() => routeLinks([...ghostLinks, ...links], geometry), [ghostLinks, links, geometry]);
 
   // --------------------------------------------------------------- emphasis
   const previous = useRef<DesignModel | null>(null);
@@ -222,6 +245,10 @@ export function SystemCanvas(props: Props): ReactElement {
       const near = neighborhood(shown, id);
       near.parts.forEach((part) => parts.add(part));
       near.links.forEach((link) => links.add(link));
+      // A boundary brings what it holds forward with it, and the lines within it.
+      const held = new Set(groups.get(id) ?? []);
+      held.forEach((member) => parts.add(member));
+      if (held.size) for (const link of shown.links) if (!link.retired && held.has(link.from) && held.has(link.to)) links.add(link.id);
     }
     for (const id of chosenLinks) {
       const link = shown.links.find((candidate) => candidate.id === id);
@@ -231,7 +258,7 @@ export function SystemCanvas(props: Props): ReactElement {
       parts.add(link.to);
     }
     return { parts, links };
-  }, [lens, chosenParts, chosenLinks, shown]);
+  }, [lens, chosenParts, chosenLinks, shown, groups]);
   const isChosen = (element: CanvasSelection) => selection.some((other) => other.kind === element.kind && other.id === element.id);
   const choose = (element: CanvasSelection, event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) =>
     onSelect(nextSelection(selection, element, event.shiftKey || event.metaKey || event.ctrlKey));
@@ -264,7 +291,7 @@ export function SystemCanvas(props: Props): ReactElement {
   const held = useRef(fit);
   if (!depth) held.current = fit;
   const scale = depth ? held.current : fit;
-  const subject = depth ? geometry.placed.get(selectedPart ?? checking ?? '') ?? null : null;
+  const subject = depth ? boundsOf(selectedPart ?? checking ?? '') ?? null : null;
   let offsetX: number;
   let offsetY: number;
   if (depth) {
@@ -300,16 +327,39 @@ export function SystemCanvas(props: Props): ReactElement {
     const at = geometry.placed.get(id);
     if (!at) return null;
     const target = geometry.slotAt(at.x + at.w / 2 + dx, at.y + at.h / 2 + dy);
-    return { ...freeSlot(target, effectiveLayout, parts.map((part) => part.id), id), pinned: true };
+    return { ...freeSlot(target, effectiveLayout, slotted, id), pinned: true };
+  };
+  // A press whose release never arrived — lost to a cancelled pointer or a
+  // drawing that moved under it — ends here, rather than turning the next
+  // pass of the pointer into a drag.
+  const letGo = () => {
+    press.current = null;
+    setDrag(null);
   };
   const onPartMove = (event: ReactPointerEvent) => {
     const pressed = press.current;
     if (!pressed) return;
+    if (event.buttons === 0) { letGo(); return; }
     const dx = (event.clientX - pressed.x) / scale;
     const dy = (event.clientY - pressed.y) / scale;
     if (!pressed.moved && Math.hypot(dx, dy) < 4) return;
     pressed.moved = true;
-    setDrag({ id: pressed.id, dx, dy, slot: dropSlot(pressed.id, dx, dy) });
+    const at = geometry.placed.get(pressed.id);
+    const within = shown.parts.find((part) => part.id === pressed.id)?.within ?? null;
+    let into: string | null = null;
+    let out = false;
+    if (at && editable) {
+      const cx = at.x + at.w / 2 + dx;
+      const cy = at.y + at.h / 2 + dy;
+      // Into a boundary only once well inside it, and held until it is left:
+      // passing across one is not joining it.
+      const holding = drag?.into && frameAt(new Map([[drag.into, geometry.frames.get(drag.into)!]]), cx, cy, 0);
+      const over = holding ? drag!.into : frameAt(geometry.frames, cx, cy, ENTER);
+      into = over && over !== within ? over : null;
+      const own = within ? geometry.frames.get(within) : undefined;
+      out = !into && !!own && outsideFrame(own, cx, cy, EXIT) && !frameAt(geometry.frames, cx, cy, 0);
+    }
+    setDrag({ id: pressed.id, dx, dy, slot: dropSlot(pressed.id, dx, dy), into, out });
   };
   const onPartUp = (event: ReactPointerEvent, id: string) => {
     const pressed = press.current;
@@ -321,12 +371,26 @@ export function SystemCanvas(props: Props): ReactElement {
       return;
     }
     const slot = drag?.slot ?? dropSlot(id, (event.clientX - pressed.x) / scale, (event.clientY - pressed.y) / scale);
+    const into = drag?.into ?? null;
+    const out = drag?.out ?? false;
     setDrag(null);
     if (!slot) return;
+    // Onto an empty boundary: the part takes the place it was waiting in, and the boundary opens around it.
+    const waitingAt = into && geometry.frames.get(into)?.empty ? effectiveLayout[into] : undefined;
+    const dropped = { ...effectiveLayout, [id]: waitingAt ? { row: waitingAt.row, col: waitingAt.col, pinned: true as const } : slot };
+    // Dropped well inside another boundary, or well outside its own: the
+    // design changes, and the part stays where it was put.
+    if (into || out) {
+      setPinned(dropped);
+      props.onRegroup(id, into, dropped);
+      return;
+    }
+    // Anywhere else only rearranges, and a boundary stays whole.
     const current = effectiveLayout[id];
     if (current && current.row === slot.row && current.col === slot.col && current.pinned) return;
-    setPinned({ ...effectiveLayout, [id]: slot });
-    props.onPin(id, slot);
+    const settled = settleGroups(dropped, shown);
+    setPinned(settled);
+    props.onArrange(settled);
   };
 
   // ------------------------------------------------------ duty relocation
@@ -342,6 +406,7 @@ export function SystemCanvas(props: Props): ReactElement {
     move(event) {
       const pressed = dutyPress.current;
       if (!pressed || !editable) return;
+      if (event.buttons === 0) { dutyPress.current = null; setDutyDrag(null); return; }
       if (!pressed.moved && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < 4) return;
       pressed.moved = true;
       const under = document.elementsFromPoint(event.clientX, event.clientY)
@@ -404,15 +469,17 @@ export function SystemCanvas(props: Props): ReactElement {
     const order = arrival(part.id);
     const emphasis = focus ?? glance;
     const relocating = dutyDrag !== null;
+    const technology = technologyLine(part);
     const classes = [
       'system-part',
-      part.kind && `kind-${part.kind}`,
+      `kind-${partLook(part)}`,
       ghost && 'ghost',
       chosenParts.has(part.id) && 'selected',
       emphasis && !relocating && (emphasis.parts.has(part.id) ? (chosenParts.has(part.id) ? '' : 'near') : focus ? 'far' : 'faint'),
       marquee?.hits.has(part.id) && 'gathering',
       order !== -1 && 'entering',
-      changes.touched.has(part.id) && 'touched',
+      changes.touched.has(part.id) && !changes.retech.has(part.id) && 'touched',
+      changes.regrouped.has(part.id) && 'regrouped',
       checking === part.id && 'checking',
       dragging && 'dragging',
       relocating && dutyDrag.from !== part.id && (dutyDrag.over === part.id ? 'drop-target' : 'receiving'),
@@ -435,6 +502,8 @@ export function SystemCanvas(props: Props): ReactElement {
         onPointerDown={ghost ? undefined : (event) => onPartDown(event, part.id)}
         onPointerMove={ghost ? undefined : onPartMove}
         onPointerUp={ghost ? undefined : (event) => onPartUp(event, part.id)}
+        onPointerCancel={ghost ? undefined : letGo}
+        onLostPointerCapture={ghost ? undefined : () => { if (press.current?.id === part.id && !press.current.moved) press.current = null; }}
         onPointerEnter={ghost ? undefined : () => setHover({ kind: 'part', id: part.id })}
         onPointerLeave={ghost ? undefined : () => setHover((current) => (current?.id === part.id ? null : current))}
         onKeyDown={ghost ? undefined : (event: ReactKeyboardEvent) => {
@@ -459,10 +528,13 @@ export function SystemCanvas(props: Props): ReactElement {
               }}
             />
           ) : (
-            <span className="system-part-name">{part.name}</span>
+            <span className="system-part-name">
+              {part.name}
+              {technology && !technology.name && technology.mark && <TechMark d={technology.mark} />}
+            </span>
           )}
-          {part.technology?.name && <span className="system-part-tech">{part.technology.name}</span>}
           {part.role && <span className="system-part-role">{part.role}</span>}
+          <TechLine technology={technology} changed={changes.retech.has(part.id)} />
         </div>
         {lens && (diffs.length > 0 || entry?.was?.name) && (
           <div className="system-part-annex" onPointerDown={(event) => event.stopPropagation()}>
@@ -480,13 +552,88 @@ export function SystemCanvas(props: Props): ReactElement {
     );
   };
 
+  // Boundaries that just took a part in brighten once, as it arrives.
+  const receiving = new Set([...changes.regrouped.values()].flatMap((move) => (move.to ? [move.to] : [])));
+  const frameState = (group: DesignPart, at: NonNullable<ReturnType<typeof geometry.frames.get>>) => {
+    const chosen = chosenParts.has(group.id);
+    const emphasis = focus ?? glance;
+    const members = groups.get(group.id) ?? [];
+    const near = emphasis && (emphasis.parts.has(group.id) || members.some((member) => emphasis.parts.has(member)));
+    const within = drag ? shown.parts.find((part) => part.id === drag.id)?.within : undefined;
+    return [
+      at.empty && 'empty',
+      chosen && 'selected',
+      emphasis && !chosen && !dutyDrag && (near ? 'near' : focus ? 'far' : 'faint'),
+      arrival(group.id) !== -1 && 'entering',
+      changes.touched.has(group.id) && 'touched',
+      receiving.has(group.id) && 'receiving',
+      drag?.into === group.id && 'drop-target',
+      drag?.out && within === group.id && 'releasing',
+      lens?.diff.entries.some((entry) => entry.id === group.id && entry.change === 'added') && 'lens-added',
+    ].filter(Boolean).join(' ');
+  };
+  const frame = (group: DesignPart) => {
+    const at = geometry.frames.get(group.id);
+    if (!at) return null;
+    const chosen = chosenParts.has(group.id);
+    return (
+      <div
+        key={group.id}
+        data-group={group.id}
+        className={`system-group ${frameState(group, at)}`}
+        style={{ transform: `translate(${at.x}px, ${at.y}px)`, width: at.w, height: at.h, '--arrive-delay': `${reduced ? 0 : Math.max(0, arrival(group.id)) * STAGGER_MS}ms` } as CSSProperties}
+        role="button"
+        tabIndex={0}
+        aria-label={`${group.name}${group.role ? ` — ${group.role}` : ''}`}
+        aria-pressed={chosen}
+        onPointerDown={(event) => event.stopPropagation()}
+        onPointerEnter={() => setHover({ kind: 'part', id: group.id })}
+        onPointerLeave={() => setHover((current) => (current?.id === group.id ? null : current))}
+        onClick={(event) => { event.stopPropagation(); if (!lens) choose({ kind: 'part', id: group.id }, event); }}
+        onKeyDown={(event: ReactKeyboardEvent) => {
+          if (event.target !== event.currentTarget || event.key !== 'Enter') return;
+          event.preventDefault();
+          choose({ kind: 'part', id: group.id }, event);
+        }}
+      />
+    );
+  };
+  // A boundary's name sits above the lines, so a line passes behind it rather than through it.
+  const frameLabel = (group: DesignPart) => {
+    const at = geometry.frames.get(group.id);
+    if (!at) return null;
+    const technology = technologyLine(group);
+    const style: CSSProperties = at.empty
+      ? { transform: `translate(${at.x}px, ${at.y + at.h / 2}px)`, width: at.w }
+      : { transform: `translate(${at.x + 12}px, ${at.y + 8}px)`, maxWidth: at.w - 24 };
+    return (
+      <div
+        key={group.id}
+        className={`system-group-label ${frameState(group, at)}`}
+        style={{ ...style, '--arrive-delay': `${reduced ? 0 : Math.max(0, arrival(group.id)) * STAGGER_MS}ms` } as CSSProperties}
+        onPointerDown={(event) => event.stopPropagation()}
+        onPointerEnter={() => setHover({ kind: 'part', id: group.id })}
+        onPointerLeave={() => setHover((current) => (current?.id === group.id ? null : current))}
+        onClick={(event) => { event.stopPropagation(); if (!lens) choose({ kind: 'part', id: group.id }, event); }}
+      >
+        <span className="system-group-name">{group.name}</span>
+        {technology && (technology.mark || technology.name) && (
+          <span className="system-group-tech">
+            {technology.mark && <TechMark d={technology.mark} />}
+            {technology.name && <span>{technology.name}</span>}
+          </span>
+        )}
+      </div>
+    );
+  };
+
   const edge = (link: DesignLink, ghost: boolean) => {
-    const from = geometry.placed.get(link.from);
-    const to = geometry.placed.get(link.to);
+    const from = geometry.placed.get(link.from) ?? geometry.frames.get(link.from);
+    const to = geometry.placed.get(link.to) ?? geometry.frames.get(link.to);
     if (!from || !to) return null;
     let route: Route | undefined = routes.get(link.id);
     if (drag && (drag.id === link.from || drag.id === link.to)) {
-      const moveBy = (card: Placed) => (drag.id === card.id ? { ...card, x: card.x + drag.dx, y: card.y + drag.dy } : card);
+      const moveBy = (card: Pick<Placed, 'id' | 'x' | 'y' | 'w' | 'h'>) => (drag.id === card.id ? { ...card, x: card.x + drag.dx, y: card.y + drag.dy } : card);
       route = looseRoute(moveBy(from), moveBy(to));
     }
     if (!route) return null;
@@ -545,15 +692,15 @@ export function SystemCanvas(props: Props): ReactElement {
   }
 
   const noteShown = Boolean(note && noteOn && !lens && !depth && dismissed !== note.id && !drag && !dutyDrag);
-  const noteAt = noteOn ? geometry.placed.get(noteOn) : undefined;
+  const noteAt = noteOn ? boundsOf(noteOn) : undefined;
 
   const focusPart = selectedPart && !lens && !depth && !renaming ? shown.parts.find((part) => part.id === selectedPart && !part.retired) : undefined;
-  const focusAt = focusPart ? geometry.placed.get(focusPart.id) : undefined;
+  const focusAt = focusPart ? boundsOf(focusPart.id) : undefined;
   const focusLink = selectedLink && !lens && !depth ? shown.links.find((link) => link.id === selectedLink && !link.retired) : undefined;
   const focusLinkRoute = focusLink ? routes.get(focusLink.id) : undefined;
   const nameOf = (id: string) => shown.parts.find((part) => part.id === id)?.name ?? id;
 
-  const anchorFor = (at: Placed) => {
+  const anchorFor = (at: Pick<Placed, 'x' | 'y' | 'w' | 'h'>) => {
     const topLeft = toView(at.x, at.y);
     const bottomRight = toView(at.x + at.w, at.y + at.h);
     return { left: topLeft.x, top: topLeft.y, right: bottomRight.x, bottom: bottomRight.y };
@@ -567,6 +714,7 @@ export function SystemCanvas(props: Props): ReactElement {
         lens && 'lensed',
         dutyDrag && 'relocating',
         drag && 'arranging',
+        drag?.into && 'regrouping',
         focus && 'focusing',
         several && 'several',
         marquee && 'gathering',
@@ -585,6 +733,7 @@ export function SystemCanvas(props: Props): ReactElement {
       onPointerMove={(event) => {
         const started = sweep.current;
         if (!started || lens) return;
+        if (event.buttons === 0) { sweep.current = null; setMarquee(null); return; }
         const rect = viewport.current!.getBoundingClientRect();
         const x = event.clientX - rect.left;
         const y = event.clientY - rect.top;
@@ -621,6 +770,9 @@ export function SystemCanvas(props: Props): ReactElement {
           transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
         }}
       >
+        <div className="system-groups" style={{ left: PAD, top: PAD }}>
+          {boundaries.map((group) => frame(group))}
+        </div>
         <svg className="system-links" width={contentWidth} height={contentHeight}>
           <defs>
             <marker id="system-arrow" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
@@ -639,6 +791,9 @@ export function SystemCanvas(props: Props): ReactElement {
             {[...links].sort((a, b) => Number(isLit(a.id)) - Number(isLit(b.id))).map((link) => edge(link, false))}
           </g>
         </svg>
+        <div className="system-group-labels" style={{ left: PAD, top: PAD }}>
+          {boundaries.map((group) => frameLabel(group))}
+        </div>
         <div className="system-parts" style={{ left: PAD, top: PAD }}>
           {drag?.slot && (() => {
             const rect = geometry.slotRect(drag.slot);
@@ -648,10 +803,11 @@ export function SystemCanvas(props: Props): ReactElement {
           {ghostParts.map((part) => card(part, true))}
           {parts.map((part) => card(part, false))}
           {!lens && leaving.map(({ part, at }) => (
-            <div key={`leaving:${part.id}`} className="system-part leaving" style={{ transform: `translate(${at.x}px, ${at.y}px)`, width: at.w, height: at.h }}>
+            <div key={`leaving:${part.id}`} className={`system-part leaving kind-${partLook(part)}`} style={{ transform: `translate(${at.x}px, ${at.y}px)`, width: at.w, height: at.h }}>
               <div className="system-part-face">
                 <span className="system-part-name">{part.name}</span>
                 {part.role && <span className="system-part-role">{part.role}</span>}
+                <TechLine technology={technologyLine(part)} changed={false} />
               </div>
             </div>
           ))}
@@ -690,7 +846,7 @@ export function SystemCanvas(props: Props): ReactElement {
           onShowChange={props.onShowChange}
           onOpenRef={props.onOpenRef}
           onAsk={props.onAsk}
-          onRename={editable ? () => startRename(focusPart.id) : null}
+          onRename={editable && focusPart.kind !== 'group' ? () => startRename(focusPart.id) : null}
           note={noteShown && noteOn === focusPart.id ? { text: note!.text, onDismiss: () => setDismissed(note!.id) } : null}
         />
       )}
@@ -757,5 +913,28 @@ function RenameField({ name, onDone }: { name: string; onDone: (name: string | n
         if (event.key === 'Escape') { event.preventDefault(); finish(null); }
       }}
     />
+  );
+}
+
+/** A technology's mark, in the canvas's own ink. */
+function TechMark({ d }: { d: string }): ReactElement {
+  return (
+    <svg className="system-tech-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d={d} />
+    </svg>
+  );
+}
+
+/**
+ * The quiet line beneath a part: which technology it is. Keyed by name, so a
+ * change of technology fades one out and the other in.
+ */
+function TechLine({ technology, changed }: { technology: TechnologyLine | null; changed: boolean }): ReactElement | null {
+  if (!technology?.name) return null;
+  return (
+    <span key={technology.name} className={`system-part-tech${changed ? ' changed' : ''}`}>
+      {technology.mark && <TechMark d={technology.mark} />}
+      <span>{technology.name}</span>
+    </span>
   );
 }
