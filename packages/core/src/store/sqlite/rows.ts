@@ -330,12 +330,16 @@ export function toDesignEntry(row: Row): DesignEntry {
       id,
     );
   }
+  if (row['anchor_json'] !== null && row['anchor_json'] !== undefined) {
+    entry.anchor = parse<NonNullable<DesignEntry['anchor']>>(row['anchor_json'], 'design_entries', id);
+  }
   return entry;
 }
 
 export function toDesignRevision(row: Row): DesignRevision {
-  return {
-    id: str(row['id']),
+  const id = str(row['id']);
+  const revision: DesignRevision = {
+    id,
     designId: str(row['design_id']),
     ord: Number(row['ord']),
     at: str(row['at']),
@@ -343,6 +347,13 @@ export function toDesignRevision(row: Row): DesignRevision {
     summary: str(row['summary']),
     entryId: str(row['entry_id']),
   };
+  if (row['model_json'] !== null && row['model_json'] !== undefined) {
+    revision.model = parse<NonNullable<DesignRevision['model']>>(row['model_json'], 'design_revisions', id);
+  }
+  if (row['move_json'] !== null && row['move_json'] !== undefined) {
+    revision.move = parse<NonNullable<DesignRevision['move']>>(row['move_json'], 'design_revisions', id);
+  }
+  return revision;
 }
 
 export function toDelivery(row: Row): ConversationDelivery {

@@ -483,6 +483,18 @@ CREATE TABLE design_revisions (
 CREATE UNIQUE INDEX design_revisions_design_ord ON design_revisions (design_id, ord);
 `;
 
+/**
+ * The design as a model rather than a document. Studio 0 revisions keep NULL
+ * here and are read as documents until the next turn draws them. Layout is the
+ * design's view state, updated in place, and deliberately not history.
+ */
+const STUDIO_MODEL = `
+ALTER TABLE design_revisions ADD COLUMN model_json TEXT;   -- NULL => a Studio 0 document
+ALTER TABLE design_revisions ADD COLUMN move_json  TEXT;   -- NULL => a Studio 0 rewrite
+ALTER TABLE designs          ADD COLUMN layout_json TEXT;  -- NULL => nothing placed yet
+ALTER TABLE design_entries   ADD COLUMN anchor_json TEXT;  -- NULL => key ABSENT
+`;
+
 import {
   EVIDENCE_RECORDS_SCHEMA,
   EVIDENCE_SCHEMA,
@@ -550,6 +562,7 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   { version: 16, name: '016_studio', up: (db) => db.exec(STUDIO) },
+  { version: 17, name: '017_studio_model', up: (db) => db.exec(STUDIO_MODEL) },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

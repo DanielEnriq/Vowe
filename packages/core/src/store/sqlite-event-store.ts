@@ -40,6 +40,7 @@ import type {
   DesignRevision,
   DesignStore,
 } from '../studio/types.js';
+import type { DesignLayout } from '../studio/layout.js';
 import type {
   ConversationChange,
   EventQuery,
@@ -705,18 +706,20 @@ export class SqliteEventStore implements EventStore, DesignStore {
   async commitDesignTurn(
     entry: DesignEntry,
     revision?: Omit<DesignRevision, 'ord'>,
+    layout?: DesignLayout,
   ): Promise<{ entry: DesignEntry; revision?: DesignRevision }> {
     if (revision && (revision.designId !== entry.designId || revision.entryId !== entry.id)) {
       throw new Error('vowe: a design revision must belong to the reply committed with it');
     }
     const committed = this.transaction(() => {
       const storedEntry = this.insertDesignEntry(entry);
+      if (layout) this.writeDesignLayout(entry.designId, layout);
       if (!revision) return { entry: storedEntry };
       const inserted = this.get(
-        `INSERT INTO design_revisions (id, design_id, ord, at, document, summary, entry_id)
+        `INSERT INTO design_revisions (id, design_id, ord, at, document, summary, entry_id, model_json, move_json)
          SELECT :id, :designId,
                 COALESCE((SELECT MAX(ord) FROM design_revisions WHERE design_id = :designId), 0) + 1,
-                :at, :document, :summary, :entryId
+                :at, :document, :summary, :entryId, :model, :move
          RETURNING *`,
         {
           id: revision.id,
@@ -725,12 +728,29 @@ export class SqliteEventStore implements EventStore, DesignStore {
           document: revision.document,
           summary: revision.summary,
           entryId: revision.entryId,
+          model: rows.json(revision.model),
+          move: rows.json(revision.move),
         },
       );
       return { entry: storedEntry, revision: rows.toDesignRevision(inserted!) };
     });
     this.notifyDesign(this.designChange(entry.designId));
     return committed;
+  }
+
+  getDesignLayout(designId: string): DesignLayout {
+    const row = this.get('SELECT layout_json FROM designs WHERE id = ?', designId);
+    const raw = row?.['layout_json'];
+    return typeof raw === 'string' ? (JSON.parse(raw) as DesignLayout) : {};
+  }
+
+  async saveDesignLayout(designId: string, layout: DesignLayout): Promise<void> {
+    this.transaction(() => this.writeDesignLayout(designId, layout));
+    this.notifyDesign(this.designChange(designId));
+  }
+
+  private writeDesignLayout(designId: string, layout: DesignLayout): void {
+    this.run('UPDATE designs SET layout_json = :layout WHERE id = :designId', { designId, layout: JSON.stringify(layout) });
   }
 
   onDesignChanged(listener: (change: DesignChange) => void): () => void {
@@ -742,10 +762,10 @@ export class SqliteEventStore implements EventStore, DesignStore {
 
   private insertDesignEntry(entry: DesignEntry): DesignEntry {
     const inserted = this.get(
-      `INSERT INTO design_entries (id, design_id, ord, at, role, text, refs_json, investigation_json)
+      `INSERT INTO design_entries (id, design_id, ord, at, role, text, refs_json, investigation_json, anchor_json)
        SELECT :id, :designId,
               COALESCE((SELECT MAX(ord) FROM design_entries WHERE design_id = :designId), 0) + 1,
-              :at, :role, :text, :refs, :investigation
+              :at, :role, :text, :refs, :investigation, :anchor
        RETURNING *`,
       {
         id: entry.id,
@@ -755,6 +775,7 @@ export class SqliteEventStore implements EventStore, DesignStore {
         text: entry.text,
         refs: rows.json(entry.refs),
         investigation: rows.json(entry.investigation),
+        anchor: rows.json(entry.anchor),
       },
     );
     return rows.toDesignEntry(inserted!);

@@ -160,8 +160,11 @@ const api: VoweApi = {
   listDesigns: (projectId) => ipcRenderer.invoke(IPC.listDesigns, projectId),
   getDesign: (designId) => ipcRenderer.invoke(IPC.getDesign, designId),
   createDesign: (projectId) => ipcRenderer.invoke(IPC.createDesign, projectId),
-  converseDesign: (designId, message, contextRefs) =>
-    ipcRenderer.invoke(IPC.converseDesign, designId, message, contextRefs),
+  converseDesign: (designId, message, contextRefs, options) =>
+    ipcRenderer.invoke(IPC.converseDesign, designId, message, contextRefs, options),
+  manipulateDesign: (designId, ops) => ipcRenderer.invoke(IPC.manipulateDesign, designId, ops),
+  setDesignLayout: (designId, layout) => ipcRenderer.invoke(IPC.setDesignLayout, designId, layout),
+  tidyDesign: (designId) => ipcRenderer.invoke(IPC.tidyDesign, designId),
   cancelDesignTurn: (designId) => ipcRenderer.invoke(IPC.cancelDesignTurn, designId),
   onStudioProgress: (listener) => {
     const handler = (_: unknown, progress: StudioProgress) => listener(progress);

@@ -8,6 +8,10 @@
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
     "./refs": { "types": "./dist/context/refs.d.ts", "default": "./dist/context/refs.js" },
+    "./studio-model": {
+      "types": "./dist/studio/design-model.d.ts",
+      "default": "./dist/studio/design-model.js"
+    },
     "./presence": {
       "types": "./dist/product/presence.d.ts",
       "default": "./dist/product/presence.js"

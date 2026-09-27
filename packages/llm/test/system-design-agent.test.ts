@@ -1,9 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
 
-import type { ConsultationFinding, DesignCapabilities, DesignTurn } from '@vowe/core';
+import { applyOps, EMPTY_MODEL, type ConsultationFinding, type DesignCapabilities, type DesignOp, type DesignTurn } from '@vowe/core';
 
-import { AnthropicSystemDesignAgent } from '../src/anthropic-system-design-agent.js';
+import { AnthropicSystemDesignAgent, readNote } from '../src/anthropic-system-design-agent.js';
 
 /*
  * The design agent against a fake transport speaking real server-sent events,
@@ -67,7 +67,15 @@ function agent(rounds: string[], bodies: Record<string, unknown>[] = []): Anthro
 const INPUT: DesignTurn = {
   projectName: 'Vowe',
   message: 'I think Project Understanding should sit above the observer.',
-  design: { document: '# Draft', revision: 1 },
+  design: {
+    model: applyOps(EMPTY_MODEL, [
+      { op: 'design', title: 'Draft' },
+      { op: 'part', id: 'observer', name: 'Observer', role: 'Watches a session', today: true },
+    ]).model,
+    revision: 1,
+  },
+  moves: [{ id: 'mv-00000001', author: 'vowe', via: 'conversation', summary: 'Drew the observer.' }],
+  focus: { kind: 'part', id: 'observer', label: 'Observer' },
   conversation: [{ speaker: 'developer', text: 'Hello' }, { speaker: 'vowe', text: 'Hi.' }],
   findings: [{ question: 'Is it durable?', answer: 'No.', refs: ['repo:/r/a.ts'], at: '2026-09-26T00:00:00.000Z' }],
   signal: new AbortController().signal,
@@ -78,41 +86,44 @@ const FINDING: ConsultationFinding = {
   refs: [{ kind: 'repo', path: '/r/observer-runner.ts', line: 12 }], provider: 'Claude Code', durationMs: 900, inspected: [],
 };
 
-const DOCUMENT = '# Project Understanding\n\nAbove the observer ([runner](ref:repo:/r/observer-runner.ts#12)).';
+const OPS: DesignOp[] = [
+  { op: 'part', id: 'project-understanding', name: 'Project Understanding', role: 'Durable understanding', detail: 'The observer is per session ([runner](ref:repo:/r/observer-runner.ts#12)).' },
+  { op: 'link', from: 'observer', to: 'project-understanding' },
+];
 const WHY = 'The observer is per-session, so durable understanding moved above it.';
-/** A revision block, split into the fragments a provider might send. */
-const BLOCK = `\n\n<design_revision>\n<why>${WHY}</why>\n${DOCUMENT}\n</design_revision>`;
+/** A move block, split into the fragments a provider might send. */
+const BLOCK = `\n\n<design_move>\n<why>${WHY}</why>\n${OPS.map((op) => JSON.stringify(op)).join('\n')}\n</design_move>`;
 const fragments = (text: string, size: number): string[] =>
   Array.from({ length: Math.ceil(text.length / size) }, (_, i) => text.slice(i * size, (i + 1) * size));
 
 describe('AnthropicSystemDesignAgent', () => {
-  it('consults, continues with the finding, and streams the revision beside the reply', async () => {
+  it('consults, continues with the finding, and streams the move beside the reply', async () => {
     const bodies: Record<string, unknown>[] = [];
-    const asked: { question: string; why: string }[] = [];
+    const asked: { question: string; why: string; part?: string }[] = [];
     const capabilities: DesignCapabilities = {
       consultRepository: async (request) => { asked.push(request); return FINDING; },
     };
     const design = agent([
       start() + thinking(0, ['placement depends on ', 'lifecycle']) +
         text(1, ['That fits. ', 'I want to check the observer.']) +
-        tool(2, 'consult_repository', ['{"question":"Is observer coverage durable?",', '"why":"placement"}']) + stop('tool_use'),
+        tool(2, 'consult_repository', ['{"question":"Is observer coverage durable?",', '"why":"placement","part":"observer"}']) + stop('tool_use'),
       // The marker itself arrives split, as a real stream may split it.
       start() + text(0, ['I checked it: ', 'it is per session.', ...fragments(BLOCK, 7)]) + stop('end_turn'),
     ], bodies);
 
     const messages: string[] = [];
     const reasoning: string[] = [];
-    const documents: string[] = [];
+    const moves: DesignOp[][] = [];
     const result = await design.turn(INPUT, capabilities, undefined, {
       message: (delta) => messages.push(delta),
       reasoning: (delta) => reasoning.push(delta),
-      design: (document) => documents.push(document),
+      move: (ops) => moves.push(ops),
     });
 
-    expect(asked).toEqual([{ question: 'Is observer coverage durable?', why: 'placement' }]);
+    expect(asked).toEqual([{ question: 'Is observer coverage durable?', why: 'placement', part: 'observer' }]);
     expect(bodies).toHaveLength(2);
     expect(bodies.every((body) => body.stream === true)).toBe(true);
-    // One tool only: a revision is text, not a tool call.
+    // One tool only: a move is text, not a tool call.
     expect((bodies[0]!.tools as { name: string }[]).map((tool) => tool.name)).toEqual(['consult_repository']);
     // The second request carries the consultation's result.
     const second = bodies[1]!.messages as { role: string; content: unknown }[];
@@ -121,7 +132,9 @@ describe('AnthropicSystemDesignAgent', () => {
     expect(JSON.stringify(second[2]!.content)).toContain('repo:/r/observer-runner.ts#12');
     // The first request carried the whole design context.
     const opening = JSON.stringify((bodies[0]!.messages as { content: unknown }[])[0]!.content);
-    expect(opening).toContain('# Draft');
+    expect(opening).toContain('observer: \\"Observer\\" — Watches a session [exists today]');
+    expect(opening).toContain('mv-00000001 (you): Drew the observer.');
+    expect(opening).toContain('selected the part Observer (id observer)');
     expect(opening).toContain('Is it durable?');
     expect(opening).toContain('Developer: I think Project Understanding should sit above the observer.');
 
@@ -131,14 +144,13 @@ describe('AnthropicSystemDesignAgent', () => {
     expect(messages.join('')).toBe(result.reply);
     expect(messages.join('')).not.toContain('<');
     expect(reasoning.join('')).toBe('placement depends on lifecycle');
-    expect(result.revision).toEqual({ document: DOCUMENT, summary: WHY });
-    // The design streamed as it was written, and the last view is the committed text.
-    expect(documents.length).toBeGreaterThan(3);
-    expect(documents.at(-1)).toBe(DOCUMENT);
-    for (const partial of documents) expect(DOCUMENT.startsWith(partial.trimEnd())).toBe(true);
+    expect(result.move).toEqual({ ops: OPS, summary: WHY });
+    // The move streamed op by op, and the last view is the committed move.
+    expect(moves.map((ops) => ops.length)).toEqual([1, 2]);
+    expect(moves.at(-1)).toEqual(OPS);
   });
 
-  it('returns no revision when the design did not change', async () => {
+  it('returns no move when the design did not change', async () => {
     const design = agent([start() + text(0, ['Conceptually above. ', 'I do not yet know if the code supports it.']) + stop('end_turn')]);
     const result = await design.turn(INPUT, { consultRepository: async () => FINDING });
     expect(result).toEqual({ reply: 'Conceptually above. I do not yet know if the code supports it.' });
@@ -148,10 +160,10 @@ describe('AnthropicSystemDesignAgent', () => {
     const design = agent([start() + text(0, ['one ', 'two', BLOCK]) + stop('end_turn')]);
     const result = await design.turn(INPUT, { consultRepository: async () => FINDING }, undefined, {
       message: () => { throw new Error('view broke'); },
-      design: () => { throw new Error('view broke'); },
+      move: () => { throw new Error('view broke'); },
     });
     expect(result.reply.trimEnd()).toBe('one two');
-    expect(result.revision?.document).toBe(DOCUMENT);
+    expect(result.move?.ops).toEqual(OPS);
   });
 
   it('tells the model when the repository could not be checked', async () => {
@@ -177,5 +189,24 @@ describe('AnthropicSystemDesignAgent', () => {
       consultRepository: async () => { controller.abort(); return FINDING; },
     });
     await expect(turn).rejects.toThrow();
+  });
+
+  it('reads a considered note, and treats anything else as silence', () => {
+    expect(readNote('none')).toBeNull();
+    expect(readNote('{"on":"observer","text":"Nothing persists session state now."}')).toEqual({ on: 'observer', text: 'Nothing persists session state now.' });
+    expect(readNote('Sure! {"on":1}')).toBeNull();
+  });
+
+  it('gives up on a round that goes silent instead of hanging the turn', async () => {
+    const fetch = (async (_url: unknown, init?: RequestInit) => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        // As real fetch does: an abort errors the body.
+        init?.signal?.addEventListener('abort', () => controller.error(init.signal!.reason));
+        controller.enqueue(new TextEncoder().encode(start() + text(0, ['Thinking about ']).replace(/event: content_block_stop[\s\S]*$/, '')));
+        // …and then nothing, ever.
+      },
+    }), { status: 200, headers: { 'content-type': 'text/event-stream' } })) as unknown as typeof globalThis.fetch;
+    const design = new AnthropicSystemDesignAgent({ client: new Anthropic({ apiKey: 'test', fetch, maxRetries: 0 }), stallMs: 60 });
+    await expect(design.turn(INPUT, { consultRepository: async () => FINDING })).rejects.toThrow(/stopped responding/);
   });
 });

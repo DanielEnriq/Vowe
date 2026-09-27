@@ -4,6 +4,9 @@ import type {
   ContextRef,
   ConversationChange,
   DesignChange,
+  DesignElementKind,
+  DesignLayout,
+  DesignOp,
   DesignSummary,
   DesignTurnOutcome,
   DesignView,
@@ -393,7 +396,7 @@ export interface VoweApi {
   // ----------------------------------------------------------------- studio
 
   /**
-   * Studio: think about what the system should become, with a living design.
+   * Studio: think about what the system should become, working on the system itself.
    *
    * A third path, beside asking and instructing, and separate from both: a
    * design turn can check the repository read-only through a coding harness,
@@ -402,8 +405,22 @@ export interface VoweApi {
   listDesigns(projectId: string): Promise<DesignSummary[]>;
   getDesign(designId: string): Promise<DesignView | null>;
   createDesign(projectId: string): Promise<DesignSummary>;
-  /** Resolves when the turn is committed, cancelled or has failed. */
-  converseDesign(designId: string, message: string, contextRefs?: ContextRef[]): Promise<DesignTurnOutcome>;
+  /**
+   * Resolves when the turn is committed, cancelled or has failed. `focus` is
+   * what the developer has selected — what "this" means; `start` is how they
+   * chose to begin, on a design's first message.
+   */
+  converseDesign(
+    designId: string,
+    message: string,
+    contextRefs?: ContextRef[],
+    options?: { focus?: { kind: DesignElementKind; id: string }; start?: 'code' | 'idea' },
+  ): Promise<DesignTurnOutcome>;
+  /** A change made on the canvas: the same ops a sentence would produce. */
+  manipulateDesign(designId: string, ops: DesignOp[]): Promise<DesignTurnOutcome>;
+  /** Where parts sit. View state: never a move. */
+  setDesignLayout(designId: string, layout: DesignLayout): Promise<void>;
+  tidyDesign(designId: string): Promise<void>;
   /** Stop the running turn. False when nothing was running. */
   cancelDesignTurn(designId: string): Promise<boolean>;
   /** A turn in flight. Transient; the committed design is re-read on change. */
@@ -557,6 +574,9 @@ export const IPC = {
   createDesign: 'vowe:studio:create',
   converseDesign: 'vowe:studio:converse',
   cancelDesignTurn: 'vowe:studio:cancel',
+  manipulateDesign: 'vowe:studio:manipulate',
+  setDesignLayout: 'vowe:studio:layout',
+  tidyDesign: 'vowe:studio:tidy',
   studioProgress: 'vowe:studio:progress',
   designChanged: 'vowe:studio:design-changed',
 } as const;

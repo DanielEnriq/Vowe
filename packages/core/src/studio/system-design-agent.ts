@@ -1,6 +1,7 @@
 import type { ModelTrace } from '../llm/model-trace.js';
 import type { InvestigationAttachment } from '../llm/observation-llm.js';
 import type { ConsultationFinding } from './consultation.js';
+import type { DesignElementKind, DesignModel, DesignMove, DesignOp } from './model.js';
 
 /**
  * Vowe's system-design intelligence, as a boundary Vowe owns.
@@ -13,7 +14,9 @@ import type { ConsultationFinding } from './consultation.js';
  * actually does.
  *
  * Every design decision lives behind this interface: whether to consult, what
- * to say, whether the design should change and how. `StudioService` only loads
+ * to say, whether the design should change and how — and, when the developer
+ * changes the design by hand, whether that move has a consequence worth
+ * pointing out. `StudioService` only loads
  * state, hands over capabilities, records and commits. An implementation is a
  * model and a prompt; the interface is the product.
  *
@@ -29,14 +32,55 @@ export interface SystemDesignAgent {
     trace?: ModelTrace,
     stream?: DesignStream,
   ): Promise<DesignTurnResult>;
+
+  /**
+   * The developer changed the design on the canvas. Say nothing — unless the
+   * move leaves something unresolved or breaks something the design relied
+   * on, and then one short note on the element it concerns. Null is the usual
+   * answer. No capabilities: this is a glance, not a turn.
+   */
+  consider(input: DesignConsideration, trace?: ModelTrace): Promise<DesignNote | null>;
+}
+
+export interface DesignConsideration {
+  projectName: string;
+  before: DesignModel;
+  after: DesignModel;
+  move: DesignMove;
+  conversation: DesignTurn['conversation'];
+  signal: AbortSignal;
+}
+
+/** A consequence noticed, anchored to an element id in `after`. */
+export interface DesignNote {
+  on: string;
+  text: string;
+}
+
+/** What the developer is pointing at: what "this" means. */
+export interface DesignFocus {
+  kind: DesignElementKind;
+  id: string;
+  /** How it reads on the canvas, resolved from the model — never from the renderer. */
+  label: string;
 }
 
 export interface DesignTurn {
   projectName: string;
   /** What the developer just said. */
   message: string;
-  /** The living design as it stands, or null before the first revision. */
-  design: { document: string; revision: number } | null;
+  /**
+   * The design as it stands, or null before the first revision. A Studio 0
+   * design has an empty model and its old document as `legacyDocument`,
+   * which this turn's move should draw.
+   */
+  design: { model: DesignModel; revision: number; legacyDocument?: string } | null;
+  /** Recent moves, oldest first — what "revert that" can name. */
+  moves: { id: string; author: DesignMove['author']; via: DesignMove['via']; summary: string }[];
+  /** The element the developer selected, if any. */
+  focus?: DesignFocus;
+  /** How the developer chose to begin, on a design's first message only. */
+  start?: 'code' | 'idea';
   /** Recent turns, oldest first, excluding `message`. */
   conversation: { speaker: 'developer' | 'vowe'; text: string }[];
   /** Earlier repository findings in this design, oldest first. */
@@ -68,7 +112,8 @@ export interface DesignFinding {
  * edit a file or change what Vowe believes about the project.
  */
 export interface DesignCapabilities {
-  consultRepository(request: { question: string; why: string }): Promise<ConsultationFinding>;
+  /** `part`: the id of the part the question is about, so the canvas can show it being checked. */
+  consultRepository(request: { question: string; why: string; part?: string }): Promise<ConsultationFinding>;
 }
 
 /**
@@ -82,20 +127,20 @@ export interface DesignStream {
   message?(delta: string): void;
   /** Exposed reasoning only; silent where a provider exposes none. */
   reasoning?(delta: string): void;
-  /** The whole revised document so far, as it is being rewritten. */
-  design?(document: string): void;
+  /** Every complete op of the move so far, as it is written. */
+  move?(ops: DesignOp[]): void;
 }
 
 export interface DesignTurnResult {
   /** Everything Vowe said this turn, in order. */
   reply: string;
   /**
-   * A proposed new version of the design. Absent means the design did not
-   * change, which is most turns.
+   * A change to the design. Absent means the design did not change, which is
+   * most turns.
    */
-  revision?: {
-    document: string;
-    /** Why the design changed — not a paraphrase of the new document. */
+  move?: {
+    ops: DesignOp[];
+    /** Why the design changed — not a paraphrase of the ops. */
     summary: string;
   };
 }

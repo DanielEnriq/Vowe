@@ -58,6 +58,7 @@ export * from './evidence/support.js';
 
 // Studio: a design conversation and the living design it maintains.
 export * from './studio/types.js';
+export * from './studio/design-model.js';
 export * from './studio/consultation.js';
 export * from './studio/system-design-agent.js';
 export * from './studio/design-links.js';

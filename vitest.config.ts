@@ -40,6 +40,10 @@ export default defineConfig({
         replacement: new URL('./packages/core/src/product/projections.ts', import.meta.url).pathname,
       },
       {
+        find: '@vowe/core/studio-model',
+        replacement: new URL('./packages/core/src/studio/design-model.ts', import.meta.url).pathname,
+      },
+      {
         find: '@vowe/core/refs',
         replacement: new URL('./packages/core/src/context/refs.ts', import.meta.url).pathname,
       },

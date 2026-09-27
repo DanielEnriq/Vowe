@@ -7,8 +7,11 @@ import type { OpenResult } from '../src/context/context-navigator.js';
 import { VoweRunRecorder } from '../src/execution/run-recorder.js';
 import type { ConsultationFinding, ConsultationRequest, RepositoryConsultant } from '../src/studio/consultation.js';
 import { StudioService, type StudioProgress } from '../src/studio/studio-service.js';
+import type { DesignOp } from '../src/studio/model.js';
 import type {
   DesignCapabilities,
+  DesignConsideration,
+  DesignNote,
   DesignStream,
   DesignTurn,
   DesignTurnResult,
@@ -32,7 +35,13 @@ type Turn = (input: DesignTurn, tools: DesignCapabilities, stream: DesignStream)
 class FakeAgent implements SystemDesignAgent {
   inputs: DesignTurn[] = [];
   capabilities: DesignCapabilities[] = [];
+  considered: DesignConsideration[] = [];
+  note: DesignNote | null = null;
   constructor(public script: Turn) {}
+  async consider(input: DesignConsideration) {
+    this.considered.push(input);
+    return this.note;
+  }
   async turn(input: DesignTurn, capabilities: DesignCapabilities, _trace?: unknown, stream?: DesignStream) {
     this.inputs.push(input);
     this.capabilities.push(capabilities);
@@ -76,29 +85,38 @@ async function harness(agent: FakeAgent, consultant = new FakeConsultant(), extr
       },
     },
     onProgress: (event) => progress.push(event),
+    repositoryBasis: async (root) => ({ worktree: root, head: 'abc123', branch: 'main', dirty: false, at: '2026-09-26T00:00:00.000Z' }),
   });
   const design = await studio.createDesign(PROJECT);
   void extra;
   return { store, studio, design, progress, consultant, opened };
 }
 
-const consultThenRevise: Turn = async (_input, tools, stream) => {
+const FIRST_MOVE: DesignOp[] = [
+  { op: 'design', title: 'Project Understanding', intent: 'Durable understanding above the observer.' },
+  { op: 'part', id: 'observer', name: 'Observer', role: 'Watches one session', today: true, refs: [formatRef(OBSERVER), `repo:${ROOT}/src/imaginary.ts`, 'packages/core/src/observation/observer-runner.ts#7', 'src/nowhere.ts'] },
+  {
+    op: 'part', id: 'project-understanding', name: 'Project Understanding', role: 'Durable understanding',
+    detail: `Above the observer, which stays working memory ([observer-runner.ts](ref:${formatRef(OBSERVER)})). Invented: [made up](ref:repo:${ROOT}/src/imaginary.ts).`,
+  },
+  { op: 'link', from: 'observer', to: 'project-understanding' },
+  { op: 'duty', id: 'durable', part: 'observer', text: 'durable across restarts', today: true },
+];
+
+const consultThenMove: Turn = async (_input, tools, stream) => {
   stream.message?.('That fits conceptually, but I need to check the observer. ');
-  const finding = await tools.consultRepository({ question: 'Is observer coverage durable across restart?', why: 'Placement of Project Understanding' });
+  const finding = await tools.consultRepository({ question: 'Is observer coverage durable across restart?', why: 'Placement of Project Understanding', part: 'observer' });
   stream.message?.('I checked it.');
-  stream.design?.('# Project Understanding\n\nAbove');
+  stream.move?.(FIRST_MOVE.slice(0, 2));
   return {
     reply: `That fits conceptually, but I need to check the observer. I checked it. ${finding.status === 'answered' ? finding.answer : ''}`,
-    revision: {
-      document: `# Project Understanding\n\nAbove the observer, which stays working memory ([observer-runner.ts](ref:${formatRef(OBSERVER)})). Invented: [made up](ref:repo:${ROOT}/src/imaginary.ts).`,
-      summary: 'The observer turned out to be per-session and non-durable, so durable understanding moved above it.',
-    },
+    move: { ops: FIRST_MOVE, summary: 'The observer turned out to be per-session and non-durable, so durable understanding moved above it.' },
   };
 };
 
 describe('StudioService', () => {
   it('gives the agent exactly one capability and nothing that reaches a worker', async () => {
-    const agent = new FakeAgent(consultThenRevise);
+    const agent = new FakeAgent(consultThenMove);
     const { studio, design, consultant } = await harness(agent);
     await studio.converse({ designId: design.id, message: 'I think Project Understanding should sit above the observer.' });
 
@@ -117,7 +135,7 @@ describe('StudioService', () => {
   });
 
   it('commits the reply and the revision together, grounded in what was checked', async () => {
-    const agent = new FakeAgent(consultThenRevise);
+    const agent = new FakeAgent(consultThenMove);
     const { store, studio, design } = await harness(agent);
     const outcome = await studio.converse({ designId: design.id, message: 'I think Project Understanding should sit above the observer.' });
 
@@ -127,14 +145,78 @@ describe('StudioService', () => {
     const [revision] = store.getDesignRevisions(design.id);
     expect(revision!.entryId).toBe(reply!.id);
     expect(revision!.summary).toMatch(/per-session/);
-    // The consulted file stays a link; the invented one is text.
-    expect(revision!.document).toContain(`[observer-runner.ts](ref:${formatRef(OBSERVER)})`);
-    expect(revision!.document).toContain('Invented: made up.');
+    expect(revision!.move).toMatchObject({ id: expect.stringMatching(/^mv-[0-9a-f]{8}$/), author: 'vowe', via: 'conversation', ops: FIRST_MOVE });
+    const model = revision!.model!;
+    expect(model.parts.map((part) => part.id)).toEqual(['observer', 'project-understanding']);
+    // The consulted file stays a link; the invented one is text, and is no ref.
+    const detail = model.parts[1]!.detail!;
+    expect(detail).toContain(`[observer-runner.ts](ref:${formatRef(OBSERVER)})`);
+    expect(detail).toContain('Invented: made up.');
+    // A shortened citation of a checked file resolves onto it; an unchecked one is gone.
+    expect(model.parts[0]!.refs).toEqual([formatRef(OBSERVER), `repo:${OBSERVER.path}#7`]);
+    // The document is now the design's projection.
+    expect(revision!.document).toMatch(/^# Project Understanding\n\nDurable understanding above the observer\./);
     expect(revision!.document).not.toContain('imaginary.ts');
+    // Its parts were placed in the same commit.
+    expect(store.getDesignLayout(design.id)).toEqual({ observer: { row: 0, col: 0 }, 'project-understanding': { row: 1, col: 0 } });
+  });
+
+  it('records which checkout established what exists today, and only when it was checked', async () => {
+    const agent = new FakeAgent(consultThenMove);
+    const { store, studio, design } = await harness(agent);
+    await studio.converse({ designId: design.id, message: 'Above the observer?' });
+    const model = store.getDesignRevisions(design.id)[0]!.model!;
+    expect(model.parts[0]!.today).toEqual({ name: 'Observer', role: 'Watches one session', basis: { worktree: ROOT, head: 'abc123', branch: 'main', dirty: false, at: '2026-09-26T00:00:00.000Z' } });
+    expect(model.parts[1]!.today).toBeNull();
+
+    agent.script = async () => ({ reply: 'Semantic state exists.', move: { ops: [{ op: 'part', id: 'semantic-state', name: 'Semantic State', role: 'r', today: true }], summary: 's' } });
+    await studio.converse({ designId: design.id, message: 'And semantic state?' });
+    const later = store.getDesignRevisions(design.id)[1]!.model!;
+    expect(later.parts.find((part) => part.id === 'semantic-state')!.today).toEqual({ name: 'Semantic State', role: 'r' });
+  });
+
+  it('shows the part being checked, from the agent or the selection', async () => {
+    const agent = new FakeAgent(consultThenMove);
+    const { studio, design, progress } = await harness(agent);
+    await studio.converse({ designId: design.id, message: 'Go.' });
+    expect(progress.filter((event) => event.phase === 'consulting').every((event) => event.phase === 'consulting' && event.partId === 'observer')).toBe(true);
+
+    agent.script = async (_input, tools) => {
+      await tools.consultRepository({ question: 'q?', why: 'w' });
+      return { reply: 'ok' };
+    };
+    progress.length = 0;
+    await studio.converse({ designId: design.id, message: 'Why this?', focus: { kind: 'part', id: 'project-understanding' } });
+    expect(progress.find((event) => event.phase === 'consulting')).toMatchObject({ partId: 'project-understanding' });
+  });
+
+  it('tells the agent what "this" is, resolved from the design rather than the renderer', async () => {
+    const agent = new FakeAgent(consultThenMove);
+    const { studio, design } = await harness(agent);
+    await studio.converse({ designId: design.id, message: 'First.' });
+    agent.script = async () => ({ reply: 'ok' });
+    await studio.converse({ designId: design.id, message: 'Why this?', focus: { kind: 'duty', id: 'durable' } });
+    await studio.converse({ designId: design.id, message: 'And this?', focus: { kind: 'part', id: 'nowhere' } });
+    expect(agent.inputs[1]!.focus).toEqual({ kind: 'duty', id: 'durable', label: '“durable across restarts”' });
+    expect(agent.inputs[2]!.focus).toBeUndefined();
+  });
+
+  it('hands a Studio 0 document to the agent to draw', async () => {
+    const agent = new FakeAgent(async () => ({ reply: 'Drawn.', move: { ops: [{ op: 'part', id: 'observer', name: 'Observer', role: 'r' }], summary: 'Drew the earlier design.' } }));
+    const { store, studio, design } = await harness(agent);
+    const old = await store.appendDesignEntry({ id: 'e-old', designId: design.id, at: '2026-09-20T00:00:00.000Z', role: 'companion_message', text: 'Old reply.' });
+    await store.commitDesignTurn({ id: 'e-old-2', designId: design.id, at: '2026-09-20T00:00:01.000Z', role: 'companion_message', text: 'Revised.' },
+      { id: 'r-old', designId: design.id, at: '2026-09-20T00:00:01.000Z', document: '# Old\n\nA document.', summary: 'old', entryId: 'e-old-2' });
+    void old;
+    expect(studio.getDesign(design.id)!.revisions[0]!.model).toBeUndefined();
+    await studio.converse({ designId: design.id, message: 'Draw it.' });
+    expect(agent.inputs[0]!.design).toMatchObject({ revision: 1, legacyDocument: '# Old\n\nA document.', model: { parts: [] } });
+    expect(store.getDesignRevisions(design.id)[1]!.model!.parts.map((part) => part.id)).toEqual(['observer']);
+    expect(studio.listDesigns(PROJECT)[0]!.revisions).toBe(2);
   });
 
   it('receipts and traces each consultation where it ran', async () => {
-    const agent = new FakeAgent(consultThenRevise);
+    const agent = new FakeAgent(consultThenMove);
     const { store, studio, design } = await harness(agent);
     const outcome = await studio.converse({ designId: design.id, message: 'Above the observer?' });
 
@@ -167,14 +249,14 @@ describe('StudioService', () => {
   });
 
   it('keeps a missing reason missing rather than inventing one', async () => {
-    const agent = new FakeAgent(async () => ({ reply: 'Recorded it.', revision: { document: '# d', summary: '  ' } }));
+    const agent = new FakeAgent(async () => ({ reply: 'Recorded it.', move: { ops: [{ op: 'part', id: 'd', name: 'D', role: '' }], summary: '  ' } }));
     const { store, studio, design } = await harness(agent);
     await studio.converse({ designId: design.id, message: 'Note that.' });
     expect(store.getDesignRevisions(design.id)[0]!.summary).toBe('');
   });
 
   it('hands the agent the current design, recent turns, earlier findings and attachments', async () => {
-    const agent = new FakeAgent(consultThenRevise);
+    const agent = new FakeAgent(consultThenMove);
     const { studio, design, opened } = await harness(agent);
     await studio.converse({ designId: design.id, message: 'First thought.' });
     agent.script = async () => ({ reply: 'Noted.' });
@@ -183,7 +265,9 @@ describe('StudioService', () => {
     const input = agent.inputs[1]!;
     expect(input.message).toBe('Second thought.');
     expect(input.design?.revision).toBe(1);
-    expect(input.design?.document).toMatch(/^# Project Understanding/);
+    expect(input.design?.model.title).toBe('Project Understanding');
+    expect(input.design?.legacyDocument).toBeUndefined();
+    expect(input.moves).toEqual([expect.objectContaining({ author: 'vowe', via: 'conversation', summary: expect.stringMatching(/per-session/) })]);
     expect(input.conversation.map((turn) => turn.speaker)).toEqual(['developer', 'vowe']);
     expect(input.findings).toEqual([expect.objectContaining({
       question: 'Is observer coverage durable across restart?',
@@ -194,16 +278,16 @@ describe('StudioService', () => {
   });
 
   it('lets a later turn cite what an earlier turn checked, and nothing else', async () => {
-    const agent = new FakeAgent(consultThenRevise);
+    const agent = new FakeAgent(consultThenMove);
     const { store, studio, design } = await harness(agent);
     await studio.converse({ designId: design.id, message: 'First.' });
     agent.script = async () => ({
       reply: `As checked earlier ([runner](ref:${formatRef(OBSERVER)})), and [service](ref:${formatRef(SERVICE)}).`,
-      revision: { document: `# v2 [line 7](ref:repo:${OBSERVER.path}#7)`, summary: 'Refined.' },
+      move: { ops: [{ op: 'part', id: 'observer', detail: `v2 [line 7](ref:repo:${OBSERVER.path}#7) [svc](ref:${formatRef(SERVICE)})` }], summary: 'Refined.' },
     });
     const outcome = await studio.converse({ designId: design.id, message: 'Second.' });
     expect(outcome.entry!.text).toBe(`As checked earlier ([runner](ref:${formatRef(OBSERVER)})), and service.`);
-    expect(store.getDesignRevisions(design.id)[1]!.document).toBe(`# v2 [line 7](ref:repo:${OBSERVER.path}#7)`);
+    expect(store.getDesignRevisions(design.id)[1]!.model!.parts[0]!.detail).toBe(`v2 [line 7](ref:repo:${OBSERVER.path}#7) svc`);
   });
 
   it('caps consultations per turn', async () => {
@@ -223,7 +307,7 @@ describe('StudioService', () => {
     const consultant = new FakeConsultant(async () => ({ status: 'unavailable', reason: 'Claude Code is not signed in.', provider: 'Claude Code', durationMs: 5 }));
     const agent = new FakeAgent(async (_input, tools) => {
       const finding = await tools.consultRepository({ question: 'Does it persist?', why: 'why' });
-      return { reply: `I could not check that (${finding.status}); treating it as an assumption.`, revision: { document: '# d\n\nAssumption: unchecked.', summary: 'Recorded the persistence question as unchecked.' } };
+      return { reply: `I could not check that (${finding.status}); treating it as an assumption.`, move: { ops: [{ op: 'part', id: 'store', name: 'Store', role: 'r', detail: 'Assumption: unchecked.' }], summary: 'Recorded the persistence question as unchecked.' } };
     });
     const { store, studio, design } = await harness(agent, consultant);
     const outcome = await studio.converse({ designId: design.id, message: 'Does it persist?' });
@@ -233,7 +317,7 @@ describe('StudioService', () => {
   });
 
   it('records a failed turn honestly and leaves the design unchanged', async () => {
-    const agent = new FakeAgent(consultThenRevise);
+    const agent = new FakeAgent(consultThenMove);
     const { store, studio, design } = await harness(agent);
     await studio.converse({ designId: design.id, message: 'First.' });
     agent.script = async (_input, tools) => {
@@ -290,18 +374,18 @@ describe('StudioService', () => {
   });
 
   it('reports progress in order, scoped to the design', async () => {
-    const agent = new FakeAgent(consultThenRevise);
+    const agent = new FakeAgent(consultThenMove);
     const { studio, design, progress } = await harness(agent);
     await studio.converse({ designId: design.id, message: 'Go.' });
     expect(progress.every((event) => event.designId === design.id && !('projectId' in event))).toBe(true);
     expect(progress.map((event) => event.phase)).toEqual([
-      'started', 'message', 'consulting', 'consulting', 'check', 'message', 'design', 'finished',
+      'started', 'message', 'consulting', 'consulting', 'check', 'message', 'model', 'finished',
     ]);
     expect(progress[3]).toMatchObject({ activity: 'Reading observer-runner.ts' });
   });
 
   it('keeps Studio out of the project conversation', async () => {
-    const agent = new FakeAgent(consultThenRevise);
+    const agent = new FakeAgent(consultThenMove);
     const { store, studio, design } = await harness(agent);
     await studio.converse({ designId: design.id, message: 'Maybe we should replace SQLite.' });
     expect(store.getProjectConversation(PROJECT)).toEqual([]);
@@ -313,13 +397,16 @@ describe('StudioService', () => {
     const other = await studio.createDesign(PROJECT);
     await studio.converse({ designId: other.id, message: 'Replace the claim store?\nMore detail.' });
     await new Promise((resolve) => setTimeout(resolve, 5));
-    agent.script = consultThenRevise;
+    agent.script = consultThenMove;
     await studio.converse({ designId: design.id, message: 'Project Understanding.' });
     const listed = studio.listDesigns(PROJECT);
     expect(listed.map((row) => [row.id, row.title, row.revisions])).toEqual([
       [design.id, 'Project Understanding', 1],
       [other.id, 'Replace the claim store?', 0],
     ]);
+    // Enough to recognise it in a list: what it is for, and its shape.
+    expect(listed[0]).toMatchObject({ intent: 'Durable understanding above the observer.', parts: 2, outline: [{ row: 0, col: 0 }, { row: 1, col: 0 }] });
+    expect(listed[1]).toMatchObject({ intent: '', parts: 0, outline: [] });
   });
 
   /*
@@ -328,10 +415,10 @@ describe('StudioService', () => {
    * revisions, receipts and the run trace — with no table added for it.
    */
   it('can reconstruct every design change from existing stores', async () => {
-    const agent = new FakeAgent(consultThenRevise);
+    const agent = new FakeAgent(consultThenMove);
     const { store, studio, design } = await harness(agent);
     await studio.converse({ designId: design.id, message: 'I think Project Understanding should sit above the observer.' });
-    agent.script = async () => ({ reply: 'Then persistence belongs to it.', revision: { document: '# Project Understanding\n\nOwns persistence.', summary: 'Persistence moved with durable understanding.' } });
+    agent.script = async () => ({ reply: 'Then persistence belongs to it.', move: { ops: [{ op: 'design', intent: 'Owns persistence.' }], summary: 'Persistence moved with durable understanding.' } });
     await studio.converse({ designId: design.id, message: 'So who owns persistence?' });
 
     const entries = store.getDesignEntries(design.id);
@@ -350,6 +437,7 @@ describe('StudioService', () => {
         findings: findings.map((finding) => finding.status),
         response: reply.text,
         after: revision.document,
+        move: revision.move?.ops,
         reason: revision.summary,
       };
     });
@@ -367,8 +455,103 @@ describe('StudioService', () => {
       consultations: [],
       findings: [],
       response: 'Then persistence belongs to it.',
-      after: '# Project Understanding\n\nOwns persistence.',
+      after: expect.stringMatching(/^# Project Understanding\n\nOwns persistence\./),
+      move: [{ op: 'design', intent: 'Owns persistence.' }],
       reason: 'Persistence moved with durable understanding.',
     });
+  });
+});
+
+describe('Studio canvas', () => {
+  async function drawn() {
+    const agent = new FakeAgent(consultThenMove);
+    const fixture = await harness(agent);
+    await fixture.studio.converse({ designId: fixture.design.id, message: 'I think Project Understanding should sit above the observer.' });
+    return { agent, ...fixture };
+  }
+
+  it('commits a rename as the developer’s own move, silently', async () => {
+    const { agent, store, studio, design } = await drawn();
+    const outcome = await studio.manipulate(design.id, [{ op: 'part', id: 'observer', name: 'Session Observer' }]);
+
+    expect(outcome.entry).toMatchObject({ role: 'developer_move', text: 'Renamed Observer to Session Observer' });
+    expect(outcome.revision!.move).toMatchObject({ author: 'developer', via: 'canvas', summary: 'Renamed Observer to Session Observer' });
+    expect(outcome.revision!.model!.parts[0]).toMatchObject({ id: 'observer', name: 'Session Observer' });
+    expect(agent.inputs).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(agent.considered).toEqual([]);
+    expect(store.getDesignEntries(design.id).map((entry) => entry.role)).toEqual(['user_message', 'companion_message', 'developer_move']);
+  });
+
+  it('lets Vowe notice a consequence of a semantic move, on the canvas and not in the thread', async () => {
+    const { agent, store, studio, design } = await drawn();
+    agent.note = { on: 'observer', text: 'Nothing keeps session coverage across a restart now.' };
+    const outcome = await studio.manipulate(design.id, [{ op: 'duty', id: 'durable', part: 'project-understanding' }]);
+    expect(outcome.entry!.text).toBe('Moved “durable across restarts” from Observer to Project Understanding');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(agent.considered[0]!.move.id).toBe(outcome.revision!.move!.id);
+    const note = store.getDesignEntries(design.id).at(-1)!;
+    expect(note).toMatchObject({
+      role: 'companion_note',
+      text: 'Nothing keeps session coverage across a restart now.',
+      anchor: { moveId: outcome.revision!.move!.id, on: 'observer' },
+    });
+    // The next turn hears about both, said as what they were.
+    agent.script = async () => ({ reply: 'ok' });
+    await studio.converse({ designId: design.id, message: 'Hm.' });
+    expect(agent.inputs[1]!.conversation.slice(-2).map((turn) => turn.text)).toEqual([
+      '[Changed the design on the canvas] Moved “durable across restarts” from Observer to Project Understanding',
+      '[Noted on the canvas, on observer] Nothing keeps session coverage across a restart now.',
+    ]);
+  });
+
+  it('reverts the same way whether the developer or Vowe asks', async () => {
+    const { agent, store, studio, design } = await drawn();
+    const moved = await studio.manipulate(design.id, [{ op: 'duty', id: 'durable', part: 'project-understanding' }]);
+    const moveId = moved.revision!.move!.id;
+
+    const byHand = await studio.manipulate(design.id, [{ op: 'revert', move: moveId }]);
+    expect(byHand.entry!.text).toBe('Reverted: Moved “durable across restarts” from Observer to Project Understanding');
+    expect(byHand.revision!.model).toEqual(store.getDesignRevisions(design.id)[0]!.model);
+
+    await studio.manipulate(design.id, [{ op: 'duty', id: 'durable', part: 'project-understanding' }]);
+    const again = store.getDesignRevisions(design.id).at(-1)!.move!.id;
+    agent.script = async (input) => ({ reply: 'Reverted.', move: { ops: [{ op: 'revert', move: input.moves.at(-1)!.id }], summary: 'You wanted it back.' } });
+    const bySaying = await studio.converse({ designId: design.id, message: 'Revert that.' });
+    expect(agent.inputs.at(-1)!.moves.at(-1)!.id).toBe(again);
+    expect(bySaying.revision!.model).toEqual(byHand.revision!.model);
+  });
+
+  it('refuses to change the design by hand while Vowe is mid-turn', async () => {
+    const { agent, studio, design } = await drawn();
+    let release: () => void = () => undefined;
+    agent.script = () => new Promise((resolve) => { release = () => resolve({ reply: 'done' }); });
+    const turn = studio.converse({ designId: design.id, message: 'Think.' });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await expect(studio.manipulate(design.id, [{ op: 'part', id: 'observer', name: 'X' }])).rejects.toThrow(/still working/);
+    release();
+    await turn;
+  });
+
+  it('keeps layout as view state: pins persist, turns never move what is placed, tidy spares pins', async () => {
+    const { agent, store, studio, design } = await drawn();
+    const revisions = store.getDesignRevisions(design.id).length;
+    await studio.setLayout(design.id, { ...store.getDesignLayout(design.id), observer: { row: 0, col: 4, pinned: true } });
+    expect(store.getDesignRevisions(design.id)).toHaveLength(revisions);
+
+    agent.script = async () => ({ reply: 'Added home.', move: { ops: [{ op: 'part', id: 'home', name: 'Project Home', role: 'r' }, { op: 'link', from: 'project-understanding', to: 'home' }], summary: 's' } });
+    await studio.converse({ designId: design.id, message: 'Home reads it.' });
+    const layout = store.getDesignLayout(design.id);
+    expect(layout['observer']).toEqual({ row: 0, col: 4, pinned: true });
+    expect(layout['project-understanding']).toEqual({ row: 1, col: 0 });
+    expect(layout['home']).toEqual({ row: 2, col: 0 });
+
+    await studio.setLayout(design.id, { ...layout, 'project-understanding': { row: 7, col: 7 } });
+    await studio.tidy(design.id);
+    const tidy = store.getDesignLayout(design.id);
+    expect(tidy['observer']).toEqual({ row: 0, col: 4, pinned: true });
+    expect(tidy['project-understanding']!.row).toBe(1);
+    expect(studio.getDesign(design.id)!.layout).toEqual(tidy);
   });
 });

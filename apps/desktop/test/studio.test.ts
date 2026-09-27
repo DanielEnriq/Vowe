@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DesignEntry, DesignRevision, InvestigationCheck, StudioProgress } from '@vowe/core';
+import type { DesignEntry, DesignModel, DesignRevision, InvestigationCheck, StudioProgress } from '@vowe/core';
+import { applyOps, EMPTY_MODEL } from '@vowe/core/studio-model';
 
+import { browsable } from '../src/renderer/project/DesignBrowser.js';
 import { receiptSummary } from '../src/renderer/state/investigation-timeline.js';
 import {
   STUDIO_QUIET,
   asLiveProgress,
-  designPaneView,
+  canvasNote,
+  changeCount,
+  lensView,
   openableLink,
+  shownDesign,
+  studioRoom,
   revisionLanded,
   studioTurnReducer,
   unanswered,
@@ -15,6 +21,12 @@ import {
 
 const AT = '2026-09-26T10:00:00.000Z';
 const at = { designId: 'd', at: AT };
+
+const MODEL: DesignModel = applyOps(EMPTY_MODEL, [
+  { op: 'part', id: 'observer', name: 'Observer', role: 'Watches a session' },
+  { op: 'part', id: 'understanding', name: 'Project Understanding', role: 'Durable' },
+  { op: 'duty', id: 'durable', part: 'observer', text: 'durable across restarts', today: true },
+]).model;
 
 function revision(ord: number, overrides: Partial<DesignRevision> = {}): DesignRevision {
   return { id: `r${ord}`, designId: 'd', ord, at: AT, document: `# v${ord}`, summary: `why ${ord}`, entryId: `e${ord}`, ...overrides };
@@ -39,7 +51,7 @@ describe('Studio turn state', () => {
       { ...at, phase: 'consulting', question: 'Is it durable?' },
       { ...at, phase: 'consulting', question: 'Is it durable?', activity: 'Reading a.ts' },
     ]);
-    expect(consulting.consulting).toEqual({ question: 'Is it durable?', activity: 'Reading a.ts', since: 1000 });
+    expect(consulting.consulting).toEqual({ question: 'Is it durable?', activity: 'Reading a.ts', since: 1000, partId: null });
     expect(consulting.live.active).toBe(true);
 
     const checked = studioTurnReducer(consulting, { ...at, phase: 'check', check: CONSULT }, 2000);
@@ -47,23 +59,28 @@ describe('Studio turn state', () => {
     expect(checked.live.steps).toEqual([expect.objectContaining({ kind: 'check', check: CONSULT })]);
   });
 
-  it('keeps a streamed design until its revision lands, and drops it when the turn did not revise', () => {
+  it('keeps a previewed move until its revision lands, and drops it when the turn did not move the design', () => {
     const revising = fold([
       { ...at, phase: 'started', entryId: 'q' },
-      { ...at, phase: 'design', document: '# New' },
+      { ...at, phase: 'model', model: MODEL, layout: {} },
       { ...at, phase: 'finished', entryId: 'e2', revisionId: 'r2', failed: false, cancelled: false },
     ]);
-    expect(revising.design).toBe('# New');
+    expect(revising.preview).toEqual({ model: MODEL, layout: {} });
     expect(revisionLanded(revising, [revision(1)])).toBe(false);
     expect(revisionLanded(revising, [revision(1), revision(2)])).toBe(true);
 
     const unchanged = fold([
       { ...at, phase: 'started', entryId: 'q' },
-      { ...at, phase: 'design', document: '# Half' },
+      { ...at, phase: 'model', model: MODEL, layout: {} },
       { ...at, phase: 'finished', entryId: 'e2', revisionId: null, failed: true, cancelled: false },
     ]);
-    expect(unchanged.design).toBeNull();
+    expect(unchanged.preview).toBeNull();
     expect(unchanged.live.settledEntryId).toBe('e2');
+  });
+
+  it('knows which part a repository check is about', () => {
+    const state = fold([{ ...at, phase: 'started', entryId: 'q' }, { ...at, phase: 'consulting', question: 'q?', partId: 'observer' }]);
+    expect(state.consulting?.partId).toBe('observer');
   });
 
   it('clears everything when the turn is cancelled, because nothing was kept', () => {
@@ -78,27 +95,46 @@ describe('Studio turn state', () => {
   it('feeds the conversational half to the live reducer as an investigation would', () => {
     expect(asLiveProgress({ ...at, phase: 'message', delta: 'Hi' })).toEqual({ phase: 'answer', delta: 'Hi' });
     expect(asLiveProgress({ ...at, phase: 'reasoning', delta: 'hm' })).toEqual({ phase: 'reasoning', delta: 'hm' });
-    expect(asLiveProgress({ ...at, phase: 'design', document: '#' })).toBeNull();
+    expect(asLiveProgress({ ...at, phase: 'model', model: EMPTY_MODEL, layout: {} })).toBeNull();
   });
 });
 
-describe('design pane', () => {
-  it('is empty before the first revision', () => {
-    expect(designPaneView([], null, null)).toEqual({ mode: 'empty' });
+describe('the room', () => {
+  const moved = applyOps(MODEL, [{ op: 'duty', id: 'durable', part: 'understanding' }]).model;
+  const drawn = [
+    revision(1, { model: MODEL, move: { id: 'mv-1', ops: [], summary: 'Drew it.', author: 'vowe', via: 'conversation' } }),
+    revision(2, { model: moved, move: { id: 'mv-2', ops: [], summary: 'Moved durability.', author: 'developer', via: 'canvas' } }),
+  ];
+
+  it('opens as one question, becomes the workspace once there is a system, and keeps a Studio 0 document apart', () => {
+    expect(studioRoom([], STUDIO_QUIET)).toBe('opening');
+    expect(studioRoom([], { ...STUDIO_QUIET, preview: { model: EMPTY_MODEL, layout: {} } })).toBe('opening');
+    expect(studioRoom([], { ...STUDIO_QUIET, preview: { model: MODEL, layout: {} } })).toBe('workspace');
+    expect(studioRoom([revision(1)], STUDIO_QUIET)).toBe('legacy');
+    expect(studioRoom(drawn, STUDIO_QUIET)).toBe('workspace');
   });
 
-  it('shows the design being rewritten while it streams, over any chosen history', () => {
-    const view = designPaneView([revision(1), revision(2)], '# Rewriting', 1);
-    expect(view).toEqual({ mode: 'streaming', document: '# Rewriting', basedOn: revision(2) });
+  it('shows the move being written over the committed design', () => {
+    expect(shownDesign(drawn, { observer: { row: 0, col: 0 } }, STUDIO_QUIET)).toEqual({ model: moved, layout: { observer: { row: 0, col: 0 } } });
+    expect(shownDesign(drawn, {}, { ...STUDIO_QUIET, preview: { model: MODEL, layout: {} } }).model).toBe(MODEL);
   });
 
-  it('shows the current revision, or an earlier one when chosen', () => {
-    const revisions = [revision(1), revision(2), revision(3)];
-    expect(designPaneView(revisions, null, null)).toMatchObject({ mode: 'current', revision: revision(3), total: 3 });
-    expect(designPaneView(revisions, null, 1)).toMatchObject({ mode: 'historical', revision: revision(1), current: revision(3) });
-    // Choosing the current one, or one that is gone, is just the current design.
-    expect(designPaneView(revisions, null, 3)).toMatchObject({ mode: 'current' });
-    expect(designPaneView(revisions, null, 9)).toMatchObject({ mode: 'current' });
+  it('lays one move over the design it produced, or the proposal over today', () => {
+    const lens = lensView(drawn, { kind: 'move', ord: 2 })!;
+    expect(lens.before).toBe(MODEL);
+    expect(lens.diff.entries).toEqual([{ id: 'durable', kind: 'duty', change: 'changed', fields: ['part'], was: { part: 'observer' } }]);
+    expect([lens.index, lens.total]).toEqual([1, 2]);
+    const today = lensView(drawn, { kind: 'today' })!;
+    expect(today.before.parts).toEqual([]);
+    expect(lensView(drawn, null)).toBeNull();
+    expect(changeCount(drawn, drawn[0]!)).toBe(3);
+    expect(changeCount(drawn, drawn[1]!)).toBe(1);
+  });
+
+  it('shows Vowe’s note only while the move it answers is the latest', () => {
+    const note: DesignEntry = { id: 'n', designId: 'd', at: AT, role: 'companion_note', text: 'Nothing persists now.', anchor: { moveId: 'mv-2', on: 'observer' } };
+    expect(canvasNote([note], drawn)).toBe(note);
+    expect(canvasNote([note], [...drawn, revision(3, { model: moved, move: { id: 'mv-3', ops: [], summary: '', author: 'vowe', via: 'conversation' } })])).toBeNull();
   });
 });
 
@@ -131,5 +167,17 @@ describe('unanswered turns', () => {
     expect(unanswered([user], true)).toBe(false);
     expect(unanswered([user, vowe], false)).toBe(false);
     expect(unanswered([], false)).toBe(false);
+  });
+});
+
+describe('going back to earlier designs', () => {
+  const summary = (id: string, overrides: Partial<import('@vowe/core').DesignSummary> = {}) => ({
+    id, projectId: 'p', createdAt: AT, updatedAt: AT, title: 'New design', intent: '', revisions: 0, parts: 0, outline: [], ...overrides,
+  });
+
+  it('lists designs that were spoken in, and an empty one only while it is open', () => {
+    const designs = [summary('used', { updatedAt: '2026-09-26T11:00:00.000Z' }), summary('drawn', { revisions: 2 }), summary('blank')];
+    expect(browsable(designs, null).map((design) => design.id)).toEqual(['used', 'drawn']);
+    expect(browsable(designs, 'blank').map((design) => design.id)).toEqual(['used', 'drawn', 'blank']);
   });
 });

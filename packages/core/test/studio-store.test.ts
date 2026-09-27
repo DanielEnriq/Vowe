@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { DatabaseSync } from 'node:sqlite';
+
+import { databasePath } from '../src/store/sqlite/database.js';
 import { MIGRATIONS } from '../src/store/sqlite/migrations.js';
 import { SqliteEventStore } from '../src/store/sqlite-event-store.js';
 import type { DesignEntry, DesignRevision } from '../src/studio/types.js';
@@ -57,6 +60,40 @@ function revision(entryId: string, overrides: Partial<Omit<DesignRevision, 'ord'
 }
 
 describe('Studio persistence', () => {
+  it('keeps a Studio 0 design readable as a document when the model columns arrive', async () => {
+    const opened = await temporaryStore();
+    cleanup = opened.cleanup;
+    await opened.store.close();
+    const old = new SqliteEventStore(opened.root, { migrations: MIGRATIONS.filter((m) => m.version <= 16) });
+    await old.init();
+    await old.close();
+    // Rows written exactly as Studio 0 shaped them.
+    const db = new DatabaseSync(databasePath(opened.root));
+    db.exec(`INSERT INTO designs (id, project_id, created_at) VALUES ('d0', '${PROJECT}', '2026-09-25T00:00:00.000Z');
+      INSERT INTO design_entries (id, design_id, ord, at, role, text) VALUES ('e0', 'd0', 1, '2026-09-25T00:00:01.000Z', 'companion_message', 'Drafted.');
+      INSERT INTO design_revisions (id, design_id, ord, at, document, summary, entry_id) VALUES ('r0', 'd0', 1, '2026-09-25T00:00:01.000Z', '# Old design', 'why', 'e0');`);
+    db.close();
+
+    const store = await opened.reopen();
+    const [revision] = store.getDesignRevisions('d0');
+    expect(revision).toEqual({ id: 'r0', designId: 'd0', ord: 1, at: '2026-09-25T00:00:01.000Z', document: '# Old design', summary: 'why', entryId: 'e0' });
+    expect(store.getDesignEntries('d0')[0]).not.toHaveProperty('anchor');
+    expect(store.getDesignLayout('d0')).toEqual({});
+  });
+
+  it('keeps the model, move and layout of a revision across a restart', async () => {
+    const { store, reopen } = await fixture();
+    const reply = entry({ role: 'companion_message', text: 'Drew it.' });
+    const model = { title: 'T', intent: '', parts: [{ id: 'a', name: 'A', role: '', today: null }], links: [], duties: [] };
+    const move = { id: 'mv-00000001', ops: [{ op: 'part' as const, id: 'a', name: 'A' }], summary: 's', author: 'vowe' as const, via: 'conversation' as const };
+    await store.commitDesignTurn(reply, revision(reply.id, { model, move }), { a: { row: 0, col: 0 } });
+    await store.commitDesignTurn(entry({ role: 'companion_note', text: 'n', anchor: { moveId: move.id, on: 'a' } }));
+    const again = await reopen();
+    expect(again.getDesignRevisions('design-1')[0]).toMatchObject({ model, move });
+    expect(again.getDesignLayout('design-1')).toEqual({ a: { row: 0, col: 0 } });
+    expect(again.getDesignEntries('design-1').at(-1)!.anchor).toEqual({ moveId: move.id, on: 'a' });
+  });
+
   it('migrates a 015 database forward without touching what it held', async () => {
     const opened = await temporaryStore();
     cleanup = opened.cleanup;

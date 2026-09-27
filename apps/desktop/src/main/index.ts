@@ -46,7 +46,11 @@ import {
   UnavailableLiveTransport,
   VoicePreferenceStore,
   VoweRunRecorder,
+  parseOp,
   type DecisionRouter,
+  type DesignElementKind,
+  type DesignLayout,
+  type DesignOp,
   type DesignStore,
   type LiveTransport,
   type LiveVoice,
@@ -885,8 +889,29 @@ function registerIpc(): void {
   });
   ipcMain.handle(
     IPC.converseDesign,
-    async (_event, designId: string, message: string, contextRefs?: ContextRef[]) =>
-      (await requireStudio()).converse({ designId, message, ...(contextRefs?.length ? { contextRefs } : {}) }),
+    async (
+      _event,
+      designId: string,
+      message: string,
+      contextRefs?: ContextRef[],
+      options?: { focus?: { kind: DesignElementKind; id: string }; start?: 'code' | 'idea' },
+    ) =>
+      (await requireStudio()).converse({
+        designId,
+        message,
+        ...(contextRefs?.length ? { contextRefs } : {}),
+        ...(options?.focus ? { focus: options.focus } : {}),
+        ...(options?.start ? { start: options.start } : {}),
+      }),
+  );
+  ipcMain.handle(IPC.manipulateDesign, async (_event, designId: string, ops: unknown[]) =>
+    (await requireStudio()).manipulate(designId, (Array.isArray(ops) ? ops : []).map(parseOp).filter((op): op is DesignOp => op !== null)),
+  );
+  ipcMain.handle(IPC.setDesignLayout, async (_event, designId: string, layout: DesignLayout) =>
+    (await requireStudio()).setLayout(designId, layout),
+  );
+  ipcMain.handle(IPC.tidyDesign, async (_event, designId: string) =>
+    (await requireStudio()).tidy(designId),
   );
   ipcMain.handle(IPC.cancelDesignTurn, async (_event, designId: string) =>
     (await requireServices()).studio?.cancel(designId) ?? false,

@@ -2,9 +2,11 @@
  * Studio: a place to think about what a system should become.
  *
  * Three durable things and nothing else. A design is a thread of conversation
- * with a living document beside it; the document is a projection of that
- * conversation, kept as an append-only list of revisions so that "what did the
- * design say before, and why did it change?" is always answerable.
+ * with the system being designed beside it — a small model of parts and links
+ * (`model.ts`) changed in moves, kept as an append-only list of revisions so
+ * that "what did the design say before, and why did it change?" is always
+ * answerable. Where each part sits is the design's view state, kept apart
+ * from its history.
  *
  * None of this is project truth. A design is exploratory by construction: it
  * lives in its own tables, nothing reads it but Studio, and nothing in it is
@@ -16,6 +18,8 @@
 
 import type { ContextRef } from '../context/refs.js';
 import type { InvestigationReceipt } from '../types/conversation.js';
+import type { DesignLayout } from './layout.js';
+import type { DesignModel, DesignMove } from './model.js';
 
 /** One design: a conversation and the document it maintains. */
 export interface Design {
@@ -33,8 +37,14 @@ export interface Design {
  */
 export interface DesignSummary extends Design {
   title: string;
+  /** What the design is for, from its model; empty for a Studio 0 document. */
+  intent: string;
   updatedAt: string;
   revisions: number;
+  /** Parts on the canvas now. */
+  parts: number;
+  /** Where those parts sit, for a thumbnail of the design's shape. */
+  outline: { row: number; col: number }[];
 }
 
 /**
@@ -50,10 +60,18 @@ export interface DesignEntry {
   id: string;
   designId: string;
   at: string;
-  role: 'user_message' | 'companion_message';
+  /**
+   * `developer_move`: the developer changed the design on the canvas; the text
+   * is a plain account of it and a revision points here. `companion_note`: a
+   * consequence Vowe noticed in such a move, drawn on the part it concerns
+   * rather than said in the thread.
+   */
+  role: 'user_message' | 'companion_message' | 'developer_move' | 'companion_note';
   text: string;
   refs?: ContextRef[];
   investigation?: InvestigationReceipt;
+  /** A `companion_note`'s place: the move it responds to and the element it is about. */
+  anchor?: { moveId: string; on: string };
 }
 
 /**
@@ -67,12 +85,17 @@ export interface DesignEntry {
 export interface DesignRevision {
   id: string;
   designId: string;
-  /** 1-based, gap-free within a design. Assigned by the store. */
+  /** 1-based, gap-free within a design. Assigned by the store. Display order only. */
   ord: number;
   at: string;
+  /** The design as a document: Studio 0's whole design, now a projection of `model`. */
   document: string;
   summary: string;
   entryId: string;
+  /** The design after this revision. Absent on a Studio 0 revision. */
+  model?: DesignModel;
+  /** The change that made it. Absent on a Studio 0 revision. */
+  move?: DesignMove;
 }
 
 export interface DesignChange {
@@ -106,7 +129,13 @@ export interface DesignStore {
   commitDesignTurn(
     entry: DesignEntry,
     revision?: Omit<DesignRevision, 'ord'>,
+    /** Where the design's parts now sit, written in the same transaction. */
+    layout?: DesignLayout,
   ): Promise<{ entry: DesignEntry; revision?: DesignRevision }>;
+  /** Empty before anything was placed. */
+  getDesignLayout(designId: string): DesignLayout;
+  /** View state: updated in place, never a revision. */
+  saveDesignLayout(designId: string, layout: DesignLayout): Promise<void>;
   /** Fires after `COMMIT`, never before. */
   onDesignChanged(listener: (change: DesignChange) => void): () => void;
 }
