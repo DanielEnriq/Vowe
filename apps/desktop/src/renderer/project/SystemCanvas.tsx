@@ -603,13 +603,19 @@ export function SystemCanvas(props: Props): ReactElement {
     const at = geometry.frames.get(group.id);
     if (!at) return null;
     const technology = technologyLine(group);
+    // Backed only where a line actually runs beneath the name; elsewhere the name sits on the boundary itself.
+    const box = { x: at.x + 12, y: at.y + 8, w: 24 + group.name.length * 7 + (technology?.name ? 16 + technology.name.length * 6.5 : technology?.mark ? 16 : 0), h: 24 };
+    const crossed = !at.empty && [...routes.values()].some((route) => route.points.slice(0, -1).some((a, index) => {
+      const b = route.points[index + 1]!;
+      return Math.max(a.x, b.x) >= box.x && Math.min(a.x, b.x) <= box.x + box.w && Math.max(a.y, b.y) >= box.y && Math.min(a.y, b.y) <= box.y + box.h;
+    }));
     const style: CSSProperties = at.empty
       ? { transform: `translate(${at.x}px, ${at.y + at.h / 2}px)`, width: at.w }
       : { transform: `translate(${at.x + 12}px, ${at.y + 8}px)`, maxWidth: at.w - 24 };
     return (
       <div
         key={group.id}
-        className={`system-group-label ${frameState(group, at)}`}
+        className={`system-group-label ${frameState(group, at)}${crossed ? ' crossed' : ''}`}
         style={{ ...style, '--arrive-delay': `${reduced ? 0 : Math.max(0, arrival(group.id)) * STAGGER_MS}ms` } as CSSProperties}
         onPointerDown={(event) => event.stopPropagation()}
         onPointerEnter={() => setHover({ kind: 'part', id: group.id })}

@@ -474,10 +474,10 @@ span.design-shape.empty { width: 56px; height: 42px; box-sizing: border-box; }
   position: absolute; left: 0; top: 0;
   display: flex; align-items: baseline; gap: 8px; min-width: 0;
   padding: 4px 6px; border-radius: 7px;
-  /* The boundary's own shade, opaque, so a line runs behind the name. */
-  background: color-mix(in srgb, var(--studio-card) 42%, var(--studio-field));
   cursor: default; user-select: none;
 }
+/* A line runs beneath the name: back it with the boundary's own shade, so the line passes behind. */
+.system-group-label.crossed { background: color-mix(in srgb, var(--studio-card) 42%, var(--studio-field)); }
 .system-canvas.measured .system-group-label { transition: transform 560ms var(--studio-ease), opacity 280ms ease; }
 .system-group-name {
   font-size: 12px; font-weight: 600; letter-spacing: 0.005em; color: var(--ink-4);
