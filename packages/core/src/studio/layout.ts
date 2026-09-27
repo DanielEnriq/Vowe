@@ -64,22 +64,17 @@ export function groupBoxes(layout: DesignLayout, model: DesignModel): Map<string
 export function placeParts(layout: DesignLayout, model: DesignModel): DesignLayout {
   const { next, ghosts } = split(layout, model);
   const parts = model.parts.filter((part) => !part.retired);
-  const links = model.links.filter((link) => !link.retired);
   const groups = groupMembers(model);
   const owner = ownerOf(groups);
+  // A link to a group reaches what is inside it: Web → Backend puts Web above Backend's parts.
+  const links = throughGroups(model, groups);
   const fresh = new Set(parts.filter((part) => !next[part.id]).map((part) => part.id));
 
   for (const id of flowOrder(parts.map((part) => part.id), links).filter((candidate) => fresh.has(candidate))) {
     // A populated group is drawn around its members; it needs no place of its own yet.
     if (groups.get(id)?.length) continue;
-    const at = (other: string, end: 'source' | 'sink'): { row: number; col: number } | null => {
-      if (owner.get(id) === other || owner.get(other) === id) return null;
-      const box = groups.get(other)?.length ? boxesOf(next, groups).get(other) : undefined;
-      if (box) return { row: end === 'source' ? box.bottom : box.top, col: Math.round((box.left + box.right) / 2) };
-      return next[other] ?? null;
-    };
-    const sources = links.filter((link) => link.to === id).flatMap((link) => at(link.from, 'source') ?? []);
-    const sinks = links.filter((link) => link.from === id).flatMap((link) => at(link.to, 'sink') ?? []);
+    const sources = links.filter((link) => link.to === id && next[link.from]).map((link) => next[link.from]!);
+    const sinks = links.filter((link) => link.from === id && next[link.to]).map((link) => next[link.to]!);
     const occupied = [...taken(next, groups).keys()].map((key) => Number(key.split(':')[0]));
     let row: number;
     // Beneath the nearest thing that feeds it: a store two services write to
