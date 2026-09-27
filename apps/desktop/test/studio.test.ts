@@ -11,7 +11,12 @@ import {
   canvasNote,
   changeCount,
   lensView,
+  neighborhood,
+  nextSelection,
   openableLink,
+  studioCaption,
+  studioStatus,
+  visibleLabels,
   shownDesign,
   studioRoom,
   revisionLanded,
@@ -179,5 +184,77 @@ describe('going back to earlier designs', () => {
     const designs = [summary('used', { updatedAt: '2026-09-26T11:00:00.000Z' }), summary('drawn', { revisions: 2 }), summary('blank')];
     expect(browsable(designs, null).map((design) => design.id)).toEqual(['used', 'drawn']);
     expect(browsable(designs, 'blank').map((design) => design.id)).toEqual(['used', 'drawn', 'blank']);
+  });
+});
+
+describe('selection and what it brings forward', () => {
+  const SYSTEM: DesignModel = applyOps(EMPTY_MODEL, [
+    { op: 'part', id: 'a', name: 'A', role: '' },
+    { op: 'part', id: 'b', name: 'B', role: '' },
+    { op: 'part', id: 'c', name: 'C', role: '' },
+    { op: 'part', id: 'd', name: 'D', role: '' },
+    { op: 'link', from: 'a', to: 'b', label: 'calls' },
+    { op: 'link', from: 'c', to: 'a', label: 'feeds' },
+    { op: 'link', from: 'c', to: 'd' },
+  ]).model;
+
+  it('knows a part’s neighbours in both directions', () => {
+    const near = neighborhood(SYSTEM, 'a');
+    expect([...near.parts].sort()).toEqual(['a', 'b', 'c']);
+    expect([...near.links].sort()).toEqual(['a->b', 'c->a']);
+  });
+
+  it('shows every label on a sparse drawing, and only the focused ones on a dense one', () => {
+    expect([...visibleLabels(SYSTEM, null, null, null)].sort()).toEqual(['a->b', 'c->a']);
+    const dense = applyOps(SYSTEM, [
+      ...['e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'].map((id) => ({ op: 'part' as const, id, name: id.toUpperCase(), role: '' })),
+      ...['e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'].map((id) => ({ op: 'link' as const, from: 'b', to: id, label: `to ${id}` })),
+    ]).model;
+    expect(visibleLabels(dense, null, null, null).size).toBe(0);
+    expect([...visibleLabels(dense, null, 'a->b', null)]).toEqual(['a->b']);
+    expect([...visibleLabels(dense, neighborhood(dense, 'a'), null, null)].sort()).toEqual(['a->b', 'c->a']);
+  });
+});
+
+describe('what Vowe is doing, and what it said', () => {
+  const started = studioTurnReducer(STUDIO_QUIET, { ...at, phase: 'started', entryId: 'u1' });
+
+  it('says checking, drawing or thinking from the turn itself, and nothing once the reply is visible', () => {
+    expect(studioStatus(STUDIO_QUIET, false)).toBeNull();
+    expect(studioStatus(started, true)).toBe('Thinking…');
+    const consulting = studioTurnReducer(started, { ...at, phase: 'consulting', question: 'Is it durable?' });
+    expect(studioStatus(consulting, true)).toBe('Checking current behavior…');
+    const drawing = studioTurnReducer(started, { ...at, phase: 'model', model: MODEL, layout: {} });
+    expect(studioStatus(drawing, true)).toBe('Drawing the design…');
+    const writing = { ...started, live: { ...started.live, answer: 'Because' } };
+    expect(studioStatus(writing, true)).toBeNull();
+  });
+
+  it('captions the reply as it is written, then the settled reply, keyed so it can fade for good', () => {
+    const writing = { ...started, live: { ...started.live, answer: '  Because the edge  ' } };
+    expect(studioCaption([], writing)).toEqual({ key: 'live', text: 'Because the edge', live: true });
+    const reply = { id: 'e2', designId: 'd', at: AT, role: 'companion_message', text: 'Done.' } as DesignEntry;
+    expect(studioCaption([reply], STUDIO_QUIET)).toEqual({ key: 'e2', text: 'Done.', live: false });
+    const mine = { id: 'e3', designId: 'd', at: AT, role: 'user_message', text: 'why?' } as DesignEntry;
+    expect(studioCaption([reply, mine], STUDIO_QUIET)).toBeNull();
+  });
+});
+
+describe('gathering a selection', () => {
+  const api = { kind: 'part', id: 'api' };
+  const store = { kind: 'part', id: 'store' };
+  const edge = { kind: 'link', id: 'api->store' };
+
+  it('chooses one thing on a plain click, and lets go of it on a second', () => {
+    expect(nextSelection([], api, false)).toEqual([api]);
+    expect(nextSelection([api], store, false)).toEqual([store]);
+    expect(nextSelection([api], api, false)).toEqual([]);
+    expect(nextSelection([api, store], api, false)).toEqual([api]);
+  });
+
+  it('gathers with Shift or ⌘ in the order chosen, and lets one go without the rest', () => {
+    expect(nextSelection([api], store, true)).toEqual([api, store]);
+    expect(nextSelection([api, store], edge, true)).toEqual([api, store, edge]);
+    expect(nextSelection([api, store, edge], store, true)).toEqual([api, edge]);
   });
 });

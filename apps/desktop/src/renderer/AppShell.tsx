@@ -113,7 +113,7 @@ export function AppShell(): ReactElement {
   const { sidebarOpen, sidebarWidth, toggleSidebar, startResize, resizing } = useSidebar();
   const fullscreen = useFullscreen();
   const viewport = useViewportWidth();
-  const paneWidth = viewport - (sidebarOpen ? sidebarWidth : 0);
+  const paneWidth = viewport - (sidebarOpen && !(route.kind === 'project' && route.view === 'studio') ? sidebarWidth : 0);
 
   const { state: presenceState } = usePresenceSignals({ status, sessions });
 
@@ -127,6 +127,14 @@ export function AppShell(): ReactElement {
     () => reconcileRoute(route, { projects, sessions }),
     [route, projects, sessions],
   );
+
+  // Studio is a destination, not a place in the browser: while it is open
+  // there are no projects, sessions or new work to reach — the panel, its
+  // toggle, the pencil and the session shortcuts all step away, and the room
+  // puts its own two controls on the band. The panel's own state is kept, so
+  // leaving Studio brings it back exactly as it was.
+  const inStudio = live.kind === 'project' && live.view === 'studio';
+  const showSidebar = sidebarOpen && !inStudio;
   useEffect(() => {
     if (live !== route) setRoute(live);
   }, [live, route]);
@@ -211,6 +219,7 @@ export function AppShell(): ReactElement {
       return Number(digit);
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (inStudio) return;
       if (event.key === 'Meta') setCommandHeld(true);
       if (!event.metaKey) return;
       setCommandHeld(true);
@@ -233,7 +242,7 @@ export function AppShell(): ReactElement {
       window.removeEventListener('keyup', onKeyUp, true);
       window.removeEventListener('blur', onBlur);
     };
-  }, [shortcutTargets]);
+  }, [shortcutTargets, inStudio]);
   const brief = useProjectBrief(project?.id ?? null);
 
   return (
@@ -249,7 +258,7 @@ export function AppShell(): ReactElement {
            * a stylesheet cannot be handed those without a second copy of them.
            */
           '--measure': measureCssFor(viewport),
-          '--left-column': `${sidebarOpen ? sidebarWidth : 0}px`,
+          '--left-column': `${showSidebar ? sidebarWidth : 0}px`,
           // What the panel measures whether or not it is showing, so its
           // contents do not reflow to nothing on the way out.
           '--panel-width': `${sidebarWidth}px`,
@@ -263,7 +272,7 @@ export function AppShell(): ReactElement {
         this row inside its own column — see `TopChrome`.
       */}
       <TopChrome
-        controls={
+        controls={inStudio ? null : (
           <>
             <PanelToggle
               side="left"
@@ -289,7 +298,7 @@ export function AppShell(): ReactElement {
               <ComposeIcon />
             </button>
           </>
-        }
+        )}
       >
       {/*
         The shell's columns, stated once — on `.app` itself, so the panel can
@@ -302,8 +311,9 @@ export function AppShell(): ReactElement {
         band and the resize handle is absolute.
       */}
         <aside
-          className={`sidebar${sidebarOpen ? '' : ' closed'}`}
-          aria-hidden={!sidebarOpen}
+          className={`sidebar${showSidebar ? '' : ' closed'}`}
+          aria-hidden={!showSidebar}
+          inert={!showSidebar}
         >
           <ProjectSidebar
             projects={panel}
@@ -332,7 +342,7 @@ export function AppShell(): ReactElement {
           transparent pixels straddling the boundary, positioned over it
           rather than between the columns, so the handle costs no width.
         */}
-        {sidebarOpen && (
+        {showSidebar && (
           <button
             className={`resize-handle left${resizing ? ' active' : ''}`}
             type="button"
@@ -552,6 +562,7 @@ function useSidebar() {
     sidebarWidth: width,
     resizing,
     toggleSidebar: () => setOpen((was) => !was),
+    setSidebarOpen: setOpen,
     startResize,
   };
 }

@@ -1,0 +1,698 @@
+/* ------------------------------------------------------------------ studio */
+
+/*
+ * STUDIO — what should this system become?
+ *
+ * The system being designed is the room. The canvas takes the window; the
+ * conversation is a narrow rail beside it, or put away entirely, leaving a
+ * composer floating over the design. Chrome is a title at the top left and
+ * one menu at the top right. Everything else is the system.
+ *
+ * Colour comes from the `--studio-*` tokens in styles.css, defined for both
+ * palettes, so nothing here asks which theme it is in.
+ */
+
+.studio-room {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  background: var(--pane);
+  --right-column: 0px;
+  --desk-width: 0px;
+  --studio-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.studio-room.workspace {
+  /*
+   * Two columns always; putting the conversation away takes its column to
+   * zero, animated the way the projects panel is, and brings it back the same
+   * way. The rail keeps its own width inside the column, so it slides rather
+   * than reflowing on the way.
+   */
+  grid-template-columns: var(--studio-rail-shown, 340px) minmax(0, 1fr);
+  transition: grid-template-columns 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* The identity lives over the rail; the band's right belongs to the system. */
+  --right-column: 72vw;
+}
+.studio-room.workspace.rail-closed,
+.studio-room.workspace.single { --right-column: 0px; }
+.studio-room.workspace.resizing { transition: none; }
+/*
+ * One window band across Studio, whatever the conversation is doing: the
+ * traffic lights, then Back and the conversation toggle at a fixed place,
+ * and ··· at the far right. No masthead — the room names the design, on the
+ * canvas. Both panes begin below the band.
+ */
+.chrome-room-controls { display: flex; align-items: center; gap: 4px; }
+.chrome-room-controls:empty { display: none; }
+.studio-back svg { width: var(--chrome-glyph); height: var(--chrome-glyph); }
+.studio-conversation-toggle.open { color: var(--ink-4); }
+.studio-conversation-toggle:disabled { opacity: 0.35; }
+.chrome-actions .studio-menu-button { width: var(--chrome-control); height: var(--chrome-control); border-radius: 6px; }
+.chrome-actions .studio-menu-button:hover,
+.chrome-actions .studio-menu-button[aria-expanded='true'] { background: var(--selected); }
+
+/* The edge between conversation and design: the shell's resize handle, over the boundary, drawing nothing. */
+.studio-rail-handle { top: var(--chrome-height); left: calc(var(--studio-rail, 340px) - 4px); z-index: 7; }
+/* A dragged edge follows the pointer; the drawing refits with it rather than easing behind. */
+.studio-room.resizing .system-stage,
+.studio-room.resizing .system-focus,
+.studio-room.sliding .system-stage,
+.studio-room.sliding .system-focus,
+.studio-room.resizing .studio-rail { transition: none; animation: none; }
+
+/* ---- The surface: where the system is. */
+.studio-surface {
+  position: relative;
+  grid-row: 2;
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--hairline);
+  background-color: var(--studio-field);
+  /*
+   * The field: a plain tonal ground under a soft light that gathers where the
+   * system is and falls away toward the edges. No grid — the drawing is a
+   * composition, not a sheet of graph paper; a drag shows its slot instead.
+   */
+  background-image: radial-gradient(ellipse 72% 64% at 50% 44%, var(--studio-glow), transparent 74%);
+}
+/* The design runs to the top of the window; the band's controls float over it. Only the conversation begins below the band. */
+.studio-room.workspace .studio-surface { grid-row: 1 / -1; grid-column: 2; border-top: 0; border-left: 1px solid var(--hairline); }
+
+.studio-surface-head {
+  position: absolute;
+  z-index: 5;
+  top: calc(var(--chrome-height) + 10px);
+  left: 26px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  pointer-events: none;
+}
+.studio-surface-head > * { pointer-events: auto; }
+
+.studio-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.studio-title-project { flex: none; font-size: 13px; color: var(--ink-8); cursor: default; user-select: none; }
+.studio-title-sep { color: var(--ink-10); font-size: 13px; }
+.studio-title .design-switcher { min-width: 0; }
+.studio-title .design-switcher-button { font-size: 13px; font-weight: 550; color: var(--ink-2); align-items: center; gap: 7px; }
+.studio-title .design-switcher-button svg { flex: none; color: var(--ink-8); transition: transform 160ms ease; }
+.studio-title .design-switcher-button[aria-expanded='true'] svg { transform: rotate(180deg); }
+.studio-title .design-switcher-menu { left: -8px; right: auto; }
+
+.studio-menu { position: relative; flex: none; }
+.studio-menu-button {
+  display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px;
+  border: 0; background: transparent; color: var(--ink-7); cursor: pointer;
+}
+.studio-menu-button svg { fill: currentColor; }
+.studio-menu-button:hover,
+.studio-menu-button[aria-expanded='true'] { background: var(--fill-2); color: var(--ink-bright); }
+.studio-menu-list {
+  position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; min-width: 220px;
+  display: flex; flex-direction: column; padding: 5px;
+  border: 1px solid var(--border-2); border-radius: 11px; background: var(--menu);
+  box-shadow: 0 18px 48px var(--glass-shade);
+  animation: studio-pop 180ms var(--studio-ease) both;
+}
+.studio-menu-item {
+  text-align: left; border: 0; border-radius: 7px; padding: 7px 10px; background: transparent;
+  font: inherit; font-size: 12.5px; color: var(--ink-3); cursor: pointer;
+}
+.studio-menu-item:hover:not(:disabled) { background: var(--hover-strong); color: var(--ink-bright); }
+.studio-menu-item.active { color: var(--ink-bright); }
+.studio-menu-item.active::after { content: '✓'; float: right; color: var(--ink-6); }
+.studio-menu-item:disabled { opacity: 0.4; cursor: default; }
+
+.studio-surface-status {
+  position: absolute; left: 50%; bottom: 26px; translate: -50% 0; margin: 0; z-index: 4;
+  font-size: 12px; color: var(--ink-5); animation: studio-breathe 2.4s ease-in-out infinite;
+}
+
+/* ---- Opening: one question, one composer. */
+.studio-room.opening .studio-surface { display: flex; }
+.studio-opening { flex: 1; min-height: 0; overflow-y: auto; }
+.studio-opening-measure {
+  width: min(600px, calc(100% - 2 * var(--room-gutter, 40px)));
+  margin: 0 auto;
+  padding: 19vh 0 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: studio-rise 700ms var(--studio-ease) both;
+}
+.studio-question {
+  margin: 0 0 10px;
+  font-size: 36px;
+  font-weight: 560;
+  line-height: 1.1;
+  letter-spacing: -0.028em;
+  color: var(--ink-bright);
+}
+.studio-opening-measure code { font-family: var(--mono); font-size: 11.5px; }
+.studio-starters { display: flex; flex-wrap: wrap; gap: 8px; padding-left: 2px; }
+.studio-starters button {
+  border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px;
+  background: transparent; font: inherit; font-size: 12.5px; color: var(--ink-6); cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+.studio-starters button:hover { color: var(--ink-2); border-color: var(--border-3); }
+.studio-starters button.active { color: var(--ink-bright); border-color: var(--border-4); background: var(--fill-1); }
+.studio-opening-thread { display: flex; flex-direction: column; gap: 20px; padding: 6px 0 8px; }
+.studio-opening-thread .turn p, .studio-opening-thread .turn li { font-size: 14px; line-height: 1.62; color: var(--ink-3); }
+/* Once the conversation has begun, the question steps back and the composer stays in reach beneath it. */
+.studio-room.talking .studio-opening-measure { padding-top: 10vh; min-height: calc(100% - 10vh); box-sizing: border-box; }
+.studio-room.talking .studio-question { font-size: 22px; color: var(--ink-5); margin-bottom: 4px; transition: font-size 400ms var(--studio-ease), color 400ms ease; }
+.studio-opening-compose { position: sticky; bottom: 0; padding: 8px 0 20px; margin-top: auto; background: linear-gradient(transparent, var(--studio-field) 30%); }
+.studio-earlier { margin-top: 40px; display: flex; flex-direction: column; gap: 6px; }
+.studio-earlier h3 { margin: 0 0 2px 10px; font-size: 12px; font-weight: 500; color: var(--ink-7); }
+
+/* ---- The composer, in each of its three places. */
+.studio-ask { max-width: none; width: 100%; gap: 8px; margin: 0; }
+.studio-ask .ask-field { border-radius: 14px; transition: border-color 160ms ease, box-shadow 160ms ease; }
+.studio-ask .ask-field:focus-within { border-color: var(--border-4); }
+.studio-ask.opening .ask-field {
+  padding: 12px 12px 12px 18px; border-radius: 16px; background: var(--studio-card);
+  box-shadow: var(--studio-shadow);
+}
+.studio-ask.opening textarea { font-size: 15.5px; min-height: 28px; }
+.studio-ask.floating .ask-field {
+  background: var(--menu); border-color: var(--border-2);
+  box-shadow: 0 18px 50px var(--glass-shade), 0 2px 6px var(--glass-shade);
+  padding: 10px 10px 10px 16px;
+}
+.studio-ask.pointing .ask-field { border-color: color-mix(in srgb, var(--studio-accent) 45%, var(--border-2)); }
+.studio-ask-context { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 2px; }
+.studio-about {
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%;
+  border: 0; border-radius: 999px; padding: 3px 8px 3px 9px;
+  background: color-mix(in srgb, var(--studio-accent) 12%, transparent);
+  color: var(--ink-2); font: inherit; font-size: 12px; cursor: pointer;
+  animation: studio-pop 200ms var(--studio-ease) both;
+}
+.studio-about-set { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.studio-about.more { cursor: default; padding: 3px 9px; color: var(--ink-5); font-variant-numeric: tabular-nums; }
+.studio-about-clear { font-size: 12px; color: var(--ink-8); padding: 0 2px; }
+.studio-about-clear:hover { color: var(--ink-3); }
+.studio-about .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--studio-accent); flex: none; }
+.studio-about .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-about svg { color: var(--ink-7); flex: none; }
+.studio-about:hover svg { color: var(--ink-bright); }
+.studio-ask-foot { min-height: 16px; padding: 0 4px; }
+.studio-status { font-size: 11.5px; color: var(--ink-6); animation: studio-breathe 2.4s ease-in-out infinite; }
+.studio-stop { font-size: 12px; padding: 4px 8px; align-self: end; color: var(--ink-4); }
+
+/* ---- The rail. */
+.studio-rail {
+  grid-row: 2;
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--hairline);
+  background: var(--pane);
+}
+/* The rail's own width, whatever its column is doing. */
+.studio-rail-inner {
+  width: var(--studio-rail, 340px);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  transition: opacity 220ms ease;
+}
+.studio-room.rail-closed .studio-rail-inner { opacity: 0; }
+.studio-rail .studio-thread { padding: 18px 0 0; }
+.studio-rail-measure {
+  /* The conversation is a flex row; without a width a line that will not wrap stretches the column past the rail and clips it. */
+  flex: 1 1 auto; width: 100%; min-width: 0; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 18px; padding: 4px 18px 18px;
+}
+.studio-rail .turn { min-width: 0; gap: 7px; }
+.studio-rail .turn .message-body,
+.studio-rail .turn .message-body .markdown,
+.studio-rail .turn p,
+.studio-rail .turn li { font-size: 13px; line-height: 1.62; color: var(--ink-4); }
+.studio-rail .turn .markdown strong { color: var(--ink-2); font-weight: 600; }
+.studio-rail .turn.user .message-body { max-width: 88%; padding: 7px 11px 8px; }
+.studio-rail .turn.user .message-body p,
+.studio-rail .turn.user .message-body .markdown { font-size: 13px; color: var(--ink-2); }
+.studio-move-line {
+  margin: -4px 0; font-size: 12px; line-height: 1.5; color: var(--ink-7);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.studio-move-line span { color: var(--ink-9); margin-right: 4px; }
+.studio-changes-chip { align-self: flex-start; font-size: 11.5px; color: var(--ink-8); margin-top: -2px; }
+.studio-changes-chip:hover { color: var(--ink-3); }
+.studio-unanswered { color: var(--ink-7); margin-top: -10px; }
+.studio-composer { padding: 8px 14px 14px; }
+.studio-rail-toggle { font-size: 12px; -webkit-app-region: no-drag; color: var(--ink-7); }
+.studio-rail-toggle:hover { color: var(--ink-3); }
+
+/* ---- Floating: the conversation put away, the composer over the design. */
+.studio-float {
+  position: absolute; z-index: 6; left: 50%; bottom: 22px; translate: -50% 0;
+  width: min(620px, calc(100% - 48px));
+  display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+  animation: studio-float-in 360ms var(--studio-ease) 140ms both;
+}
+@keyframes studio-float-in { from { opacity: 0; translate: -50% 10px; } to { opacity: 1; translate: -50% 0; } }
+.studio-caption {
+  align-self: center; max-width: 100%;
+  border: 0; background: transparent; padding: 0 12px; cursor: pointer; text-align: center;
+  font: inherit; font-size: 13.5px; line-height: 1.55; color: var(--ink-3);
+  text-shadow: 0 0 12px var(--studio-field), 0 0 3px var(--studio-field);
+  animation: studio-caption 9000ms ease both;
+}
+.studio-caption.live { animation: studio-pop 260ms var(--studio-ease) both; color: var(--ink-2); }
+.studio-caption-text {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-wrap: pretty;
+}
+.studio-caption.live .studio-caption-text {
+  /* While it is being written, the newest words are the ones that show. */
+  display: flex; flex-direction: column-reverse; max-height: calc(3 * 1.55em); -webkit-line-clamp: unset;
+}
+.studio-caption:hover { color: var(--ink-bright); }
+
+/* ---- A project's designs, to go back to. */
+.design-switcher { position: relative; min-width: 0; }
+.design-switcher-button {
+  display: flex; align-items: baseline; gap: 6px; max-width: 100%; min-width: 0;
+  border: 0; background: transparent; padding: 4px 0; font: inherit; font-size: 12px; color: var(--ink-4); cursor: pointer;
+}
+.design-switcher-button .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.design-switcher-button:hover,
+.design-switcher-button[aria-expanded='true'] { color: var(--ink-bright); }
+.design-switcher-menu {
+  position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; width: 340px; max-height: 60vh; overflow-y: auto;
+  padding: 6px; border: 1px solid var(--border-2); border-radius: 12px; background: var(--menu);
+  box-shadow: 0 18px 48px var(--glass-shade);
+  animation: studio-pop 180ms var(--studio-ease) both;
+}
+.design-switcher-new { display: block; margin: 4px 10px 6px; font-size: 12px; }
+.design-switcher-heading { margin: 4px 10px 6px; font-size: 11.5px; font-weight: 500; color: var(--ink-7); }
+.design-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.design-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; text-align: left;
+  border: 0; border-radius: 9px; padding: 8px 10px; background: transparent; font: inherit; color: inherit; cursor: pointer;
+}
+.design-row:hover { background: var(--hover-strong); }
+.design-row.current { background: var(--fill-1); }
+.design-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.design-row-title { font-size: 13px; font-weight: 500; color: var(--ink-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.design-row-intent { font-size: 12px; line-height: 1.4; color: var(--ink-5); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.design-row-meta { font-size: 11px; color: var(--ink-8); }
+.design-shape { flex: none; border: 1px solid var(--hairline); border-radius: 7px; background: var(--studio-field); }
+.design-shape rect { fill: var(--ink-7); }
+.design-row.current .design-shape rect { fill: var(--ink-4); }
+span.design-shape.empty { width: 56px; height: 42px; box-sizing: border-box; }
+
+/* ---- The canvas. */
+.system-canvas {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  /* Pans with the trackpad; a scrollbar would make the drawing a document. */
+  scrollbar-width: none;
+  animation: studio-canvas-in 600ms var(--studio-ease) both;
+}
+.system-canvas.deep { overflow: hidden; }
+.system-canvas.relocating { cursor: grabbing; }
+.system-stage { position: relative; transform-origin: 0 0; transition: transform 520ms var(--studio-ease); }
+.system-canvas.arranging .system-stage { transition: none; }
+.system-links { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.system-parts { position: absolute; }
+
+/* A part: who it is and what it is for. */
+.system-part {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  border-radius: 13px;
+  background: var(--studio-card);
+  box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 1px var(--studio-card-edge), var(--studio-shadow);
+  cursor: default;
+  user-select: none;
+  touch-action: none;
+  outline: none;
+}
+.system-part-face { display: flex; flex-direction: column; gap: 3px; padding: 14px 16px 15px; }
+.system-canvas.measured .system-part {
+  transition:
+    transform 560ms var(--studio-ease),
+    opacity 280ms ease,
+    box-shadow 220ms ease,
+    scale 220ms var(--studio-ease),
+    filter 280ms ease;
+}
+.system-part:hover { box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 1px var(--border-3), var(--studio-shadow); }
+.system-part:focus-visible { box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 2px var(--studio-accent), var(--studio-shadow); }
+.system-part-name {
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.28;
+  letter-spacing: -0.012em;
+  color: var(--ink-bright);
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.system-part-tech { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.01em; color: var(--ink-7); }
+.system-part-role {
+  font-size: 12px; line-height: 1.45; color: var(--ink-6); text-wrap: pretty;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.system-part-rename {
+  font: inherit; font-size: 14.5px; font-weight: 600; letter-spacing: -0.012em; color: var(--ink-bright);
+  width: 100%; box-sizing: border-box; background: transparent; border: 0; padding: 0; margin: 0;
+  border-bottom: 1.5px solid var(--studio-accent); border-radius: 0; outline: none; min-width: 0;
+}
+
+/*
+ * Kinds, drawn as silhouettes rather than labels: things you keep have a
+ * heavier base, hand-offs a lighter one, what you do not run is drawn in
+ * outline, where people are gets a softer shape.
+ */
+.system-part.kind-store { border-radius: 13px 13px 16px 16px; }
+.system-part.kind-store .system-part-face { border-bottom: 3px double var(--studio-card-edge); padding-bottom: 13px; }
+.system-part.kind-queue .system-part-face { background-image: linear-gradient(90deg, transparent 0 16px, var(--studio-card-edge) 16px calc(100% - 16px), transparent 0); background-size: 100% 1px; background-repeat: no-repeat; background-position: 0 calc(100% - 7px); }
+.system-part.kind-external { background: transparent; box-shadow: 0 0 0 1px var(--border-3); }
+.system-part.kind-external .system-part-face { padding-top: 13px; }
+.system-part.kind-client { border-radius: 20px; }
+
+/* Selection: we are thinking about this. */
+.system-part.selected {
+  scale: 1.015;
+  z-index: 3;
+  box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 1.5px var(--studio-line-lit), var(--studio-lift);
+}
+.system-part.near { opacity: 0.92; }
+.system-part.far { opacity: 0.3; filter: saturate(0.6); }
+.system-part.far:hover { opacity: 0.7; }
+.system-part.faint { opacity: 0.62; }
+/* What just changed comes forward while it settles, even behind a selection. */
+.system-part.far.touched, .system-part.far.entering { opacity: 1; filter: none; }
+
+/*
+ * Several things gathered to ask about together: each wears the accent ring
+ * rather than the single selection's lift, and the lines between them — what
+ * holds the group together — are drawn in the accent too.
+ */
+.system-canvas.several .system-part.selected {
+  scale: 1;
+  box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 1.5px var(--studio-accent), 0 0 0 5px color-mix(in srgb, var(--studio-accent) 12%, transparent), var(--studio-shadow);
+}
+/* Specific enough to win over the ordinary lit line, which is declared later. */
+.system-canvas .system-link.bond .system-link-line { stroke: var(--studio-accent); stroke-width: 1.8; }
+.system-canvas .system-link.bond .system-link-flow { stroke: var(--studio-card); opacity: 0.7; }
+.system-arrow-head.bond { stroke: var(--studio-accent); stroke-width: 1.7; }
+.system-canvas.several .system-link.bond .system-link-label { fill: var(--studio-accent); }
+/* A sweep across empty canvas, and the parts it is about to gather. */
+.system-marquee {
+  position: absolute; z-index: 6; pointer-events: none; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--studio-accent) 60%, transparent);
+  background: color-mix(in srgb, var(--studio-accent) 7%, transparent);
+}
+.system-canvas.gathering { cursor: crosshair; }
+.system-part.gathering { box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 1.5px color-mix(in srgb, var(--studio-accent) 70%, transparent), var(--studio-shadow); opacity: 1; filter: none; }
+
+/* Rearranging the drawing: neutral, physical, snapping to a slot. */
+.system-part.dragging {
+  z-index: 6; cursor: grabbing; scale: 1.035;
+  box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 1px var(--border-3), var(--studio-lift);
+  transition: scale 160ms var(--studio-ease), box-shadow 160ms ease !important;
+}
+.system-slot {
+  position: absolute; left: 0; top: 0; box-sizing: border-box; border-radius: 13px;
+  border: 1.5px dashed var(--border-4); background: var(--fill-1);
+  transition: transform 180ms var(--studio-ease);
+}
+
+/* Changing the architecture: accented, the parts that could take it light up. */
+.system-part.receiving { box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 1px color-mix(in srgb, var(--studio-accent) 40%, transparent), var(--studio-shadow); }
+.system-part.giving { opacity: 0.55; }
+.system-part.drop-target {
+  scale: 1.03; z-index: 4;
+  box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 2px var(--studio-accent), 0 0 32px color-mix(in srgb, var(--studio-accent) 28%, transparent), var(--studio-lift);
+}
+.system-duty-flying {
+  position: fixed; z-index: 30; pointer-events: none; translate: 14px 14px;
+  display: flex; align-items: baseline; gap: 8px; max-width: 320px;
+  font-size: 12px; color: var(--ink-bright); background: var(--menu);
+  border: 1px solid color-mix(in srgb, var(--studio-accent) 55%, transparent); border-radius: 8px; padding: 5px 10px;
+  box-shadow: 0 14px 34px var(--glass-shade); rotate: -1.5deg;
+}
+.system-duty-flying .to { flex: none; color: var(--studio-accent); font-size: 11.5px; }
+
+/* A responsibility that changed hands, travelling. */
+.system-duty-travel {
+  position: absolute; left: 0; top: 0; z-index: 7; pointer-events: none; white-space: nowrap;
+  font-size: 11.5px; color: var(--ink-bright); background: var(--menu);
+  border: 1px solid color-mix(in srgb, var(--studio-accent) 55%, transparent); border-radius: 7px; padding: 3px 9px;
+  box-shadow: 0 10px 26px var(--glass-shade);
+  animation: system-travel 900ms var(--studio-ease) both;
+}
+@keyframes system-travel {
+  0% { transform: translate(var(--from-x), var(--from-y)) translate(-50%, -50%) scale(0.9); opacity: 0; }
+  15% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translate(var(--to-x), var(--to-y)) translate(-50%, -50%) scale(0.96); opacity: 0; }
+}
+
+/* A repository check on this part, in flight. */
+.system-part.checking::after {
+  content: ''; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+  padding: 1px;
+  background: linear-gradient(110deg, transparent 30%, color-mix(in srgb, var(--studio-accent) 80%, transparent) 50%, transparent 70%) 0 0 / 250% 100%;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: system-scan 1.8s linear infinite;
+}
+@keyframes system-scan { from { background-position: 125% 0; } to { background-position: -125% 0; } }
+
+/* Around a card, never inside it: nothing here moves the drawing. */
+.system-part-annex {
+  position: absolute; left: 0; right: 0; top: calc(100% + 8px);
+  display: flex; flex-direction: column; gap: 6px; z-index: 2;
+}
+.system-part-was { font-size: 11px; color: var(--ink-7); padding-left: 4px; }
+.system-duty-diff { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.system-duty-diff li { font-size: 11.5px; line-height: 1.4; padding: 2px 7px; border-radius: 5px; background: var(--studio-card); box-shadow: 0 0 0 1px var(--studio-card-edge); color: var(--ink-3); }
+.system-duty-diff li.added,
+.system-duty-diff li.changed { background: color-mix(in srgb, var(--good) 12%, var(--studio-card)); }
+.system-duty-diff li.ghost { text-decoration: line-through; color: var(--ink-7); background: transparent; }
+
+/* A note from Vowe about the latest move: quiet, beside the part, dismissable. */
+.system-note-callout {
+  position: absolute; z-index: 7; max-width: 260px; box-sizing: border-box;
+  padding: 9px 9px 9px 12px; border-radius: 11px;
+  background: var(--menu); box-shadow: 0 0 0 1px var(--border-2), 0 12px 32px var(--glass-shade);
+  animation: studio-pop 420ms var(--studio-ease) 300ms both;
+}
+.system-note {
+  margin: 0; display: flex; align-items: flex-start; gap: 7px;
+  font-size: 12px; line-height: 1.45; color: var(--ink-3); text-wrap: pretty;
+}
+.system-note::before { content: ''; flex: none; width: 6px; height: 6px; margin-top: 6px; border-radius: 50%; background: var(--studio-accent); }
+.system-note > span { flex: 1; }
+.system-note button { flex: none; border: 0; background: transparent; padding: 1px; color: var(--ink-8); cursor: pointer; }
+.system-note button:hover { color: var(--ink-bright); }
+
+/* Felt, then settled. */
+.system-part.entering { animation: system-arrive 760ms var(--studio-ease) var(--arrive-delay, 0ms) both; }
+.system-part.touched { animation: system-touch 2200ms ease-out backwards; }
+.system-part.leaving { pointer-events: none; animation: system-leave 600ms ease forwards; }
+@keyframes system-arrive {
+  0% { opacity: 0; scale: 0.94; filter: blur(6px); }
+  60% { opacity: 1; filter: blur(0); }
+  100% { opacity: 1; scale: 1; filter: blur(0); }
+}
+@keyframes system-touch {
+  0%, 20% { box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 1.5px color-mix(in srgb, var(--studio-accent) 70%, transparent), 0 0 36px color-mix(in srgb, var(--studio-accent) 22%, transparent), var(--studio-shadow); }
+  100% { box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 1px var(--studio-card-edge), var(--studio-shadow); }
+}
+@keyframes system-leave { to { opacity: 0; scale: 0.94; filter: blur(4px); } }
+
+/* ---- Links. */
+.system-link-line {
+  fill: none;
+  stroke: var(--studio-line);
+  stroke-width: 1.35;
+  stroke-linejoin: round;
+  transition: d 560ms var(--studio-ease), stroke 200ms ease, stroke-width 200ms ease, opacity 280ms ease;
+}
+.system-link.still .system-link-line { transition: stroke 200ms ease; }
+.system-link.drawing .system-link-line {
+  stroke-dasharray: 1;
+  animation: system-draw 700ms var(--studio-ease) var(--draw-delay, 0ms) both;
+}
+@keyframes system-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.system-link.drawing .system-link-label { animation: studio-fade 300ms ease calc(var(--draw-delay, 0ms) + 500ms) both; }
+.system-link-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.system-link.lit .system-link-line,
+.system-link.selected .system-link-line { stroke: var(--studio-line-lit); stroke-width: 1.6; }
+.system-link.far .system-link-line { opacity: 0.22; }
+.system-link.faint .system-link-line { opacity: 0.5; }
+.system-link.far .system-link-label, .system-link.faint .system-link-label { opacity: 0.4; }
+/* The direction of a lit line, as a slow drift along it. */
+.system-link-flow {
+  fill: none; stroke: var(--studio-accent); stroke-width: 1.6; stroke-linecap: round;
+  stroke-dasharray: 2 14; opacity: 0.85; pointer-events: none;
+  animation: system-flow 1.4s linear infinite;
+}
+@keyframes system-flow { from { stroke-dashoffset: 16; } to { stroke-dashoffset: 0; } }
+.system-arrow-head { fill: none; stroke: var(--studio-line); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.system-arrow-head.lit { stroke: var(--studio-line-lit); stroke-width: 1.6; }
+.system-link.far .system-arrow-head { opacity: 0.22; }
+.system-link-label {
+  font-size: 10.5px; font-weight: 500; fill: var(--ink-6); letter-spacing: 0.01em;
+  /* A halo of the field itself, so a label never reads as crossed out by its own line. */
+  paint-order: stroke; stroke: var(--studio-field); stroke-width: 6px; stroke-linejoin: round;
+  transition: opacity 200ms ease;
+}
+.system-link.lit .system-link-label,
+.system-link.selected .system-link-label { fill: var(--ink-2); }
+
+/* ---- Beside a selected part: everything else about it. */
+.system-focus {
+  position: absolute;
+  z-index: 8;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 304px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+  border-radius: 14px;
+  background: var(--menu);
+  box-shadow: 0 0 0 1px var(--border-2), 0 22px 56px var(--glass-shade), 0 2px 8px var(--glass-shade);
+  animation: studio-focus-in 260ms var(--studio-ease) both;
+  transition: left 520ms var(--studio-ease), top 520ms var(--studio-ease);
+}
+.system-focus.side-left { transform-origin: right top; }
+.system-focus-section { padding: 12px 16px; display: flex; flex-direction: column; gap: 7px; }
+.system-focus-section + .system-focus-section { border-top: 1px solid var(--hairline); }
+.system-focus-section h4 { margin: 0; font-size: 11px; font-weight: 500; color: var(--ink-7); }
+.system-focus-duties { list-style: none; margin: 0 -7px; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.system-focus-duty {
+  font-size: 12.5px; line-height: 1.45; color: var(--ink-3); border-radius: 7px; padding: 4px 7px;
+  transition: background 140ms ease, color 140ms ease;
+}
+.system-focus-duty.movable { cursor: grab; }
+.system-focus-duty.movable:hover { background: var(--fill-1); color: var(--ink-bright); }
+.system-focus-duty.selected { background: color-mix(in srgb, var(--studio-accent) 14%, transparent); color: var(--ink-bright); }
+.system-focus-duty.lifted { opacity: 0.35; }
+.system-focus-why .markdown { font-size: 12.5px; line-height: 1.6; color: var(--ink-3); }
+.system-focus-why .markdown > :first-child { margin-top: 0; }
+.system-focus-why .markdown > :last-child { margin-bottom: 0; }
+.system-focus-why.clamped .markdown { max-height: 7.5em; overflow: hidden; -webkit-mask: linear-gradient(#000 60%, transparent); mask: linear-gradient(#000 60%, transparent); }
+.system-focus-more { align-self: flex-start; font-size: 12px; color: var(--ink-6); }
+.system-focus-fact { margin: 0; font-size: 12px; color: var(--ink-6); }
+.system-focus-source {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  border: 0; border-radius: 8px; padding: 6px 9px; margin: 0 -9px; background: transparent; cursor: pointer; text-align: left;
+  font: inherit; color: var(--ink-3);
+}
+.system-focus-source .file { font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.system-focus-source .arrow { color: var(--ink-8); transition: translate 160ms ease; }
+.system-focus-source:hover { background: var(--fill-1); color: var(--ink-bright); }
+.system-focus-source:hover .arrow { translate: 3px 0; color: var(--studio-accent); }
+.system-focus-changes { list-style: none; margin: 0; }
+.system-focus-changes .link-button { text-align: left; font-size: 12px; line-height: 1.45; color: var(--ink-4); }
+.system-focus-changes .by { color: var(--ink-8); margin-right: 4px; }
+.system-focus-actions {
+  display: flex; gap: 16px; padding: 9px 16px 10px; border-top: 1px solid var(--hairline);
+}
+.system-focus-section:first-child:last-of-type + .system-focus-actions,
+.system-focus > .system-focus-actions:first-child { border-top: 0; }
+.system-focus-actions .link-button { font-size: 12px; color: var(--ink-6); }
+.system-focus-actions .link-button:hover,
+.system-focus-actions .link-button.active { color: var(--ink-bright); }
+.system-focus-route { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 12.5px; font-weight: 550; color: var(--ink-2); }
+.system-focus-route .arrow { color: var(--ink-8); font-weight: 400; }
+.system-focus-carries { margin: 0; font-size: 12.5px; color: var(--ink-4); }
+
+/* ---- The changes lens: only here does the canvas draw a diff. */
+.system-canvas.lensed .system-part:not(.lens-added):not(.lens-changed):not(.ghost) { opacity: 0.45; }
+.system-part.lens-added { box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 1.5px color-mix(in srgb, var(--good) 60%, transparent), var(--studio-shadow); }
+.system-part.lens-changed { box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 1.5px color-mix(in srgb, var(--studio-accent) 60%, transparent), var(--studio-shadow); }
+.system-part.ghost { opacity: 0.55; background: transparent; box-shadow: none; outline: 1.5px dashed var(--border-3); outline-offset: -1px; }
+.system-part.ghost .system-part-name { text-decoration: line-through; text-decoration-color: var(--ink-7); }
+.system-link.lens-added .system-link-line { stroke: color-mix(in srgb, var(--good) 75%, transparent); stroke-width: 1.6; }
+.system-link.ghost .system-link-line { stroke-dasharray: 3 4; opacity: 0.55; }
+.studio-lens-bar {
+  position: absolute; z-index: 6; left: 20px; right: 20px; bottom: 22px; margin: 0 auto; width: fit-content;
+  display: flex; align-items: center; gap: 12px; max-width: min(720px, calc(100% - 40px));
+  padding: 7px 10px 7px 14px; border-radius: 999px;
+  background: var(--menu); box-shadow: 0 0 0 1px var(--border-2), 0 14px 40px var(--glass-shade);
+  font-size: 12.5px; color: var(--ink-3);
+  animation: studio-pop 240ms var(--studio-ease) both;
+}
+.studio-lens-bar.above-composer { bottom: 118px; }
+.studio-surface.with-depth .studio-lens-bar { bottom: calc(58% + 14px); }
+.studio-lens-bar .link-button { font-size: 12.5px; color: var(--ink-6); }
+.studio-lens-bar .link-button:disabled { opacity: 0.35; }
+.studio-lens-bar .link-button.active { color: var(--ink-bright); }
+.studio-lens-bar svg { width: 12px; height: 12px; }
+.studio-lens-where { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--ink-6); font-size: 12px; }
+.studio-lens-bar > .link-button, .studio-lens-end { flex: none; }
+.studio-lens-summary { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-lens-summary .by { color: var(--ink-7); margin-right: 6px; }
+.studio-lens-end { display: flex; align-items: center; gap: 12px; padding-left: 10px; border-left: 1px solid var(--divider); }
+
+/* ---- Evidence as depth: a sheet beneath the design, with the part still in view above it. */
+.studio-depth {
+  position: absolute; z-index: 9; left: 0; right: 0; bottom: 0; height: 58%;
+  display: flex; flex-direction: column;
+  border-radius: 16px 16px 0 0;
+  background: var(--pane); box-shadow: 0 0 0 1px var(--border-2), 0 -28px 70px var(--glass-shade);
+  overflow: hidden;
+  animation: studio-depth-in 420ms var(--studio-ease) both;
+}
+.studio-depth-head { display: flex; align-items: center; justify-content: center; padding: 8px 16px 0; }
+.studio-depth-head::before {
+  content: ''; position: absolute; top: 6px; left: 50%; translate: -50% 0;
+  width: 36px; height: 4px; border-radius: 2px; background: var(--fill-3);
+}
+.studio-depth-back { margin-top: 8px; font-size: 12px; color: var(--ink-6); }
+.studio-depth-back:hover { color: var(--ink-bright); }
+.studio-depth .workbench { grid-row: auto; grid-column: auto; flex: 1; min-height: 0; background: transparent; }
+.studio-room.deep .system-part:not(.selected):not(.checking) { opacity: 0.5; }
+
+/* ---- A design as a document. */
+.studio-document { position: absolute; inset: 0; z-index: 2; overflow-y: auto; padding: calc(var(--chrome-height) + 64px) 44px 64px; background: var(--pane); }
+.studio-document-measure { width: min(720px, 100%); margin: 0 auto; }
+.studio-legacy-note { margin: 0 0 24px; padding-bottom: 14px; border-bottom: 1px solid var(--divider); font-size: 12.5px; color: var(--ink-5); }
+.design-document .markdown { font-size: 14px; line-height: 1.72; color: var(--ink-2); }
+.design-document .markdown h1 { font-size: 22px; margin: 0 0 14px; color: var(--ink-bright); letter-spacing: -0.01em; }
+.design-document .markdown h2 { font-size: 15px; margin-top: 26px; }
+.design-document .markdown h3 { font-size: 14px; margin-top: 20px; }
+
+/* ---- Becoming: the room forms around the first shape of the system. */
+.studio-room.becoming .studio-rail { animation: studio-rail-in 640ms var(--studio-ease) 120ms both; }
+.studio-room.becoming .studio-surface { animation: studio-field-in 900ms ease both; }
+.studio-room.becoming .studio-surface-head { animation: studio-fade 500ms ease 360ms both; }
+
+@keyframes studio-rail-in { from { opacity: 0; translate: -18px 0; } to { opacity: 1; translate: 0 0; } }
+@keyframes studio-canvas-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes studio-field-in { from { background-color: var(--pane); } to { background-color: var(--studio-field); } }
+@keyframes studio-depth-in { from { translate: 0 48px; opacity: 0; } to { translate: 0 0; opacity: 1; } }
+@keyframes studio-rise { from { opacity: 0; translate: 0 10px; } to { opacity: 1; translate: 0 0; } }
+@keyframes studio-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes studio-pop { from { opacity: 0; translate: 0 4px; scale: 0.98; } to { opacity: 1; translate: 0 0; scale: 1; } }
+@keyframes studio-focus-in { from { opacity: 0; scale: 0.97; translate: 0 4px; } to { opacity: 1; scale: 1; translate: 0 0; } }
+@keyframes studio-caption { 0% { opacity: 0; } 4% { opacity: 1; } 86% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .consult-pending .label, .studio-surface-status, .studio-status { animation: none; }
+  .studio-room.workspace, .studio-rail-inner, .studio-float, .studio-rail, .studio-surface, .studio-surface-head, .studio-opening-measure, .system-canvas, .system-part, .system-note-callout,
+  .system-focus, .studio-lens-bar, .studio-depth, .studio-menu-list, .design-switcher-menu, .studio-about, .studio-caption.live,
+  .system-link-line, .system-link-label, .system-slot { animation: none !important; transition: none !important; }
+  .system-stage { transition: none; }
+  .system-part.checking::after, .system-link-flow, .system-duty-travel { display: none; }
+}

@@ -50,6 +50,12 @@ import type {
  * single call — it is two different paths through the application, and this is
  * where that becomes visible to the UI.
  */
+/** A selected design element, as the renderer names it; the service resolves the rest. */
+export interface DesignFocusRequest {
+  kind: DesignElementKind;
+  id: string;
+}
+
 export interface VoweApi {
   getStatus(): Promise<AppStatus>;
 
@@ -407,14 +413,15 @@ export interface VoweApi {
   createDesign(projectId: string): Promise<DesignSummary>;
   /**
    * Resolves when the turn is committed, cancelled or has failed. `focus` is
-   * what the developer has selected — what "this" means; `start` is how they
-   * chose to begin, on a design's first message.
+   * what the developer has selected — what "this" or "these" mean, one
+   * element or several; `start` is how they chose to begin, on a design's
+   * first message.
    */
   converseDesign(
     designId: string,
     message: string,
     contextRefs?: ContextRef[],
-    options?: { focus?: { kind: DesignElementKind; id: string }; start?: 'code' | 'idea' },
+    options?: { focus?: DesignFocusRequest | DesignFocusRequest[]; start?: 'code' | 'idea' },
   ): Promise<DesignTurnOutcome>;
   /** A change made on the canvas: the same ops a sentence would produce. */
   manipulateDesign(designId: string, ops: DesignOp[]): Promise<DesignTurnOutcome>;

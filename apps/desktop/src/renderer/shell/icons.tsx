@@ -363,3 +363,26 @@ export function ObservingIcon({ paused }: { paused: boolean }): ReactElement {
     </svg>
   );
 }
+
+/** Back through the door you came in: a chevron, the band's weight. */
+export function BackIcon(): ReactElement {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...stroke}>
+      <path d="M9.75 3L4.75 8l5 5" />
+    </svg>
+  );
+}
+
+/**
+ * Studio's conversation: the panel outline, its left pane quietly filled
+ * while the conversation is showing. One glyph in both states.
+ */
+export function ConversationIcon({ open }: { open: boolean }): ReactElement {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" strokeWidth="1.4" {...stroke}>
+      <rect x="2.5" y="4.25" width="3.5" height="7.5" rx="0.75" fill="currentColor" stroke="none" opacity={open ? 0.28 : 0} style={{ transition: 'opacity 200ms ease' }} />
+      <rect x="2" y="3" width="12" height="10" rx="2" />
+      <path d="M6.5 3v10" />
+    </svg>
+  );
+}

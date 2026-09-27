@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import { AppShell } from './AppShell.js';
 import './styles.css';
+import './project/studio.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
