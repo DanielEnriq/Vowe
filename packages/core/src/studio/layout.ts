@@ -139,6 +139,7 @@ export function tidyLayout(layout: DesignLayout, model: DesignModel): DesignLayo
     });
   }
   if (populated.size) bands(next, groups, pinned);
+  perimeter(next, model, groups, pinned);
   return { ...ghosts, ...settleGroups(next, model) };
 }
 
@@ -445,6 +446,31 @@ function bands(layout: DesignLayout, groups: Map<string, string[]>, pinned: Set<
       layout[id] = { row, col };
       used.add(col);
     }
+  }
+}
+
+/**
+ * After a tidy: a system we do not run sits at the edge of the drawing, on the
+ * side it was already leaning toward, in its own row. Only externals outside
+ * every group and not pinned move.
+ */
+function perimeter(layout: DesignLayout, model: DesignModel, groups: Map<string, string[]>, pinned: Set<string>): void {
+  const owner = ownerOf(groups);
+  const drawn = model.parts.filter((part) => !part.retired && layout[part.id] && !groups.get(part.id)?.length);
+  const outside = drawn.filter((part) => part.kind === 'external' && !owner.has(part.id) && !pinned.has(part.id)).map((part) => part.id);
+  const inner = drawn.filter((part) => !outside.includes(part.id)).map((part) => layout[part.id]!.col);
+  if (!outside.length || !inner.length) return;
+  const left = Math.min(...inner);
+  const right = Math.max(...inner);
+  const middle = (left + right) / 2;
+  const used = new Set(drawn.filter((part) => !outside.includes(part.id)).map((part) => `${layout[part.id]!.row}:${layout[part.id]!.col}`));
+  for (const id of [...outside].sort((a, b) => Math.abs(layout[a]!.col - middle) - Math.abs(layout[b]!.col - middle))) {
+    const { row, col } = layout[id]!;
+    const step = col < middle ? -1 : 1;
+    let target = step < 0 ? Math.min(col, left - 1) : Math.max(col, right + 1);
+    while (used.has(`${row}:${target}`)) target += step;
+    layout[id] = { row, col: target };
+    used.add(`${row}:${target}`);
   }
 }
 

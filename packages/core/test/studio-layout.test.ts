@@ -193,4 +193,32 @@ describe('group-aware layout', () => {
     const layout = tidyLayout(placeParts({}, design), design);
     expect(layout['web']!.row).toBeLessThan(layout['api']!.row);
   });
+
+  it('tidies a system we do not run to the edge of the drawing, keeping its row', () => {
+    const design = model([
+      { op: 'part', id: 'web', name: 'Web', role: '', kind: 'client' },
+      { op: 'part', id: 'auth', name: 'Auth', role: '', kind: 'service' },
+      { op: 'part', id: 'api', name: 'API', role: '', kind: 'service' },
+      { op: 'part', id: 'db', name: 'Database', role: '', kind: 'store' },
+      { op: 'part', id: 'stripe', name: 'Stripe', role: '', kind: 'external' },
+      { op: 'link', from: 'web', to: 'auth' },
+      { op: 'link', from: 'web', to: 'api' },
+      { op: 'link', from: 'api', to: 'db' },
+      { op: 'link', from: 'api', to: 'stripe' },
+    ]);
+    const tidy = tidyLayout(placeParts({}, design), design);
+    const ours = ['web', 'auth', 'api', 'db'].map((id) => tidy[id]!.col);
+    const stripe = tidy['stripe']!;
+    expect(stripe.row).toBe(tidy['db']!.row);
+    expect(stripe.col > Math.max(...ours) || stripe.col < Math.min(...ours)).toBe(true);
+
+    // Outside the backend's boundary too, and a pinned external stays where it was put.
+    const ai = model(AI);
+    const aiTidy = tidyLayout(placeParts({}, ai), ai);
+    expectWhole(aiTidy, ai);
+    const box = groupBoxes(aiTidy, ai).get('backend')!;
+    expect(aiTidy['model']!.col > box.right || aiTidy['model']!.col < box.left).toBe(true);
+    const pinned = tidyLayout({ ...aiTidy, model: { row: 9, col: 0, pinned: true } }, ai);
+    expect(pinned['model']).toEqual({ row: 9, col: 0, pinned: true });
+  });
 });
