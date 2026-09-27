@@ -65,6 +65,11 @@ export interface DesignFocus {
   label: string;
 }
 
+/** A selection as a list, however many elements it holds. */
+export function focusList(focus: DesignFocus | DesignFocus[] | undefined): DesignFocus[] {
+  return focus === undefined ? [] : Array.isArray(focus) ? focus : [focus];
+}
+
 export interface DesignTurn {
   projectName: string;
   /** What the developer just said. */
@@ -77,8 +82,11 @@ export interface DesignTurn {
   design: { model: DesignModel; revision: number; legacyDocument?: string } | null;
   /** Recent moves, oldest first — what "revert that" can name. */
   moves: { id: string; author: DesignMove['author']; via: DesignMove['via']; summary: string }[];
-  /** The element the developer selected, if any. */
-  focus?: DesignFocus;
+  /**
+   * What the developer selected: one element, or several they are asking
+   * about together. Absent when nothing is selected.
+   */
+  focus?: DesignFocus | DesignFocus[];
   /** How the developer chose to begin, on a design's first message only. */
   start?: 'code' | 'idea';
   /** Recent turns, oldest first, excluding `message`. */

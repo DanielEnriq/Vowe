@@ -175,6 +175,33 @@ describe('StudioService', () => {
     expect(later.parts.find((part) => part.id === 'semantic-state')!.today).toEqual({ name: 'Semantic State', role: 'r' });
   });
 
+  it('never lets a design that checked nothing claim that something exists today', async () => {
+    const agent = new FakeAgent(async () => ({
+      reply: 'A first draft.',
+      move: {
+        ops: [
+          { op: 'part', id: 'web', name: 'Web app', role: 'Where people shop', kind: 'client', today: true },
+          { op: 'part', id: 'api', name: 'API', role: 'Orders', kind: 'service', today: true },
+          { op: 'link', from: 'web', to: 'api', today: true },
+        ],
+        summary: 'A shop needs a client and an API.',
+      },
+    }));
+    const { store, studio, design } = await harness(agent);
+    await studio.converse({ designId: design.id, message: 'A small shop.', start: 'idea' });
+    const revision = store.getDesignRevisions(design.id)[0]!;
+    expect(revision.model!.parts.map((part) => part.today)).toEqual([null, null]);
+    expect(revision.model!.links[0]!.today).toBeNull();
+    // The move on record says what landed, not what was claimed.
+    expect(revision.move!.ops.some((op) => 'today' in op)).toBe(false);
+    expect(revision.model!.parts.map((part) => part.kind)).toEqual(['client', 'service']);
+
+    // Once the design has checked the repository, a grounded claim stands.
+    agent.script = consultThenMove;
+    await studio.converse({ designId: design.id, message: 'Now look at the observer.' });
+    expect(store.getDesignRevisions(design.id)[1]!.model!.parts.find((part) => part.id === 'observer')!.today).not.toBeNull();
+  });
+
   it('shows the part being checked, from the agent or the selection', async () => {
     const agent = new FakeAgent(consultThenMove);
     const { studio, design, progress } = await harness(agent);
@@ -198,6 +225,30 @@ describe('StudioService', () => {
     await studio.converse({ designId: design.id, message: 'Why this?', focus: { kind: 'duty', id: 'durable' } });
     await studio.converse({ designId: design.id, message: 'And this?', focus: { kind: 'part', id: 'nowhere' } });
     expect(agent.inputs[1]!.focus).toEqual({ kind: 'duty', id: 'durable', label: '“durable across restarts”' });
+    expect(agent.inputs[2]!.focus).toBeUndefined();
+  });
+
+  it('hands the agent several selected elements together, dropping what is gone and repeats', async () => {
+    const agent = new FakeAgent(consultThenMove);
+    const { studio, design, progress } = await harness(agent);
+    await studio.converse({ designId: design.id, message: 'First.' });
+    agent.script = async (_input, tools) => {
+      await tools.consultRepository({ question: 'q?', why: 'w' });
+      return { reply: 'ok' };
+    };
+    progress.length = 0;
+    await studio.converse({
+      designId: design.id,
+      message: 'How do these relate?',
+      focus: [{ kind: 'part', id: 'observer' }, { kind: 'duty', id: 'durable' }, { kind: 'part', id: 'nowhere' }, { kind: 'part', id: 'observer' }],
+    });
+    expect(agent.inputs[1]!.focus).toEqual([
+      { kind: 'part', id: 'observer', label: 'Observer' },
+      { kind: 'duty', id: 'durable', label: '“durable across restarts”' },
+    ]);
+    // One part among the selection is the part in question.
+    expect(progress.find((event) => event.phase === 'consulting')).toMatchObject({ partId: 'observer' });
+    await studio.converse({ designId: design.id, message: 'And this?', focus: [{ kind: 'part', id: 'nowhere' }] });
     expect(agent.inputs[2]!.focus).toBeUndefined();
   });
 
@@ -504,6 +555,16 @@ describe('Studio canvas', () => {
       '[Changed the design on the canvas] Moved “durable across restarts” from Observer to Project Understanding',
       '[Noted on the canvas, on observer] Nothing keeps session coverage across a restart now.',
     ]);
+  });
+
+  it('commits a drag into a boundary as a semantic move, and takes a look at it', async () => {
+    const { agent, studio, design } = await drawn();
+    await studio.manipulate(design.id, [{ op: 'part', id: 'runtime', name: 'Runtime', role: 'Per-session machinery', kind: 'group' }]);
+    const outcome = await studio.manipulate(design.id, [{ op: 'part', id: 'observer', within: 'runtime' }]);
+    expect(outcome.entry!.text).toBe('Moved Observer into Runtime');
+    expect(outcome.revision!.model!.parts.find((part) => part.id === 'observer')!.within).toBe('runtime');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(agent.considered.at(-1)!.move.id).toBe(outcome.revision!.move!.id);
   });
 
   it('reverts the same way whether the developer or Vowe asks', async () => {

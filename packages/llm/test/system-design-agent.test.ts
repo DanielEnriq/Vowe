@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { applyOps, EMPTY_MODEL, type ConsultationFinding, type DesignCapabilities, type DesignOp, type DesignTurn } from '@vowe/core';
 
 import { AnthropicSystemDesignAgent, readNote } from '../src/anthropic-system-design-agent.js';
+import { renderModel, renderSelection, STUDIO_SYSTEM } from '../src/studio-prompts.js';
 
 /*
  * The design agent against a fake transport speaking real server-sent events,
@@ -134,7 +135,8 @@ describe('AnthropicSystemDesignAgent', () => {
     const opening = JSON.stringify((bodies[0]!.messages as { content: unknown }[])[0]!.content);
     expect(opening).toContain('observer: \\"Observer\\" — Watches a session [exists today]');
     expect(opening).toContain('mv-00000001 (you): Drew the observer.');
-    expect(opening).toContain('selected the part Observer (id observer)');
+    expect(opening).toContain('The developer has selected this. \\"This\\", \\"it\\" and \\"here\\" mean it:');
+    expect(opening).toContain('- the part observer: \\"Observer\\" — Watches a session [exists today]');
     expect(opening).toContain('Is it durable?');
     expect(opening).toContain('Developer: I think Project Understanding should sit above the observer.');
 
@@ -148,6 +150,13 @@ describe('AnthropicSystemDesignAgent', () => {
     // The move streamed op by op, and the last view is the committed move.
     expect(moves.map((ops) => ops.length)).toEqual([1, 2]);
     expect(moves.at(-1)).toEqual(OPS);
+  });
+
+  it('offers no repository check on the first turn of a design begun from an idea', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const design = agent([start() + text(0, ['A first draft.']) + stop('end_turn')], bodies);
+    await design.turn({ ...INPUT, design: null, start: 'idea' }, { consultRepository: async () => FINDING });
+    expect(bodies[0]!.tools).toEqual([]);
   });
 
   it('returns no move when the design did not change', async () => {
@@ -208,5 +217,74 @@ describe('AnthropicSystemDesignAgent', () => {
     }), { status: 200, headers: { 'content-type': 'text/event-stream' } })) as unknown as typeof globalThis.fetch;
     const design = new AnthropicSystemDesignAgent({ client: new Anthropic({ apiKey: 'test', fetch, maxRetries: 0 }), stallMs: 60 });
     await expect(design.turn(INPUT, { consultRepository: async () => FINDING })).rejects.toThrow(/stopped responding/);
+  });
+
+  it('streams a move in the system grammar through intact', async () => {
+    const ops: DesignOp[] = [
+      { op: 'part', id: 'backend', name: 'Backend', role: 'What we run', kind: 'group' },
+      { op: 'part', id: 'worker', name: 'Worker', role: 'Runs jobs off the request path', kind: 'service', within: 'backend' },
+      { op: 'part', id: 'db', name: 'Database', role: 'Jobs and results', kind: 'store', technology: { name: 'PostgreSQL', key: 'postgresql' } },
+      { op: 'duty', id: 'retries', part: 'worker', text: 'retries failed jobs' },
+      { op: 'part', id: 'db', within: null },
+    ];
+    // The model writes "responsibility"; the design records a duty.
+    const lines = ops.map((op) => JSON.stringify(op.op === 'duty' ? { ...op, op: 'responsibility' } : op));
+    const block = `\n\n<design_move>\n<why>Retries belong off the request path.</why>\n${lines.join('\n')}\n</design_move>`;
+    const design = agent([start() + text(0, ['Retries move to the worker.', ...fragments(block, 11)]) + stop('end_turn')]);
+    const moves: DesignOp[][] = [];
+    const result = await design.turn(INPUT, { consultRepository: async () => FINDING }, undefined, { move: (streamed) => moves.push(streamed) });
+    expect(result.move?.ops).toEqual(ops);
+    expect(moves.at(-1)).toEqual(ops);
+  });
+});
+
+describe('what the design agent is shown', () => {
+  const MODEL = applyOps(EMPTY_MODEL, [
+    { op: 'design', title: 'Checkout', intent: 'Take payments.' },
+    { op: 'part', id: 'web', name: 'Web app', role: 'Where customers shop', kind: 'client' },
+    { op: 'part', id: 'backend', name: 'Backend', role: 'What we run', kind: 'group' },
+    { op: 'part', id: 'api', name: 'API', role: 'Serves the web app', kind: 'service', within: 'backend', technology: { name: 'Node.js' } },
+    { op: 'part', id: 'db', name: 'Database', role: 'Orders', kind: 'store', within: 'backend', technology: { name: 'PostgreSQL', key: 'postgresql' }, today: true },
+    { op: 'part', id: 'stripe', name: 'Stripe', role: 'Takes payments', kind: 'external', technology: { name: 'Stripe' } },
+    { op: 'link', from: 'web', to: 'api' },
+    { op: 'link', from: 'api', to: 'db' },
+    { op: 'link', from: 'stripe', to: 'api', label: 'webhook' },
+    { op: 'duty', id: 'idempotent', part: 'api', text: 'applies each payment once' },
+    { op: 'part', id: 'db', technology: { name: 'DynamoDB' } },
+  ]).model;
+
+  it('reads the design grouped as drawn, with kind, technology and today', () => {
+    const rendered = renderModel(MODEL);
+    expect(rendered).toContain('- web: "Web app" (client) — Where customers shop');
+    expect(rendered).toContain('- stripe: "Stripe" (external) — Takes payments');
+    expect(rendered).toContain('- backend: "Backend" (group) — What we run\n    - api: "API" (service, Node.js) — Serves the web app');
+    expect(rendered).toContain('    - db: "Database" (store, DynamoDB) — Orders [exists today on PostgreSQL]');
+    expect(rendered).toContain('responsibility idempotent: "applies each payment once"');
+  });
+
+  it('describes the selection in full, as the subject of the message', () => {
+    const api = renderSelection({ kind: 'part', id: 'api', label: 'API' }, MODEL);
+    expect(api).toContain('within Backend (backend)');
+    expect(api).toContain('calls or feeds: Database');
+    expect(api).toContain('called or fed by: Web app, Stripe "webhook"');
+    expect(api).toContain('responsible for "applies each payment once" (idempotent)');
+    expect(renderSelection({ kind: 'link', id: 'stripe->api', label: 'Stripe → API' }, MODEL)).toContain('Stripe → API "webhook"');
+    expect(renderSelection({ kind: 'duty', id: 'idempotent', label: 'x' }, MODEL)).toContain('held by API (api)');
+  });
+
+  it('describes several selected elements as one subject', () => {
+    const both = renderSelection([{ kind: 'part', id: 'api', label: 'API' }, { kind: 'link', id: 'stripe->api', label: 'Stripe → API' }], MODEL);
+    expect(both).toContain('The developer has selected these 2 elements together. "These", "them", "both" and "here" mean all of them:');
+    expect(both).toContain('calls or feeds: Database');
+    expect(both).toContain('Stripe → API "webhook"');
+    expect(renderSelection([{ kind: 'part', id: 'api', label: 'API' }], MODEL)).toContain('The developer has selected this.');
+  });
+
+  it('asks for system altitude, sparse responsibilities and a quick greenfield draft', () => {
+    expect(STUDIO_SYSTEM).toContain('Never a class, function, file, type or package');
+    expect(STUDIO_SYSTEM).toContain('Keep responsibilities rare');
+    expect(STUDIO_SYSTEM).toContain('Draft a coherent first architecture straight from their intent in this first turn, and never set today');
+    expect(STUDIO_SYSTEM).toContain('One to three sentences');
+    expect(STUDIO_SYSTEM).not.toMatch(/\bduty\b/);
   });
 });

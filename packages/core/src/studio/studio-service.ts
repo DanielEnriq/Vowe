@@ -38,6 +38,7 @@ import type {
   DesignTurnResult,
   SystemDesignAgent,
 } from './system-design-agent.js';
+import { focusList } from './system-design-agent.js';
 import type {
   Design,
   DesignEntry,
@@ -204,8 +205,8 @@ export class StudioService {
     designId: string;
     message: string;
     contextRefs?: ContextRef[];
-    /** What the developer has selected on the canvas. */
-    focus?: { kind: DesignElementKind; id: string };
+    /** What the developer has selected on the canvas: one element or several. */
+    focus?: { kind: DesignElementKind; id: string } | { kind: DesignElementKind; id: string }[];
     /** How the developer chose to begin; honoured on a design's first message. */
     start?: 'code' | 'idea';
   }): Promise<DesignTurnOutcome> {
@@ -250,7 +251,7 @@ export class StudioService {
       const attachments = await openAttachments(this.navigator, request.contextRefs, recorder, this.onError);
       const current = revisions[revisions.length - 1] ?? null;
       const base = current?.model ?? EMPTY_MODEL;
-      const focus = request.focus ? focusIn(base, request.focus) : undefined;
+      const focus = request.focus ? selectionIn(base, request.focus) : undefined;
       const start = request.start && history.length === 0 ? request.start : undefined;
 
       const input: DesignTurn = {
@@ -328,8 +329,15 @@ export class StudioService {
         text: groundDesignLinks(result.reply.trim() || summary || 'I revised the design.', allowed),
         ...receipt(),
       };
-      const changed = result.move?.ops.length
-        ? this.changeFrom(base, result.move.ops, { resolveMove, ...checked }, allowed)
+      // Nothing here has ever been checked — a design begun from an idea — so
+      // nothing in it can be said to exist in the repository, whatever the move claims.
+      const grounded =
+        input.findings.length > 0 ||
+        attachments.length > 0 ||
+        recorder.receipt(0).checks.some((check) => check.kind === 'consult' && check.finding !== undefined);
+      const ops = result.move?.ops ? (grounded ? result.move.ops : this.unclaimed(result.move.ops)) : [];
+      const changed = ops.length
+        ? this.changeFrom(base, ops, { resolveMove, ...checked }, allowed)
         : null;
       const move: DesignMove | null = changed
         ? { id: newMoveId(), ops: changed.ops, summary, author: 'vowe', via: 'conversation' }
@@ -449,6 +457,19 @@ export class StudioService {
     return { model, ops: ops.filter((op) => !refused.has(op)) };
   }
 
+  /** The ops with every ungrounded claim that something exists today taken out. */
+  private unclaimed(ops: readonly DesignOp[]): DesignOp[] {
+    let claims = 0;
+    const kept = ops.map((op) => {
+      if (!('today' in op) || op.today !== true) return op;
+      claims += 1;
+      const { today: _claimed, ...rest } = op;
+      return rest as DesignOp;
+    });
+    if (claims) this.onError('studio:move', new Error(`Ignored ${claims} ungrounded claim(s) that a part exists in the repository today.`));
+    return kept;
+  }
+
   /** A glance at a canvas move. Best-effort: a failure is logged, never shown. */
   private async consider(
     designId: string,
@@ -502,7 +523,7 @@ export class StudioService {
     signal: AbortSignal,
     recorder: InvestigationRecorder,
     run: RunHandle | undefined,
-    focus: DesignFocus | undefined,
+    focus: DesignFocus | DesignFocus[] | undefined,
     checked: { basis?: RepositoryBasis },
   ): DesignCapabilities {
     let used = 0;
@@ -517,7 +538,9 @@ export class StudioService {
           } satisfies ConsultationFinding;
         }
         used += 1;
-        const partId = part ?? (focus?.kind === 'part' ? focus.id : undefined);
+        // The part in question: the one the agent names, else the only part selected.
+        const selectedParts = focusList(focus).filter((element) => element.kind === 'part');
+        const partId = part ?? (selectedParts.length === 1 ? selectedParts[0]!.id : undefined);
         const where = partId ? { partId } : {};
         this.report(designId, { phase: 'consulting', question, ...where });
         const basis = await this.repositoryBasis(repoRoot).catch(() => undefined);
@@ -573,6 +596,25 @@ function findingsIn(entries: readonly DesignEntry[]): DesignFinding[] {
         at: entry.at,
       })),
   );
+}
+
+/**
+ * A selection resolved against the model: elements no longer drawn drop out,
+ * one element stays one, several stay a list, and none is no focus.
+ */
+function selectionIn(
+  model: DesignModel,
+  focus: { kind: DesignElementKind; id: string } | { kind: DesignElementKind; id: string }[],
+): DesignFocus | DesignFocus[] | undefined {
+  if (!Array.isArray(focus)) return focusIn(model, focus);
+  const seen = new Set<string>();
+  const resolved = focus.flatMap((element) => {
+    if (seen.has(element.id)) return [];
+    seen.add(element.id);
+    const found = focusIn(model, element);
+    return found ? [found] : [];
+  });
+  return resolved.length === 0 ? undefined : resolved.length === 1 ? resolved[0] : resolved;
 }
 
 /** What "this" means, resolved from the model; an element no longer drawn is no focus. */
