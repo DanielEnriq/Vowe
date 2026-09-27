@@ -1,4 +1,4 @@
-import type { InvestigationCheck, InvestigationStep } from '@vowe/core';
+import type { InvestigationCheck, InvestigationReceipt, InvestigationStep } from '@vowe/core';
 
 import type { LiveInvestigation, LiveStep } from './live-investigation.js';
 
@@ -78,4 +78,29 @@ export function settledRows(steps: readonly InvestigationStep[]): TimelineRow[] 
           startedAt: 0,
         },
   );
+}
+
+/**
+ * The one line a settled receipt shows.
+ *
+ * `Checked 14 things · 38s` for Vowe's own lookups. A turn that only checked
+ * the repository says so — `Checked the repository · 41s` — rather than
+ * counting it as a thing, because to the developer it was one act of going to
+ * look, however many files the harness read on the way.
+ */
+export function receiptSummary(receipt: InvestigationReceipt): string {
+  const count = receipt.checks.length;
+  const time = seconds(receipt.durationMs);
+  const consults = receipt.checks.filter((check) => check.kind === 'consult');
+  if (count > 0 && consults.length === count) {
+    const answered = consults.some((check) => check.finding);
+    return `${answered ? 'Checked the repository' : 'Could not check the repository'}${count > 1 ? ` · ${count} questions` : ''} · ${time}`;
+  }
+  return `Checked ${count} ${count === 1 ? 'thing' : 'things'} · ${time}`;
+}
+
+/** One decimal below ten seconds; whole seconds above. */
+export function seconds(ms: number): string {
+  const value = ms / 1000;
+  return value < 10 ? `${value.toFixed(1)}s` : `${Math.round(value)}s`;
 }

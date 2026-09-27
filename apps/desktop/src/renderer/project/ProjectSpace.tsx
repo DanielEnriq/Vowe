@@ -8,7 +8,7 @@ import { SettledInvestigation } from '../session/SettledInvestigation.js';
 import { LiveInvestigation } from '../session/LiveInvestigation.js';
 import { planSurfacing } from '../state/artifact-surfacing.js';
 import { formatRef } from '@vowe/core/refs';
-import { useProjectInvestigation, useProjectMemories, useProjectThread } from '../hooks/useVoweData.js';
+import { useDesigns, useProjectInvestigation, useProjectMemories, useProjectThread } from '../hooks/useVoweData.js';
 import { useDeskResize } from '../hooks/useDeskResize.js';
 import { Fading } from '../shell/Fading.js';
 import { RoomActions, RoomIdentity } from '../shell/TopChrome.js';
@@ -32,12 +32,15 @@ interface Props {
   entryId: string | undefined;
   narrow: boolean;
   onNavigate: (view: 'home' | 'conversation', entryId?: string) => void;
+  /** Into Studio: a particular design, or the most recent one. */
+  onOpenStudio: (designId?: string) => void;
   onOpenSession: (sessionId: string) => void;
 }
 
 /** Home and conversation share live state, while keeping their own reading surfaces. */
 export function ProjectSpace({ project, brief, presence, presenceState, view, entryId,
-  narrow, onNavigate, onOpenSession }: Props): ReactElement {
+  narrow, onNavigate, onOpenStudio, onOpenSession }: Props): ReactElement {
+  const { designs } = useDesigns(project.id);
   const { entries, deliveries, loaded } = useProjectThread(project.id);
   const vo = useVo({ projectId: project.id });
   const inVoice = vo.phase === 'live' || vo.phase === 'joining';
@@ -185,6 +188,7 @@ export function ProjectSpace({ project, brief, presence, presenceState, view, en
           </div> : inVoice && (caption || vo.status?.playbackActive) && voiceAnswer?.investigation ?
             <SettledInvestigation entryId={voiceAnswer.id} receipt={voiceAnswer.investigation} onOpenRef={(ref) => void openRef(ref)} /> : null}
           composer={composer} hasConversation={entries.length > 0} investigating={asking || live.active}
+          latestDesign={designs[0] ?? null} onOpenStudio={onOpenStudio}
           onOpenConversation={() => onNavigate('conversation')} onOpenSession={onOpenSession} onOpenRef={(ref) => void openRef(ref)} />
       : <ProjectConversation entries={entries} deliveries={deliveries} voice={voiceSurface} live={live} asking={asking} entryId={entryId} presence={presence}
           composer={composer} onHome={() => onNavigate('home')} onSelectEntry={(id) => onNavigate('conversation', id)} onOpenRef={(ref) => void openRef(ref)} />)}

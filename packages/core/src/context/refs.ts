@@ -194,6 +194,18 @@ function splitLast(value: string): [string | null, string | null] {
   return [value.slice(0, index) || null, value.slice(index + 1) || null];
 }
 
+/**
+ * The ref inside a `ref:` link target, or null for any other href.
+ *
+ * How Vowe's own prose cites evidence: `[observer-runner.ts](ref:repo:/…#120)`.
+ * Here rather than in Studio because the renderer decides which links become
+ * Workbench buttons, and this module is the one it can import at runtime.
+ */
+export function refFromLink(href: string): ContextRef | null {
+  if (!href.startsWith('ref:')) return null;
+  return parseRef(href.slice('ref:'.length));
+}
+
 export function dedupeRefs(refs: ContextRef[]): ContextRef[] {
   const seen = new Set<string>();
   const out: ContextRef[] = [];

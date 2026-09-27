@@ -3,7 +3,9 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppearanceSetting,
   ContextRef,
+  DesignChange,
   InvestigationProgress,
+  StudioProgress,
   LiveTranscriptDelta,
   ConversationChange,
   LiveStatus,
@@ -154,6 +156,25 @@ const api: VoweApi = {
     const handler = (_: unknown, fullscreen: boolean) => listener(fullscreen);
     ipcRenderer.on(IPC.fullscreenChanged, handler);
     return () => ipcRenderer.off(IPC.fullscreenChanged, handler);
+  },
+  listDesigns: (projectId) => ipcRenderer.invoke(IPC.listDesigns, projectId),
+  getDesign: (designId) => ipcRenderer.invoke(IPC.getDesign, designId),
+  createDesign: (projectId) => ipcRenderer.invoke(IPC.createDesign, projectId),
+  converseDesign: (designId, message, contextRefs, options) =>
+    ipcRenderer.invoke(IPC.converseDesign, designId, message, contextRefs, options),
+  manipulateDesign: (designId, ops) => ipcRenderer.invoke(IPC.manipulateDesign, designId, ops),
+  setDesignLayout: (designId, layout) => ipcRenderer.invoke(IPC.setDesignLayout, designId, layout),
+  tidyDesign: (designId) => ipcRenderer.invoke(IPC.tidyDesign, designId),
+  cancelDesignTurn: (designId) => ipcRenderer.invoke(IPC.cancelDesignTurn, designId),
+  onStudioProgress: (listener) => {
+    const handler = (_: unknown, progress: StudioProgress) => listener(progress);
+    ipcRenderer.on(IPC.studioProgress, handler);
+    return () => ipcRenderer.off(IPC.studioProgress, handler);
+  },
+  onDesignChanged: (listener) => {
+    const handler = (_: unknown, change: DesignChange) => listener(change);
+    ipcRenderer.on(IPC.designChanged, handler);
+    return () => ipcRenderer.off(IPC.designChanged, handler);
   },
   onInvestigationProgress: (listener) => {
     const handler = (_: unknown, progress: InvestigationProgress) => listener(progress);

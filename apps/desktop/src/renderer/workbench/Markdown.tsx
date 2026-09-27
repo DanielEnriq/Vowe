@@ -1,6 +1,9 @@
 import type { ReactElement } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { ContextRef } from '@vowe/core';
+
+import { openableLink } from '../state/studio.js';
 
 /**
  * Markdown, rendered as elements rather than as HTML.
@@ -13,18 +16,44 @@ import remarkGfm from 'remark-gfm';
  *
  * Links are rendered as text rather than as anchors, for the same reason — a
  * document being read as evidence has no business navigating the window.
+ *
+ * The one exception is Vowe's own citation, `[name](ref:repo:/…#120)`, and
+ * only where the caller can open it: it becomes a button that puts that
+ * evidence on the desk, never an anchor. Text still being written is not yet
+ * grounded, so its citations stay text until it is committed.
  */
-export function Markdown({ text }: { text: string }): ReactElement {
+export function Markdown({
+  text,
+  onOpenRef,
+  committed = true,
+}: {
+  text: string;
+  onOpenRef?: (ref: ContextRef) => void;
+  committed?: boolean;
+}): ReactElement {
   return (
     <div className="markdown">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        // Keep `ref:` targets for the renderer below to judge; everything else
+        // gets the library's usual treatment.
+        urlTransform={(url) => (url.startsWith('ref:') ? url : defaultUrlTransform(url))}
         components={{
-          a: ({ children, href }) => (
-            <span className="md-link" title={typeof href === 'string' ? href : undefined}>
-              {children}
-            </span>
-          ),
+          a: ({ children, href }) => {
+            const ref = onOpenRef ? openableLink(href, committed) : null;
+            if (ref && onOpenRef) {
+              return (
+                <button className="md-ref" type="button" title="Open on the desk" onClick={() => onOpenRef(ref)}>
+                  {children}
+                </button>
+              );
+            }
+            return (
+              <span className="md-link" title={typeof href === 'string' && !href.startsWith('ref:') ? href : undefined}>
+                {children}
+              </span>
+            );
+          },
           // Fenced code keeps the workbench's own code treatment so a block
           // inside a document looks like a file does beside it.
           pre: ({ children }) => <pre className="code md-code">{children}</pre>,

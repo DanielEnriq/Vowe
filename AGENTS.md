@@ -24,7 +24,7 @@ from asking Vowe a question.
 - `apps/desktop/src/renderer/`: React UI, hooks, and pure state transformations.
 - `packages/core/src/`: provider-independent interfaces and application behavior.
   Key areas are `delegation`, `context`, `observation`, `interpretation`,
-  `communication`, `execution`, `live`, `knowledge`, `store`, and `workbench`.
+  `communication`, `execution`, `live`, `knowledge`, `store`, `workbench`, and `studio` (see `docs/studio.md`).
 - `packages/llm/src/`: Anthropic model adapters, prompts, and model-facing tools.
 - `packages/adapter-claude-code/src/`: worker discovery, transcript normalization,
   and the explicit worker control path.

@@ -25,6 +25,7 @@ import { tracedTool } from '../execution/traced-tools.js';
 import { asModelContext, recentConversation, conversationTurns } from '../product/conversation-context.js';
 import { temperamentGuidance, type TemperamentProfile } from '../product/temperament.js';
 import { InvestigationRecorder } from './investigation-recorder.js';
+import { openAttachments } from './attachments.js';
 
 export interface DelegatedQuestionRunnerOptions {
   store: EventStore;
@@ -122,13 +123,10 @@ export type InvestigationProgress =
     };
 
 /**
- * Ceilings, because both of these reach a prompt.
- *
- * A composer that let someone attach forty files would produce a question no
- * model could answer well, and a roster of every session a repository ever ran
- * would crowd out the question itself.
+ * Ceiling, because it reaches a prompt: a roster of every session a repository
+ * ever ran would crowd out the question itself. Attachments have their own, in
+ * `attachments.ts`.
  */
-const MAX_ATTACHMENTS = 4;
 const MAX_ROSTER = 12;
 
 export interface DelegatedQuestion {
@@ -547,38 +545,11 @@ export class DelegatedQuestionRunner {
       }));
   }
 
-  /**
-   * Open what the developer attached, before anything else is looked at.
-   *
-   * This is what makes an attachment chip honest. The material is opened here,
-   * goes into the prompt as material, and lands in the receipt as the first
-   * things checked — so "I attached this" and "Vowe looked at this" are the
-   * same claim rather than two hopeful ones. A ref that will not open is
-   * skipped rather than failing the question.
-   */
-  private async openAttachments(
+  private openAttachments(
     refs: readonly ContextRef[] | undefined,
     recorder: InvestigationRecorder,
   ): Promise<InvestigationAttachment[]> {
-    if (!refs?.length) return [];
-
-    const opened: InvestigationAttachment[] = [];
-    for (const ref of refs.slice(0, MAX_ATTACHMENTS)) {
-      try {
-        const result = await this.navigator.openContext({ ref });
-        recorder.opened(ref, result);
-        opened.push({
-          refId: result.refId,
-          label: result.kind,
-          content: result.notFound ?? result.content,
-        });
-      } catch (error) {
-        // An attachment that cannot be read is not a reason to refuse the
-        // question; the answer simply will not be grounded in it.
-        this.onError('attachment', error);
-      }
-    }
-    return opened;
+    return openAttachments(this.navigator, refs, recorder, this.onError);
   }
 
   /**

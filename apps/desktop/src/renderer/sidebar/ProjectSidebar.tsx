@@ -189,9 +189,9 @@ export function ProjectSidebar({
 
       {/* One identity, above the work it is watching. */}
       <button
-        className={`vowe-row${route.kind === 'studio' ? ' selected' : ''}`}
+        className={`vowe-row${route.kind === 'presence' ? ' selected' : ''}`}
         type="button"
-        onClick={() => onNavigate({ kind: 'studio' })}
+        onClick={() => onNavigate({ kind: 'presence' })}
       >
         <VowePresence state={presenceState} profile={presence} size="signature" />
         <span className="who">
@@ -212,7 +212,7 @@ export function ProjectSidebar({
           type="button"
           aria-label="Your Vowe"
           title="Your Vowe"
-          onClick={() => onNavigate({ kind: 'studio' })}
+          onClick={() => onNavigate({ kind: 'presence' })}
         >
           <SettingsIcon />
         </button>

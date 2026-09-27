@@ -439,6 +439,62 @@ const PROJECT_OPEN = `
 ALTER TABLE projects ADD COLUMN opened_at TEXT;  -- NULL => key ABSENT
 `;
 
+/**
+ * Studio: designs, their conversation, and the revisions of the living design.
+ *
+ * Tables of their own, for the reason project conversation got one: a query
+ * about the project that forgot to filter must not be able to find exploratory
+ * design talk. Nothing here is read by Project Ask, memory or voice.
+ *
+ * Revisions are append-only — there is no statement anywhere that updates or
+ * deletes one — and each names the reply that explains it. Consultations have
+ * no table: the reply's receipt is the human account, and the run trace holds
+ * the full request and finding.
+ */
+const STUDIO = `
+CREATE TABLE designs (
+  id         TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX designs_project ON designs (project_id, created_at);
+
+CREATE TABLE design_entries (
+  id                 TEXT PRIMARY KEY,
+  design_id          TEXT NOT NULL REFERENCES designs(id),
+  ord                INTEGER NOT NULL,
+  at                 TEXT NOT NULL,
+  role               TEXT NOT NULL,
+  text               TEXT NOT NULL,
+  refs_json          TEXT,             -- NULL => key ABSENT
+  investigation_json TEXT              -- NULL => key ABSENT
+) STRICT;
+CREATE UNIQUE INDEX design_entries_design_ord ON design_entries (design_id, ord);
+
+CREATE TABLE design_revisions (
+  id         TEXT PRIMARY KEY,
+  design_id  TEXT NOT NULL REFERENCES designs(id),
+  ord        INTEGER NOT NULL,
+  at         TEXT NOT NULL,
+  document   TEXT NOT NULL,
+  summary    TEXT NOT NULL,
+  entry_id   TEXT NOT NULL REFERENCES design_entries(id)
+) STRICT;
+CREATE UNIQUE INDEX design_revisions_design_ord ON design_revisions (design_id, ord);
+`;
+
+/**
+ * The design as a model rather than a document. Studio 0 revisions keep NULL
+ * here and are read as documents until the next turn draws them. Layout is the
+ * design's view state, updated in place, and deliberately not history.
+ */
+const STUDIO_MODEL = `
+ALTER TABLE design_revisions ADD COLUMN model_json TEXT;   -- NULL => a Studio 0 document
+ALTER TABLE design_revisions ADD COLUMN move_json  TEXT;   -- NULL => a Studio 0 rewrite
+ALTER TABLE designs          ADD COLUMN layout_json TEXT;  -- NULL => nothing placed yet
+ALTER TABLE design_entries   ADD COLUMN anchor_json TEXT;  -- NULL => key ABSENT
+`;
+
 import {
   EVIDENCE_RECORDS_SCHEMA,
   EVIDENCE_SCHEMA,
@@ -505,6 +561,8 @@ export const MIGRATIONS: readonly Migration[] = [
       migrateEvidenceState(db);
     },
   },
+  { version: 16, name: '016_studio', up: (db) => db.exec(STUDIO) },
+  { version: 17, name: '017_studio_model', up: (db) => db.exec(STUDIO_MODEL) },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
-import type { ContextRef, PresenceProfile, PresenceState, ProjectBrief, ProjectSessionSummary } from '@vowe/core';
+import type { ContextRef, DesignSummary, PresenceProfile, PresenceState, ProjectBrief, ProjectSessionSummary } from '@vowe/core';
 import { Fading } from '../shell/Fading.js';
 import { useActivityImpulse, VowePresence } from '../presence/index.js';
 import { formatAgo, ProviderGlyph, providerName } from '../components/ui.js';
@@ -18,6 +18,9 @@ interface Props {
   activity?: number | undefined;
   hasConversation: boolean;
   investigating: boolean;
+  /** The design most recently worked on in Studio, if any. */
+  latestDesign: DesignSummary | null;
+  onOpenStudio: (designId?: string) => void;
   onOpenConversation: () => void;
   onOpenSession: (sessionId: string) => void;
   onOpenRef: (ref: ContextRef) => void;
@@ -25,7 +28,7 @@ interface Props {
 
 /** The living home. Conversation and its scroll position belong elsewhere. */
 export function ProjectRoom({ brief, changes, presence, presenceState, composer, voice, investigation, activity,
-  hasConversation, investigating, onOpenConversation, onOpenSession, onOpenRef }: Props): ReactElement {
+  hasConversation, investigating, latestDesign, onOpenStudio, onOpenConversation, onOpenSession, onOpenRef }: Props): ReactElement {
   const latest = brief?.active.length === 0 ? brief.recent[0] : null;
   return (
     <div className="project-home scroll">
@@ -65,11 +68,18 @@ export function ProjectRoom({ brief, changes, presence, presenceState, composer,
         <div className="project-home-ask">
           {brief && <KnowledgeChip status={brief.knowledge.status} at={brief.knowledge.updatedAt} />}
           {composer}
-          {(hasConversation || investigating) && (
-            <button className="link-button project-resume" type="button" onClick={onOpenConversation}>
-              {investigating ? 'Vowe is looking into your question →' : 'Open conversation →'}
+          <div className="project-places">
+            {(hasConversation || investigating) && (
+              <button className="link-button project-resume" type="button" onClick={onOpenConversation}>
+                {investigating ? 'Vowe is looking into your question →' : 'Open conversation →'}
+              </button>
+            )}
+            <button className="link-button project-resume" type="button"
+              onClick={() => onOpenStudio(latestDesign?.id)}
+              title="Think about what this system should become">
+              {latestDesign ? `Continue designing · ${latestDesign.title} →` : 'Studio →'}
             </button>
-          )}
+          </div>
         </div>
       </div>
     </div>

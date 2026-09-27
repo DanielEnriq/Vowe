@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentSession,
   AppearanceSetting,
+  DesignSummary,
+  DesignView,
   InvestigationProgress,
   ConversationDelivery,
   ConversationEntry,
@@ -37,6 +39,14 @@ import {
   type LiveInvestigation,
   type StreamedText,
 } from '../state/live-investigation.js';
+
+import {
+  STUDIO_QUIET,
+  asLiveProgress,
+  revisionLanded,
+  studioTurnReducer,
+  type StudioTurn,
+} from '../state/studio.js';
 
 export type { LiveInvestigation } from '../state/live-investigation.js';
 
@@ -647,4 +657,141 @@ export function useProjectInvestigation(
     [projectId],
   );
   return useInvestigationProgress(matches, projectId, settledIds);
+}
+
+// ------------------------------------------------------------------- studio
+
+/** A project's designs, most recently active first. */
+export function useDesigns(projectId: string | null): { designs: DesignSummary[]; loaded: boolean } {
+  const [designs, setDesigns] = useState<DesignSummary[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    setDesigns([]);
+    setLoaded(false);
+    if (!projectId) return;
+    let live = true;
+    const load = () => {
+      void window.vowe.listDesigns(projectId)
+        .then((next) => { if (live) { setDesigns(next); setLoaded(true); } })
+        .catch(() => undefined);
+    };
+    load();
+    const off = window.vowe.onDesignChanged((change) => {
+      if (change.projectId === projectId) load();
+    });
+    return () => { live = false; off(); };
+  }, [projectId]);
+  return { designs, loaded };
+}
+
+/** One design as committed: its conversation and every revision. */
+export function useDesign(designId: string | null): DesignView | null {
+  const [view, setView] = useState<DesignView | null>(null);
+  const generation = useRef(0);
+  useEffect(() => {
+    setView(null);
+    if (!designId) return;
+    const load = () => {
+      const request = ++generation.current;
+      void window.vowe.getDesign(designId)
+        .then((next) => { if (request === generation.current) setView(next); })
+        .catch(() => undefined);
+    };
+    load();
+    const off = window.vowe.onDesignChanged((change) => {
+      if (change.designId === designId) load();
+    });
+    // A turn finishing without a write (a cancel) still changes `inFlight`.
+    const offProgress = window.vowe.onStudioProgress((progress) => {
+      if (progress.designId === designId && (progress.phase === 'finished' || progress.phase === 'started')) load();
+    });
+    return () => { generation.current++; off(); offProgress(); };
+  }, [designId]);
+  return view;
+}
+
+/**
+ * The Studio turn in flight, if any.
+ *
+ * The conversational half is folded by the live-investigation reducer, with
+ * text gathered and committed once a frame exactly as Ask does; the model
+ * previews arriving as the move is written are coalesced the same way,
+ * keeping only the newest. The live copies give way when the committed entry
+ * and revision actually appear, never before, so nothing on screen blanks
+ * between them.
+ */
+export function useStudioTurn(
+  designId: string | null,
+  settledIds: readonly string[],
+  revisions: DesignView['revisions'],
+): StudioTurn {
+  const [state, setState] = useState<StudioTurn>(STUDIO_QUIET);
+  const pending = useRef<StreamedText>(NOTHING_STREAMED);
+  const pendingPreview = useRef<StudioTurn['preview']>(null);
+  const frame = useRef<number | null>(null);
+
+  useEffect(() => {
+    setState(STUDIO_QUIET);
+    pending.current = NOTHING_STREAMED;
+    pendingPreview.current = null;
+    if (!designId) return;
+
+    const flush = (): void => {
+      frame.current = null;
+      const batch = pending.current;
+      const preview = pendingPreview.current;
+      pending.current = NOTHING_STREAMED;
+      pendingPreview.current = null;
+      setState((current) => ({
+        ...current,
+        live: commitStreamed(current.live, batch),
+        ...(preview !== null ? { preview } : {}),
+      }));
+    };
+    const schedule = (): void => {
+      if (frame.current === null) frame.current = requestAnimationFrame(flush);
+    };
+
+    const off = window.vowe.onStudioProgress((progress) => {
+      if (progress.designId !== designId) return;
+      if (progress.phase === 'message' || progress.phase === 'reasoning') {
+        pending.current = gather(pending.current, asLiveProgress(progress)!);
+        schedule();
+        return;
+      }
+      if (progress.phase === 'model') {
+        pendingPreview.current = { model: progress.model, layout: progress.layout };
+        schedule();
+        return;
+      }
+      // Discrete events land after any text still waiting for its frame, so
+      // the order on screen is the order it happened.
+      if (frame.current !== null) {
+        cancelAnimationFrame(frame.current);
+        flush();
+      }
+      if (progress.phase === 'started') {
+        pending.current = NOTHING_STREAMED;
+        pendingPreview.current = null;
+      }
+      setState((current) => studioTurnReducer(current, progress));
+    });
+    return () => {
+      off();
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+      frame.current = null;
+    };
+  }, [designId]);
+
+  // The swaps: the reply when its entry exists, the preview when its revision does.
+  const replyLanded = isReplaced(state.live, settledIds);
+  const designLanded = revisionLanded(state, revisions);
+  useEffect(() => {
+    if (replyLanded) setState((current) => ({ ...current, live: QUIET }));
+  }, [replyLanded]);
+  useEffect(() => {
+    if (designLanded) setState((current) => ({ ...current, preview: null, revisionId: null }));
+  }, [designLanded]);
+
+  return state;
 }

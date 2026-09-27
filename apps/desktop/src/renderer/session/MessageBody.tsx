@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react';
+import type { ContextRef } from '@vowe/core';
 
 import { Markdown } from '../workbench/Markdown.js';
 
@@ -18,10 +19,19 @@ import { Markdown } from '../workbench/Markdown.js';
  * pre-rendered fragment. Nothing here truncates, windows or summarises: the
  * text grows, and what was on screen stays on screen.
  */
-export function MessageBody({ text }: { text: string }): ReactElement {
+export function MessageBody({
+  text,
+  onOpenRef,
+  committed,
+}: {
+  text: string;
+  /** Where Vowe's own citations open. Absent, they are text. */
+  onOpenRef?: (ref: ContextRef) => void;
+  committed?: boolean;
+}): ReactElement {
   return (
     <div className="message-body">
-      <Markdown text={text} />
+      <Markdown text={text} {...(onOpenRef ? { onOpenRef } : {})} {...(committed === undefined ? {} : { committed })} />
     </div>
   );
 }

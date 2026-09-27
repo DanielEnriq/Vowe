@@ -126,6 +126,17 @@ export interface StreamedText {
   events: number;
 }
 
+/**
+ * A progress report, wherever it came from.
+ *
+ * The reducer reads phases, checks and text — never which room the work is in
+ * or when it was sent — so a Studio turn is folded by the same rules as an
+ * investigation rather than by a copy of them.
+ */
+export type LiveProgress = InvestigationProgress extends infer P
+  ? P extends InvestigationProgress ? Omit<P, 'scope' | 'at'> : never
+  : never;
+
 export const NOTHING_STREAMED: StreamedText = { reasoning: '', answer: '', events: 0 };
 
 /**
@@ -138,7 +149,7 @@ export const NOTHING_STREAMED: StreamedText = { reasoning: '', answer: '', event
  */
 export function liveInvestigationReducer(
   state: LiveInvestigation,
-  progress: InvestigationProgress,
+  progress: LiveProgress,
   now: number = Date.now(),
 ): LiveInvestigation {
   switch (progress.phase) {
@@ -183,7 +194,7 @@ export function liveInvestigationReducer(
 }
 
 /** Accumulate a text delta for the next frame. Order is preserved exactly. */
-export function gather(pending: StreamedText, progress: InvestigationProgress): StreamedText {
+export function gather(pending: StreamedText, progress: LiveProgress): StreamedText {
   if (progress.phase === 'reasoning') {
     return { ...pending, reasoning: pending.reasoning + progress.delta, events: pending.events + 1 };
   }

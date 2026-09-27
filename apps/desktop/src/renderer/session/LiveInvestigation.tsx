@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 
 import type { ContextRef, PresenceProfile } from '@vowe/core';
 
@@ -41,21 +41,32 @@ export function LiveInvestigation({
   live,
   presence,
   activity,
+  pending,
+  gathering = false,
   onOpenRef,
 }: {
   live: LiveInvestigationState;
   presence: PresenceProfile;
   activity: number | undefined;
+  /**
+   * Work under way that has not become a row yet — a repository check that
+   * takes tens of seconds and says what it is doing. Drawn at the tail of the
+   * trace, where its row will land.
+   */
+  pending?: ReactNode;
+  /** Still gathering even though some reply has been written — see `pending`. */
+  gathering?: boolean;
   /** Where a lookup opens. Absent in rooms with no workbench. */
   onOpenRef?: (ref: ContextRef) => void;
 }): ReactElement {
-  const phase = turnPhase(live);
+  const phase = gathering && turnPhase(live) !== 'finished' ? 'investigating' : turnPhase(live);
   const rows = liveRows(live);
   const writing = live.answer.length > 0;
 
   return (
     <div className="turn live">
       <InvestigationTimeline rows={rows} followTail {...(onOpenRef ? { onOpenRef } : {})} />
+      {pending}
 
       {/*
         The answer, as it is written. The same text the entry will hold: what

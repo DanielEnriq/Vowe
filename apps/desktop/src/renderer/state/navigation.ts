@@ -10,8 +10,11 @@ import type { AgentSession, Project } from '@vowe/core';
  */
 export type Route =
   | { kind: 'project'; projectId: string; view?: 'home' | 'conversation'; entryId?: string }
+  /** Studio: a project's designs. Without a `designId`, the most recent one. */
+  | { kind: 'project'; projectId: string; view: 'studio'; designId?: string }
   | { kind: 'session'; sessionId: string }
-  | { kind: 'studio' }
+  /** Your Vowe: how Vowe looks, sounds and talks. Presence Studio in code. */
+  | { kind: 'presence' }
   | { kind: 'none' };
 
 export interface NavigationContext {

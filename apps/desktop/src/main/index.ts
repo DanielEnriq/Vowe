@@ -40,12 +40,18 @@ import {
   ProjectService,
   SessionRegistry,
   SessionTitleService,
+  StudioService,
   TemperamentStore,
   UserProfileStore,
   UnavailableLiveTransport,
   VoicePreferenceStore,
   VoweRunRecorder,
+  parseOp,
   type DecisionRouter,
+  type DesignElementKind,
+  type DesignLayout,
+  type DesignOp,
+  type DesignStore,
   type LiveTransport,
   type LiveVoice,
   type PersistedWorkbench,
@@ -55,11 +61,11 @@ import {
   type TemperamentProfile,
   type VoicePreference,
 } from '@vowe/core';
-import { ClaudeCodeAdapter } from '@vowe/adapter-claude-code';
+import { ClaudeCodeAdapter, ClaudeCodeConsultant } from '@vowe/adapter-claude-code';
 import { CodexAdapter } from '@vowe/adapter-codex';
 import { PiAdapter } from '@vowe/adapter-pi';
 import { createGraphifyKnowledge } from '@vowe/knowledge-graphify';
-import { AnthropicLlmClient, AnthropicTitleModel } from '@vowe/llm';
+import { AnthropicLlmClient, AnthropicSystemDesignAgent, AnthropicTitleModel } from '@vowe/llm';
 import { JevDecisionRouter } from '@vowe/decision-jev';
 import { OpenAiLiveTransport } from '@vowe/live-openai';
 
@@ -154,6 +160,12 @@ interface Services {
     allows(sessionId: string): boolean;
   };
   live: LiveBridge;
+  /**
+   * Studio, when a model is configured. Holds a design store, a read-only
+   * repository consultant and a way to open attachments — never the registry,
+   * project memory or the live bridge.
+   */
+  studio: StudioService | null;
   status: AppStatus;
 }
 
@@ -476,6 +488,33 @@ async function createServices(): Promise<Services> {
 
   const companion = new CompanionService({ store, delegated });
 
+  /*
+   * Studio: system design with a living document.
+   *
+   * The consultant is constructed here and handed to Studio alone. It is
+   * never registered with the session registry, so checking the repository
+   * for a design can never become instructing a worker — and Studio holds
+   * nothing that reaches project memory or voice.
+   */
+  const designAgent = AnthropicSystemDesignAgent.fromEnvironment();
+  const studio = designAgent
+    ? new StudioService({
+        store,
+        agent: designAgent,
+        consultant: new ClaudeCodeConsultant(),
+        attachments: navigator,
+        runs,
+        temperament: () => temperament,
+        onProgress: (progress) => {
+          window?.webContents.send(IPC.studioProgress, progress);
+        },
+        onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
+      })
+    : null;
+  store.onDesignChanged((change) => {
+    window?.webContents.send(IPC.designChanged, change);
+  });
+
   const live = new LiveBridge({
     transport: liveTransport,
     projectBrief: (projectId) => brief.get(projectId),
@@ -610,6 +649,7 @@ async function createServices(): Promise<Services> {
     titles,
     observation,
     live,
+    studio,
     status: {
       llmConfigured: llm !== undefined,
       voiceConfigured: liveTransport.available,
@@ -620,6 +660,7 @@ async function createServices(): Promise<Services> {
       storeRoot,
       providers: registry.providers(),
       launchCapableProviders: registry.launchCapableProviders(),
+      studioAvailable: studio !== null,
     },
   };
 }
@@ -826,6 +867,54 @@ function registerIpc(): void {
         .catch((error) => console.error('[vowe] live:typed-context', error));
       return { entry: result.entry, refs: result.refs, failed: result.failed };
     },
+  );
+
+  // Studio. A third path beside asking and instructing: it can check the
+  // repository read-only for a design, and reach nothing else.
+  const requireStudio = async (): Promise<StudioService> => {
+    const { studio } = await requireServices();
+    if (!studio) throw new Error('Studio needs a model configured.');
+    return studio;
+  };
+  ipcMain.handle(IPC.listDesigns, async (_event, projectId: string) =>
+    (await requireServices()).studio?.listDesigns(projectId) ?? [],
+  );
+  ipcMain.handle(IPC.getDesign, async (_event, designId: string) =>
+    (await requireServices()).studio?.getDesign(designId) ?? null,
+  );
+  ipcMain.handle(IPC.createDesign, async (_event, projectId: string) => {
+    const studio = await requireStudio();
+    const design = await studio.createDesign(projectId);
+    return studio.listDesigns(projectId).find((summary) => summary.id === design.id)!;
+  });
+  ipcMain.handle(
+    IPC.converseDesign,
+    async (
+      _event,
+      designId: string,
+      message: string,
+      contextRefs?: ContextRef[],
+      options?: { focus?: { kind: DesignElementKind; id: string }; start?: 'code' | 'idea' },
+    ) =>
+      (await requireStudio()).converse({
+        designId,
+        message,
+        ...(contextRefs?.length ? { contextRefs } : {}),
+        ...(options?.focus ? { focus: options.focus } : {}),
+        ...(options?.start ? { start: options.start } : {}),
+      }),
+  );
+  ipcMain.handle(IPC.manipulateDesign, async (_event, designId: string, ops: unknown[]) =>
+    (await requireStudio()).manipulate(designId, (Array.isArray(ops) ? ops : []).map(parseOp).filter((op): op is DesignOp => op !== null)),
+  );
+  ipcMain.handle(IPC.setDesignLayout, async (_event, designId: string, layout: DesignLayout) =>
+    (await requireStudio()).setLayout(designId, layout),
+  );
+  ipcMain.handle(IPC.tidyDesign, async (_event, designId: string) =>
+    (await requireStudio()).tidy(designId),
+  );
+  ipcMain.handle(IPC.cancelDesignTurn, async (_event, designId: string) =>
+    (await requireServices()).studio?.cancel(designId) ?? false,
   );
 
   ipcMain.handle(IPC.getProjectConversation, async (_event, projectId: string) =>
@@ -1247,14 +1336,18 @@ app.on('before-quit', () => {
  * them, and this asks the one it belongs to.
  */
 function receiptFor(
-  store: EventStore,
+  store: EventStore & Pick<DesignStore, 'getDesignEntries'>,
   run: VoweRun,
   entryId: string,
 ): InvestigationReceipt | undefined {
-  const thread = run.sessionId
-    ? store.getConversation(run.sessionId)
-    : run.projectId
-      ? store.getProjectConversation(run.projectId)
-      : [];
+  // A Studio turn's reply lives in its design's own thread, never the project's.
+  const designId = typeof run.metadata?.['designId'] === 'string' ? run.metadata['designId'] : null;
+  const thread = designId
+    ? store.getDesignEntries(designId)
+    : run.sessionId
+      ? store.getConversation(run.sessionId)
+      : run.projectId
+        ? store.getProjectConversation(run.projectId)
+        : [];
   return thread.find((entry) => entry.id === entryId)?.investigation;
 }
