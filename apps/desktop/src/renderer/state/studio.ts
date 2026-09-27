@@ -214,3 +214,78 @@ export function openableLink(href: string | undefined, committed: boolean): Cont
 export function unanswered(entries: readonly DesignEntry[], working: boolean): boolean {
   return !working && entries[entries.length - 1]?.role === 'user_message';
 }
+
+/**
+ * What a selected part is connected to: the parts one link away and the
+ * links between. Selection brings these forward and lets the rest recede.
+ */
+export function neighborhood(model: DesignModel, partId: string): { parts: Set<string>; links: Set<string> } {
+  const parts = new Set<string>([partId]);
+  const links = new Set<string>();
+  for (const link of model.links) {
+    if (link.retired) continue;
+    if (link.from === partId || link.to === partId) {
+      links.add(link.id);
+      parts.add(link.from === partId ? link.to : link.from);
+    }
+  }
+  return { parts, links };
+}
+
+/**
+ * Which link labels to show. A sparse drawing can carry all of them quietly;
+ * a dense one shows a label only where attention already is — the link under
+ * the pointer, the selected link, the links of the selected part.
+ */
+export const QUIET_LABELS = 8;
+
+export function visibleLabels(
+  model: DesignModel,
+  focus: { parts: Set<string>; links: Set<string> } | null,
+  hovered: string | null,
+  selectedLink: string | null,
+): Set<string> {
+  const labelled = model.links.filter((link) => !link.retired && link.label);
+  if (!focus && labelled.length <= QUIET_LABELS) return new Set(labelled.map((link) => link.id));
+  const shown = new Set<string>();
+  for (const link of labelled) {
+    if (link.id === hovered || link.id === selectedLink || focus?.links.has(link.id)) shown.add(link.id);
+  }
+  return shown;
+}
+
+/**
+ * What Vowe is doing right now, in words, derived from the turn itself:
+ * checking the code, drawing, or thinking before either. Nothing when it is
+ * writing a reply, because the reply is already visible.
+ */
+export function studioStatus(turn: StudioTurn, working: boolean): string | null {
+  if (turn.consulting) return 'Checking current behavior…';
+  if (!working && !turn.live.active) return null;
+  if (turn.preview) return 'Drawing the design…';
+  if (turn.live.answer.trim()) return null;
+  return 'Thinking…';
+}
+
+/**
+ * The line under the design when the conversation is put away: Vowe's reply
+ * as it is written, then the settled reply for a moment. Keyed, so a caption
+ * that has faded does not come back until something new is said.
+ */
+export function studioCaption(entries: readonly DesignEntry[], turn: StudioTurn): { key: string; text: string; live: boolean } | null {
+  if (turn.live.answer.trim()) return { key: 'live', text: turn.live.answer.trim(), live: true };
+  const last = entries[entries.length - 1];
+  if (last?.role === 'companion_message' && last.text.trim()) return { key: last.id, text: last.text.trim(), live: false };
+  return null;
+}
+
+/**
+ * What a click on the canvas does to the selection. A plain click chooses
+ * one thing, or lets go of the one thing chosen; Shift or ⌘ gathers it into —
+ * or out of — the selection, keeping the order things were chosen in.
+ */
+export function nextSelection<T extends { kind: string; id: string }>(selection: readonly T[], element: T, gather: boolean): T[] {
+  const chosen = selection.some((other) => other.kind === element.kind && other.id === element.id);
+  if (gather) return chosen ? selection.filter((other) => !(other.kind === element.kind && other.id === element.id)) : [...selection, element];
+  return chosen && selection.length === 1 ? [] : [element];
+}

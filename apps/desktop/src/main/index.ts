@@ -48,7 +48,6 @@ import {
   VoweRunRecorder,
   parseOp,
   type DecisionRouter,
-  type DesignElementKind,
   type DesignLayout,
   type DesignOp,
   type DesignStore,
@@ -82,6 +81,7 @@ import {
   IPC,
   type AppStatus,
   type AskResult,
+  type DesignFocusRequest,
   type ObservationView,
   type ProjectAskResult,
 } from '../shared/ipc.js';
@@ -894,7 +894,7 @@ function registerIpc(): void {
       designId: string,
       message: string,
       contextRefs?: ContextRef[],
-      options?: { focus?: { kind: DesignElementKind; id: string }; start?: 'code' | 'idea' },
+      options?: { focus?: DesignFocusRequest | DesignFocusRequest[]; start?: 'code' | 'idea' },
     ) =>
       (await requireStudio()).converse({
         designId,

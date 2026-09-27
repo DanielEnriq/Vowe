@@ -3,6 +3,22 @@ import { useEffect, useRef, useState, type ReactElement } from 'react';
 import type { DesignSummary } from '@vowe/core';
 
 import { formatAgo } from '../components/ui.js';
+import { ChevronDownIcon } from '../shell/icons.js';
+
+/** A menu that closes on Esc or a press anywhere outside it. */
+export function usePopover(): [boolean, (open: boolean) => void, React.RefObject<HTMLDivElement | null>] {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: PointerEvent) => { if (!box.current?.contains(event.target as Node)) setOpen(false); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setOpen(false); } };
+    window.addEventListener('pointerdown', away);
+    window.addEventListener('keydown', key, true);
+    return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', key, true); };
+  }, [open]);
+  return [open, setOpen, box];
+}
 
 /**
  * A project's designs, to go back to.
@@ -18,33 +34,29 @@ export function browsable(designs: readonly DesignSummary[], activeId: string | 
 
 /** The design in view, and a way to any other. */
 export function DesignSwitcher({
-  designs, activeId, onSelect, onNew,
+  designs, activeId, title, heading, onSelect, onNew,
 }: {
   designs: readonly DesignSummary[];
+  /** What the menu holds, said once at its top. */
+  heading?: string;
+  /** The design's own title, as drawn; the summary's may lag a turn behind. */
+  title?: string;
   activeId: string | null;
   onSelect: (designId: string) => void;
   onNew: (() => void) | null;
 }): ReactElement {
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: PointerEvent) => { if (!box.current?.contains(event.target as Node)) setOpen(false); };
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setOpen(false); } };
-    window.addEventListener('pointerdown', away);
-    window.addEventListener('keydown', key, true);
-    return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', key, true); };
-  }, [open]);
+  const [open, setOpen, box] = usePopover();
   const listed = browsable(designs, activeId);
   const current = designs.find((design) => design.id === activeId);
   return (
     <div className="design-switcher" ref={box}>
-      <button type="button" className="design-switcher-button" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen(!open)}>
-        <span className="title">{current?.title ?? 'Designs'}</span>
-        <span className="count">{listed.length > 1 ? listed.length : ''}</span>
+      <button type="button" className="design-switcher-button" aria-expanded={open} aria-haspopup="menu" title={title ?? current?.title} onClick={() => setOpen(!open)}>
+        <span className="title">{title || current?.title || 'Designs'}</span>
+        <ChevronDownIcon />
       </button>
       {open && (
-        <div className="design-switcher-menu" role="menu" aria-label="Designs in this project">
+        <div className="design-switcher-menu" role="menu" aria-label={heading ?? 'Designs in this project'}>
+          {heading && <p className="design-switcher-heading">{heading}</p>}
           <DesignList
             designs={listed}
             activeId={activeId}

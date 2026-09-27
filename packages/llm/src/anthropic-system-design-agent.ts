@@ -105,7 +105,9 @@ export class AnthropicSystemDesignAgent implements SystemDesignAgent {
         max_tokens: 16000,
         system: withGuidance(STUDIO_SYSTEM, input.guidance),
         ...tuned(this.model, this.effort),
-        tools: [consultTool(capabilities)],
+        // A design begun from an idea has no repository to check on its first
+        // turn, and a small model offered the tool will reach for it anyway.
+        tools: input.start === 'idea' && !input.design ? [] : [consultTool(capabilities)],
         max_iterations: this.maxIterations,
         messages: [{ role: 'user', content: renderDesignTurn(input) }],
         stream: true,
@@ -212,9 +214,9 @@ function consultTool(capabilities: DesignCapabilities) {
   return betaZodTool({
     name: CONSULT_REPOSITORY,
     description:
-      'Ask a coding harness a read-only question about the actual code in this repository. It reads the code and answers with the files it rests on. Slow (tens of seconds): use only when an unknown implementation fact materially affects the design.',
+      'Ask a coding harness a read-only question about the actual code in this repository. It reads the code and answers with the files it rests on. Ask at system level — what runs, what it keeps, what it talks to, what survives a restart — not for classes or files. Slow (tens of seconds): use only when an unknown implementation fact materially affects the design.',
     inputSchema: z.object({
-      question: z.string().describe('One specific, self-contained question about what the implementation does.'),
+      question: z.string().describe('One specific, self-contained, system-level question about what the implementation does.'),
       why: z.string().describe('Why the answer matters to the design, in one sentence.'),
       part: z.string().optional().describe('The id of the part on the design this question is about, if any.'),
     }),
@@ -232,6 +234,9 @@ function renderFinding(finding: ConsultationFinding): string {
   return [
     `Finding (${finding.confidence}): ${finding.answer}`,
     refs.length ? `References you may cite: ${refs.join(', ')}` : 'No files were cited.',
+    // Read last before the move is written, so the rules it needs sit here
+    // rather than behind the finding.
+    'When you draw what this confirms exists, mark it "today": true. Name parts the way a developer designs, not after the classes, modules or settings above.',
   ].join('\n');
 }
 

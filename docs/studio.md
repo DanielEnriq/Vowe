@@ -1,5 +1,7 @@
 # Studio
 
+See [Vowe North Star](north-star.md) for the canonical implementation sequence that places Studio at the beginning of the Design → Build → Oversee loop.
+
 **PROJECT HOME** asks *what is going on?* **STUDIO** asks *what should this system become?*
 
 Studio is a place to work on a system design, not chat about one. The system being designed fills the room as a small drawn model: parts, the links between them, and the occasional responsibility under discussion. The conversation is a rail beside it. When a design question depends on what the implementation actually does, Vowe checks the repository by asking a coding harness a read-only question. The grounded finding and the files it rests on open in the Workbench, which rises as a sheet beneath the design.
@@ -30,10 +32,19 @@ The agent is stateless between turns. Everything it knows arrives in `DesignTurn
 
 `core/studio/model.ts` is import-free and shared with the renderer through `@vowe/core/studio-model`.
 
-- **Parts, links and duties** with stable ids. A rename never changes an id, so selection, layout and revert survive it. Duties (responsibilities) are optional and sparse.
-- **Two worlds in one model.** An element's fields are the proposed system, which is what the canvas draws. `today` is what the repository has now, stamped with the `RepositoryBasis` (worktree, `HEAD`, dirty) of the consultation that established it. Removing something that exists today retires it rather than deleting it. This is what a later reconciliation with landed work, or divergence detection, will read. Neither is built.
+- **Parts, links and duties** with stable ids. A rename never changes an id, so selection, layout and revert survive it. Duties (responsibilities) are optional and sparse. The agent writes them as `{"op":"responsibility",…}`, and the model stores them as `duty`.
+- **A small system grammar**, all optional on a part:
+  - `kind`: one of `client`, `service`, `store`, `queue`, `external`, `group`. A worker is a service, a cache is a store, and a model provider is external. An unknown kind parses as unspecified; the op is not refused.
+  - `technology`: `{ name, key? }`. `name` is the design's word. `key` is presentation metadata that may be corrected or canonicalised later. A change to the key alone is not a design change, and nothing keys on it. `technologyKey()` derives a slug on read and never stores it.
+  - `within`: the id of a `group`. Groups don't nest. A group that still holds parts keeps its kind. Removing a group leaves its parts outside it, and revert restores them inside.
+
+  The prompt keeps parts at whiteboard altitude (never classes, files or functions) and keeps responsibilities rare.
+- **A brief.** `projectMarkdown` writes each part with its kind and technology inside its boundary, plus its responsibilities, connections, reasoning and what it changes about today. A later Design → Build can read it without the conversation.
+- **Two worlds in one model.** An element's fields are the proposed system, which is what the canvas draws. `today` is what the repository has now, stamped with the `RepositoryBasis` (worktree, `HEAD`, dirty) of the consultation that established it. A part's `today` also records its kind and technology when it was grounded with them. Anything unrecorded reads as the design says, never as a difference. When nothing in a design has been checked (no finding, no answered consultation, no attachment), `StudioService` drops any `today: true` the agent claims. A design begun from an idea therefore can't say anything exists in the repository. Removing something that exists today retires it rather than deleting it. This is what a later reconciliation with landed work, or divergence detection, will read. Neither is built.
 - **Moves.** One closed op set (`design`, `part`, `link`, `duty`, `remove`, `revert`) is the only way the design changes. A sentence to Vowe and a gesture on the canvas end as the same `DesignMove { id, ops, summary, author, via }`. `revert{move}` undoes one move element by element, and never undoes anything changed since.
 - **Layout is view state.** `layout.ts` places new parts beside their relations and never moves what is placed. Dragging pins a part, and tidy re-lays out the unpinned ones. None of it is a move, enters history or reaches the agent.
+- **Boundaries are drawn, not placed.** A group takes no slot while it holds parts: the canvas draws it around them. `layout.ts` keeps each group whole — members touching, nothing else inside, no two groups overlapping — and corrects only what breaks that: a part that joins moves in beside the others, a part that leaves steps out along its row, and a layout with nothing to correct comes back unchanged. A link to a group places its other end as if it linked each member. An empty group waits in a slot of its own and is drawn there as a small outline. A new part sits a row beneath the nearest part that feeds it, so a store written by two services sits beside the first. Tidy moves an external that is outside every group and not pinned to the edge of the drawing, keeping its row and the side it leaned toward.
+- **Drawn quietly.** In the renderer, a kind changes a card's silhouette slightly and never adds a label; a part with no kind, or one it does not know, is the plain service card. A technology is a small monochrome mark (from Simple Icons, CC0, where one exists) and its name, both secondary to the part's name. Marks are found by key, name, alias or first word, so `technology.key` stays presentation metadata. Dropping a part well inside a boundary, or well outside its own, is a `within` move; anything less decisive only rearranges.
 
 ## Canvas gestures
 

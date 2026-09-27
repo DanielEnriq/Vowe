@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react';
 
 import type {
   ContextRef,
@@ -12,13 +12,15 @@ import type {
   DesignPart,
   DesignSlot,
 } from '@vowe/core';
-import { diffModels, live, visibleEntries } from '@vowe/core/studio-model';
-import { refFromLink } from '@vowe/core/refs';
+import { groupMembers, live, settleGroups } from '@vowe/core/studio-model';
 
-import { canvasGeometry, edgePath, freeSlot, type CanvasGeometry, type Placed } from '../state/design-canvas.js';
-import type { LensView } from '../state/studio.js';
-import { Markdown } from '../workbench/Markdown.js';
+import { canvasGeometry, frameAt, freeSlot, looseRoute, outsideFrame, placeLabels, routeLinks, type CanvasGeometry, type Placed, type Route } from '../state/design-canvas.js';
+import { partLook, technologyLine, type TechnologyLine } from '../state/part-presentation.js';
+import { canvasChanges, NO_CHANGES, type CanvasChanges } from '../state/studio-motion.js';
+import { neighborhood, nextSelection, visibleLabels, type LensView } from '../state/studio.js';
+import { usePrefersReducedMotion } from '../shell/theme.js';
 import { CloseIcon } from '../shell/icons.js';
+import { LinkFocus, PartFocus, PartNote, type DutyGesture } from './PartFocus.js';
 
 export interface CanvasSelection {
   kind: DesignElementKind;
@@ -28,8 +30,9 @@ export interface CanvasSelection {
 interface Props {
   model: DesignModel;
   layout: DesignLayout;
-  selection: CanvasSelection | null;
-  onSelect: (selection: CanvasSelection | null) => void;
+  /** What is selected, first chosen first. Several parts can be gathered to ask about together. */
+  selection: CanvasSelection[];
+  onSelect: (selection: CanvasSelection[]) => void;
   /** The part a repository check is looking at right now. */
   checking: string | null;
   /** Vowe's note on the latest move, anchored to an element. */
@@ -39,51 +42,87 @@ interface Props {
   editable: boolean;
   /** Parts arriving on a first appearance materialize rather than simply being there. */
   animateArrival: boolean;
+  /** Room kept clear of the drawing at the top and bottom, for the title and a floating composer. */
+  inset: { top: number; bottom: number };
+  /** Evidence is open beneath the design: hold the scale and bring the part in question into the band above it. */
+  depth: boolean;
   /** The moves that touched a part, newest first. */
   changesOf: (id: string) => { ord: number; summary: string; by: string }[];
   onShowChange: (ord: number) => void;
   onRename: (id: string, name: string) => void;
   onRelocateDuty: (dutyId: string, partId: string) => void;
-  onPin: (id: string, slot: DesignSlot) => void;
+  /** The drawing rearranged by hand: view state only. */
+  onArrange: (layout: DesignLayout) => void;
+  /** A part dropped into a boundary, or out of one (null): a change to the design, arranged as dropped. */
+  onRegroup: (id: string, group: string | null, layout: DesignLayout) => void;
   onOpenRef: (ref: ContextRef) => void;
+  /** Put a question in the composer about what is selected. */
+  onAsk: (question: string) => void;
 }
 
 /** How long a change stays emphasised before the canvas is calm again. */
-const SETTLE_MS = 2600;
-const LEAVE_MS = 650;
-const PAD = 56;
+const SETTLE_MS = 2400;
+const LEAVE_MS = 620;
+const TRAVEL_MS = 900;
+const STAGGER_MS = 70;
+const PAD = 64;
+/** The share of the canvas left visible above the evidence sheet. */
+const DEPTH_BAND = 0.4;
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 1.12;
+/** How far inside a boundary a dragged part must be before dropping it there joins it. */
+const ENTER = 24;
+/** How far outside its boundary a member must be before dropping it there takes it out. */
+const EXIT = 24;
 
 /**
- * The system being designed, drawn so a developer who knows nothing about
- * Vowe sees software being designed — parts, the links between them, and the
- * odd responsibility under discussion. No glyphs, no badges, no legend.
+ * The system being designed, drawn so that a developer who knows nothing
+ * about Vowe sees software being designed: parts, the lines between them, and
+ * nothing else. No glyphs, no badges, no legend.
  *
- * What Vowe knows about each part — whether it exists today, why it is here,
- * what the repository said — is depth: it appears when you select a part and
- * ask. What changed is felt, not annotated: arrivals materialize, changes
- * glow and settle, and only the changes lens draws a diff.
+ * A part shows who it is and what it is for. Everything Vowe knows about it —
+ * its responsibilities, why it is here, what the code has today, the moves
+ * that shaped it — opens beside it when you select it, and only then.
+ * Selecting a part brings its neighbourhood forward and lets the rest recede,
+ * so "this" is visible before you type it.
  *
- * The canvas is also a way to speak. Selecting points; renaming, dragging a
- * responsibility onto another part and reverting all become the same moves a
- * sentence would. Dragging a part only places it, which is view, not design.
+ * What changed is felt, not annotated: arrivals materialize along the flow,
+ * new lines draw themselves in, a change glows once and lets go, a
+ * responsibility flies to the part that took it. Only the changes lens draws a diff.
+ *
+ * The canvas is also a way to speak. Dragging a part only rearranges the
+ * drawing — it lifts, a slot shows where it will land, it settles. Dragging a
+ * responsibility onto another part changes the architecture, and feels like
+ * it: the parts that could take it light up, and the drop commits a move.
  */
+/** Keep a gesture's pointer; a pointer the browser no longer tracks is simply not captured. */
+function capture(event: ReactPointerEvent): void {
+  try {
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  } catch {
+    // Not an active pointer (a synthetic or already-released one): the gesture still works without capture.
+  }
+}
+
 export function SystemCanvas(props: Props): ReactElement {
-  const { model, layout, selection, onSelect, checking, note, lens, editable, animateArrival } = props;
+  const { model, layout, selection, onSelect, checking, note, lens, editable, animateArrival, inset, depth } = props;
   const shown = lens?.after ?? model;
+  const reduced = usePrefersReducedMotion();
 
   // ---------------------------------------------------------------- measure
   const [heights, setHeights] = useState<Record<string, number>>({});
   const [measured, setMeasured] = useState(false);
   const observer = useRef<ResizeObserver | null>(null);
   // Made on first use: a card's ref runs before any effect, so an observer
-  // created in one would miss every card already on the canvas.
+  // created in one would miss every card already on the canvas. Only the
+  // face is observed, so nothing shown around a card moves the drawing.
   const measure = useCallback((element: HTMLElement | null) => {
     if (!element) return;
     observer.current ??= new ResizeObserver((records) => {
       setHeights((current) => {
         let next = current;
         for (const record of records) {
-          const id = (record.target as HTMLElement).dataset['part'];
+          const id = (record.target as HTMLElement).dataset['face'];
           const height = Math.round((record.target as HTMLElement).offsetHeight);
           if (id && current[id] !== height) {
             if (next === current) next = { ...current };
@@ -98,63 +137,145 @@ export function SystemCanvas(props: Props): ReactElement {
   }, []);
   useEffect(() => () => observer.current?.disconnect(), []);
 
+  // --------------------------------------------------------------- geometry
+  const lensEntries = useMemo(() => new Map((lens?.diff.entries ?? []).map((entry) => [entry.id, entry])), [lens]);
+  const ghostParts = useMemo(
+    () => (lens ? live(lens.before.parts).filter((part) => part.kind !== 'group' && lensEntries.get(part.id)?.change === 'removed') : []),
+    [lens, lensEntries],
+  );
+  // Parts are cards; groups are the boundaries drawn around them.
+  const parts = useMemo(() => live(shown.parts).filter((part) => part.kind !== 'group'), [shown]);
+  const boundaries = useMemo(() => live(shown.parts).filter((part) => part.kind === 'group'), [shown]);
+  const groups = useMemo(() => groupMembers(shown), [shown]);
+  // An empty group waits in a slot of its own, the size of a card.
+  const waiting = useMemo(() => boundaries.filter((group) => !groups.get(group.id)?.length).map((group) => group.id), [boundaries, groups]);
+  const drawnIds = useMemo(
+    () => [...parts.map((part) => part.id), ...ghostParts.map((part) => part.id), ...waiting],
+    [parts, ghostParts, waiting],
+  );
+  const slotted = useMemo(() => [...parts.map((part) => part.id), ...waiting], [parts, waiting]);
+
+  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number; slot: DesignSlot | null; into: string | null; out: boolean } | null>(null);
+  const [pinned, setPinned] = useState<DesignLayout | null>(null);
+  useEffect(() => setPinned(null), [layout]);
+  const effectiveLayout = pinned ?? layout;
+  const geometry = useMemo(() => canvasGeometry(drawnIds, effectiveLayout, heights, groups), [drawnIds, effectiveLayout, heights, groups]);
+  /** Where something is drawn: a card, or a boundary. */
+  const boundsOf = (id: string): Pick<Placed, 'x' | 'y' | 'w' | 'h'> | undefined => geometry.placed.get(id) ?? geometry.frames.get(id);
+
+  // A link between a group and a part inside it says nothing a boundary does not.
+  const links = useMemo(() => {
+    const within = new Map(shown.parts.map((part) => [part.id, part.within]));
+    return live(shown.links).filter((link) => within.get(link.from) !== link.to && within.get(link.to) !== link.from);
+  }, [shown]);
+  const ghostLinks = useMemo(
+    () => (lens ? live(lens.before.links).filter((link) => lensEntries.get(link.id)?.change === 'removed') : []),
+    [lens, lensEntries],
+  );
+  const routes = useMemo(() => routeLinks([...ghostLinks, ...links], geometry), [ghostLinks, links, geometry]);
+
   // --------------------------------------------------------------- emphasis
   const previous = useRef<DesignModel | null>(null);
   const previousGeometry = useRef<CanvasGeometry | null>(null);
-  const [entering, setEntering] = useState<ReadonlySet<string>>(new Set());
-  const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
+  const [changes, setChanges] = useState<CanvasChanges>(NO_CHANGES);
   const [leaving, setLeaving] = useState<{ part: DesignPart; at: Placed }[]>([]);
+  const [travelling, setTravelling] = useState<CanvasChanges['moved']>([]);
   useEffect(() => {
     if (lens) return;
     const before = previous.current;
     previous.current = model;
     if (!before && !animateArrival) return;
-    const diff = diffModels(before, model);
-    if (!diff.entries.length) return;
-    const added = new Set<string>();
-    const changed = new Set<string>();
-    for (const entry of visibleEntries(diff)) {
-      if (entry.change === 'added' && entry.kind === 'part') added.add(entry.id);
-      else if (entry.kind !== 'link' && entry.change !== 'removed') changed.add(entry.id);
-      if (entry.kind === 'duty') {
-        const duty = model.duties.find((candidate) => candidate.id === entry.id);
-        if (duty) changed.add(duty.part);
-      }
-    }
-    const gone = diff.entries
-      .filter((entry) => entry.kind === 'part' && entry.change === 'removed')
-      .flatMap((entry) => {
-        const part = before?.parts.find((candidate) => candidate.id === entry.id);
-        const at = previousGeometry.current?.placed.get(entry.id);
-        return part && at ? [{ part, at }] : [];
-      });
-    setEntering(added);
-    setTouched(changed);
+    const next = canvasChanges(before, model);
+    if (next === NO_CHANGES) return;
+    setChanges(next);
+    const gone = next.leaving.flatMap((part) => {
+      const at = previousGeometry.current?.placed.get(part.id);
+      return at ? [{ part, at }] : [];
+    });
     if (gone.length) setLeaving(gone);
-    const settle = window.setTimeout(() => { setEntering(new Set()); setTouched(new Set()); }, SETTLE_MS);
+    if (next.moved.length && !reduced) setTravelling(next.moved);
+  }, [model, lens, animateArrival, reduced]);
+  // Each emphasis lets go on its own clock, whatever arrives in between: a
+  // preview becoming its committed revision must not cut a change short.
+  useEffect(() => {
+    if (changes === NO_CHANGES) return;
+    const settle = window.setTimeout(() => setChanges(NO_CHANGES), SETTLE_MS + changes.entering.length * STAGGER_MS);
+    return () => window.clearTimeout(settle);
+  }, [changes]);
+  useEffect(() => {
+    if (!leaving.length) return;
     const clear = window.setTimeout(() => setLeaving([]), LEAVE_MS);
-    return () => { window.clearTimeout(settle); window.clearTimeout(clear); };
-  }, [model, lens, animateArrival]);
-
-  // --------------------------------------------------------------- geometry
-  const lensEntries = useMemo(() => new Map((lens?.diff.entries ?? []).map((entry) => [entry.id, entry])), [lens]);
-  const ghostParts = useMemo(
-    () => (lens ? live(lens.before.parts).filter((part) => lensEntries.get(part.id)?.change === 'removed') : []),
-    [lens, lensEntries],
-  );
-  const parts = live(shown.parts);
-  const drawnIds = useMemo(() => [...parts.map((part) => part.id), ...ghostParts.map((part) => part.id)], [parts, ghostParts]);
-
-  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null);
-  const [pinned, setPinned] = useState<DesignLayout | null>(null);
-  useEffect(() => setPinned(null), [layout]);
-  const effectiveLayout = pinned ?? layout;
-  const geometry = useMemo(() => canvasGeometry(drawnIds, effectiveLayout, heights), [drawnIds, effectiveLayout, heights]);
+    return () => window.clearTimeout(clear);
+  }, [leaving]);
+  useEffect(() => {
+    if (!travelling.length) return;
+    const land = window.setTimeout(() => setTravelling([]), TRAVEL_MS);
+    return () => window.clearTimeout(land);
+  }, [travelling]);
   useEffect(() => { if (!lens) previousGeometry.current = geometry; }, [geometry, lens]);
+  const arrival = (id: string) => changes.entering.indexOf(id);
 
-  // ------------------------------------------------------------------ fit
+  // ------------------------------------------------------------------ focus
+  const [hover, setHover] = useState<{ kind: 'part' | 'link'; id: string } | null>(null);
+  // A sweep across empty canvas gathers every part it touches.
+  const sweep = useRef<{ x: number; y: number; additive: boolean; moved: boolean } | null>(null);
+  const [marquee, setMarquee] = useState<{ left: number; top: number; right: number; bottom: number; hits: Set<string> } | null>(null);
+  const single = selection.length === 1 ? selection[0]! : null;
+  // The one part being thought about, when there is exactly one: it gets the panel beside it.
+  const selectedPart = single?.kind === 'part' ? single.id
+    : single?.kind === 'duty' ? shown.duties.find((duty) => duty.id === single.id)?.part ?? null
+      : null;
+  const selectedLink = single?.kind === 'link' ? single.id : null;
+  // Every part in the selection, and the links chosen directly.
+  const chosenParts = useMemo(() => new Set(selection.flatMap((element) =>
+    element.kind === 'part' ? [element.id]
+      : element.kind === 'duty' ? [shown.duties.find((duty) => duty.id === element.id)?.part ?? ''] : [])), [selection, shown]);
+  const chosenLinks = useMemo(() => new Set(selection.filter((element) => element.kind === 'link').map((element) => element.id)), [selection]);
+  const several = chosenParts.size + chosenLinks.size > 1;
+  // Links between two chosen parts: what holds the selection together.
+  const bonds = useMemo(() => {
+    if (chosenParts.size < 2) return new Set<string>();
+    return new Set(shown.links.filter((link) => !link.retired && chosenParts.has(link.from) && chosenParts.has(link.to)).map((link) => link.id));
+  }, [chosenParts, shown]);
+  const focus = useMemo(() => {
+    if (lens || (!chosenParts.size && !chosenLinks.size)) return null;
+    const parts = new Set<string>();
+    const links = new Set<string>();
+    for (const id of chosenParts) {
+      const near = neighborhood(shown, id);
+      near.parts.forEach((part) => parts.add(part));
+      near.links.forEach((link) => links.add(link));
+      // A boundary brings what it holds forward with it, and the lines within it.
+      const held = new Set(groups.get(id) ?? []);
+      held.forEach((member) => parts.add(member));
+      if (held.size) for (const link of shown.links) if (!link.retired && held.has(link.from) && held.has(link.to)) links.add(link.id);
+    }
+    for (const id of chosenLinks) {
+      const link = shown.links.find((candidate) => candidate.id === id);
+      if (!link) continue;
+      links.add(link.id);
+      parts.add(link.from);
+      parts.add(link.to);
+    }
+    return { parts, links };
+  }, [lens, chosenParts, chosenLinks, shown, groups]);
+  const isChosen = (element: CanvasSelection) => selection.some((other) => other.kind === element.kind && other.id === element.id);
+  const choose = (element: CanvasSelection, event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) =>
+    onSelect(nextSelection(selection, element, event.shiftKey || event.metaKey || event.ctrlKey));
+  // A pointer resting on a part previews its neighbourhood, lightly.
+  const glance = useMemo(() => (!focus && !lens && hover?.kind === 'part' && !drag ? neighborhood(shown, hover.id) : null), [focus, lens, hover, drag, shown]);
+  const labels = useMemo(() => visibleLabels(shown, focus ?? glance, hover?.kind === 'link' ? hover.id : null, selectedLink), [shown, focus, glance, hover, selectedLink]);
+  const labelAt = useMemo(() => {
+    const wanted = links.filter((link) => labels.has(link.id) && link.label).map((link) => ({ id: link.id, text: link.label! }));
+    // What attention is on is placed first, so it gets the best spot.
+    wanted.sort((a, b) => Number(isLit(b.id)) - Number(isLit(a.id)));
+    return placeLabels(wanted, routes, [...geometry.placed.values()]);
+  }, [links, labels, routes, geometry, focus, glance, hover, selectedLink]);
+
+  // ------------------------------------------------------------------ camera
   const viewport = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ width: 800, height: 600 });
+  const [scroll, setScroll] = useState({ left: 0, top: 0 });
   useLayoutEffect(() => {
     const element = viewport.current;
     if (!element) return;
@@ -165,9 +286,27 @@ export function SystemCanvas(props: Props): ReactElement {
   }, []);
   const contentWidth = geometry.width + PAD * 2;
   const contentHeight = geometry.height + PAD * 2;
-  const scale = Math.max(0.62, Math.min(1, box.width / contentWidth, box.height / contentHeight));
-  const offsetX = Math.max(0, (box.width - contentWidth * scale) / 2);
-  const offsetY = Math.max(0, (box.height - contentHeight * scale) / 2);
+  const room = { width: box.width, height: Math.max(120, box.height - inset.top - inset.bottom) };
+  const fit = Math.max(MIN_SCALE, Math.min(MAX_SCALE, room.width / contentWidth, room.height / contentHeight));
+  const held = useRef(fit);
+  if (!depth) held.current = fit;
+  const scale = depth ? held.current : fit;
+  const subject = depth ? boundsOf(selectedPart ?? checking ?? '') ?? null : null;
+  let offsetX: number;
+  let offsetY: number;
+  if (depth) {
+    const band = box.height * DEPTH_BAND - inset.top;
+    if (subject) {
+      offsetX = box.width / 2 - (PAD + subject.x + subject.w / 2) * scale;
+      offsetY = inset.top + band / 2 - (PAD + subject.y + subject.h / 2) * scale;
+    } else {
+      offsetX = (box.width - contentWidth * scale) / 2;
+      offsetY = inset.top + Math.max(0, (band - contentHeight * scale) / 2);
+    }
+  } else {
+    offsetX = Math.max(0, (box.width - contentWidth * scale) / 2);
+    offsetY = inset.top + Math.max(0, (room.height - contentHeight * scale) / 2);
+  }
   const toStage = (clientX: number, clientY: number) => {
     const rect = viewport.current!.getBoundingClientRect();
     return {
@@ -175,22 +314,52 @@ export function SystemCanvas(props: Props): ReactElement {
       y: (clientY - rect.top + viewport.current!.scrollTop - offsetY) / scale - PAD,
     };
   };
+  const toView = (x: number, y: number) => ({ x: offsetX + (PAD + x) * scale - scroll.left, y: offsetY + (PAD + y) * scale - scroll.top });
 
   // ------------------------------------------------------------ part drag
   const press = useRef<{ id: string; x: number; y: number; moved: boolean } | null>(null);
   const onPartDown = (event: ReactPointerEvent, id: string) => {
     if (event.button !== 0 || lens) return;
     press.current = { id, x: event.clientX, y: event.clientY, moved: false };
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    capture(event);
+  };
+  const dropSlot = (id: string, dx: number, dy: number): DesignSlot | null => {
+    const at = geometry.placed.get(id);
+    if (!at) return null;
+    const target = geometry.slotAt(at.x + at.w / 2 + dx, at.y + at.h / 2 + dy);
+    return { ...freeSlot(target, effectiveLayout, slotted, id), pinned: true };
+  };
+  // A press whose release never arrived — lost to a cancelled pointer or a
+  // drawing that moved under it — ends here, rather than turning the next
+  // pass of the pointer into a drag.
+  const letGo = () => {
+    press.current = null;
+    setDrag(null);
   };
   const onPartMove = (event: ReactPointerEvent) => {
     const pressed = press.current;
     if (!pressed) return;
+    if (event.buttons === 0) { letGo(); return; }
     const dx = (event.clientX - pressed.x) / scale;
     const dy = (event.clientY - pressed.y) / scale;
     if (!pressed.moved && Math.hypot(dx, dy) < 4) return;
     pressed.moved = true;
-    setDrag({ id: pressed.id, dx, dy });
+    const at = geometry.placed.get(pressed.id);
+    const within = shown.parts.find((part) => part.id === pressed.id)?.within ?? null;
+    let into: string | null = null;
+    let out = false;
+    if (at && editable) {
+      const cx = at.x + at.w / 2 + dx;
+      const cy = at.y + at.h / 2 + dy;
+      // Into a boundary only once well inside it, and held until it is left:
+      // passing across one is not joining it.
+      const holding = drag?.into && frameAt(new Map([[drag.into, geometry.frames.get(drag.into)!]]), cx, cy, 0);
+      const over = holding ? drag!.into : frameAt(geometry.frames, cx, cy, ENTER);
+      into = over && over !== within ? over : null;
+      const own = within ? geometry.frames.get(within) : undefined;
+      out = !into && !!own && outsideFrame(own, cx, cy, EXIT) && !frameAt(geometry.frames, cx, cy, 0);
+    }
+    setDrag({ id: pressed.id, dx, dy, slot: dropSlot(pressed.id, dx, dy), into, out });
   };
   const onPartUp = (event: ReactPointerEvent, id: string) => {
     const pressed = press.current;
@@ -198,158 +367,266 @@ export function SystemCanvas(props: Props): ReactElement {
     if (!pressed) return;
     if (!pressed.moved) {
       event.stopPropagation();
-      onSelect({ kind: 'part', id });
+      choose({ kind: 'part', id }, event);
       return;
     }
+    const slot = drag?.slot ?? dropSlot(id, (event.clientX - pressed.x) / scale, (event.clientY - pressed.y) / scale);
+    const into = drag?.into ?? null;
+    const out = drag?.out ?? false;
     setDrag(null);
-    const at = geometry.placed.get(id);
-    if (!at) return;
-    const dx = (event.clientX - pressed.x) / scale;
-    const dy = (event.clientY - pressed.y) / scale;
-    const target = geometry.slotAt(at.x + at.w / 2 + dx, at.y + at.h / 2 + dy);
-    const slot = { ...freeSlot(target, effectiveLayout, parts.map((part) => part.id), id), pinned: true as const };
+    if (!slot) return;
+    // Onto an empty boundary: the part takes the place it was waiting in, and the boundary opens around it.
+    const waitingAt = into && geometry.frames.get(into)?.empty ? effectiveLayout[into] : undefined;
+    const dropped = { ...effectiveLayout, [id]: waitingAt ? { row: waitingAt.row, col: waitingAt.col, pinned: true as const } : slot };
+    // Dropped well inside another boundary, or well outside its own: the
+    // design changes, and the part stays where it was put.
+    if (into || out) {
+      setPinned(dropped);
+      props.onRegroup(id, into, dropped);
+      return;
+    }
+    // Anywhere else only rearranges, and a boundary stays whole.
     const current = effectiveLayout[id];
     if (current && current.row === slot.row && current.col === slot.col && current.pinned) return;
-    setPinned({ ...effectiveLayout, [id]: slot });
-    props.onPin(id, slot);
+    const settled = settleGroups(dropped, shown);
+    setPinned(settled);
+    props.onArrange(settled);
   };
 
   // ------------------------------------------------------ duty relocation
-  const [dutyDrag, setDutyDrag] = useState<{ id: string; text: string; x: number; y: number; over: string | null } | null>(null);
+  const [dutyDrag, setDutyDrag] = useState<{ id: string; from: string; text: string; x: number; y: number; over: string | null } | null>(null);
   const dutyPress = useRef<{ duty: DesignDuty; x: number; y: number; moved: boolean } | null>(null);
-  const onDutyDown = (event: ReactPointerEvent, duty: DesignDuty) => {
-    event.stopPropagation();
-    if (event.button !== 0 || lens) return;
-    dutyPress.current = { duty, x: event.clientX, y: event.clientY, moved: false };
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-  };
-  const onDutyMove = (event: ReactPointerEvent) => {
-    const pressed = dutyPress.current;
-    if (!pressed || !editable) return;
-    if (!pressed.moved && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < 4) return;
-    pressed.moved = true;
-    const under = document.elementsFromPoint(event.clientX, event.clientY)
-      .map((element) => (element as HTMLElement).closest<HTMLElement>('[data-part]'))
-      .find((element) => element && !element.classList.contains('ghost'));
-    const over = under?.dataset['part'] ?? null;
-    setDutyDrag({ id: pressed.duty.id, text: pressed.duty.text, x: event.clientX, y: event.clientY, over: over === pressed.duty.part ? null : over });
-  };
-  const onDutyUp = (event: ReactPointerEvent, duty: DesignDuty) => {
-    event.stopPropagation();
-    const pressed = dutyPress.current;
-    dutyPress.current = null;
-    const dropped = dutyDrag?.over;
-    setDutyDrag(null);
-    if (!pressed) return;
-    if (!pressed.moved) {
-      onSelect({ kind: 'duty', id: duty.id });
-      return;
-    }
-    if (dropped && dropped !== duty.part) props.onRelocateDuty(duty.id, dropped);
+  const dutyGesture: DutyGesture = {
+    down(event, duty) {
+      event.stopPropagation();
+      if (event.button !== 0 || lens) return;
+      dutyPress.current = { duty, x: event.clientX, y: event.clientY, moved: false };
+      capture(event);
+    },
+    move(event) {
+      const pressed = dutyPress.current;
+      if (!pressed || !editable) return;
+      if (event.buttons === 0) { dutyPress.current = null; setDutyDrag(null); return; }
+      if (!pressed.moved && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < 4) return;
+      pressed.moved = true;
+      const under = document.elementsFromPoint(event.clientX, event.clientY)
+        .map((element) => (element as HTMLElement).closest<HTMLElement>('[data-part]'))
+        .find((element) => element && !element.classList.contains('ghost') && !element.classList.contains('leaving'));
+      const over = under?.dataset['part'] ?? null;
+      setDutyDrag({ id: pressed.duty.id, from: pressed.duty.part, text: pressed.duty.text, x: event.clientX, y: event.clientY, over: over === pressed.duty.part ? null : over });
+    },
+    up(event, duty) {
+      event.stopPropagation();
+      const pressed = dutyPress.current;
+      dutyPress.current = null;
+      const dropped = dutyDrag?.over;
+      setDutyDrag(null);
+      if (!pressed) return;
+      if (!pressed.moved) {
+        onSelect(single?.kind === 'duty' && single.id === duty.id ? [{ kind: 'part', id: duty.part }] : [{ kind: 'duty', id: duty.id }]);
+        return;
+      }
+      if (dropped && dropped !== duty.part) props.onRelocateDuty(duty.id, dropped);
+    },
   };
 
   // ---------------------------------------------------------------- rename
   const [renaming, setRenaming] = useState<string | null>(null);
-  useEffect(() => { if (selection?.id !== renaming) setRenaming(null); }, [selection, renaming]);
+  useEffect(() => { if (selectedPart !== renaming) setRenaming(null); }, [selectedPart, renaming]);
+  const startRename = (id: string) => {
+    if (!editable || lens) return;
+    onSelect([{ kind: 'part', id }]);
+    setRenaming(id);
+  };
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const noteOn = note?.anchor
+    ? (shown.parts.some((part) => part.id === note.anchor!.on) ? note.anchor.on
+      : shown.duties.find((duty) => duty.id === note.anchor!.on)?.part ?? shown.links.find((link) => link.id === note.anchor!.on)?.to ?? null)
+    : null;
 
   // ------------------------------------------------------------------ draw
-  const links = live(shown.links);
-  const ghostLinks = lens ? live(lens.before.links).filter((link) => lensEntries.get(link.id)?.change === 'removed') : [];
-  const selectedPart = selection?.kind === 'part' ? selection.id : selection?.kind === 'duty' ? shown.duties.find((duty) => duty.id === selection.id)?.part ?? null : null;
-  const noteOn = note?.anchor ? (shown.parts.some((part) => part.id === note.anchor!.on) ? note.anchor.on : shown.duties.find((duty) => duty.id === note.anchor!.on)?.part ?? shown.links.find((link) => link.id === note.anchor!.on)?.to ?? null) : null;
-  const [dismissed, setDismissed] = useState<string | null>(null);
-
-  const dutiesOn = (partId: string): { duty: DesignDuty; ghost: boolean; entry?: DesignChangeEntry }[] => {
-    const now = live(shown.duties).filter((duty) => duty.part === partId).map((duty) => ({ duty, ghost: false, entry: lensEntries.get(duty.id) }));
-    if (!lens) return now;
+  const lensDuties = (partId: string): { duty: DesignDuty; entry: DesignChangeEntry; gone: boolean }[] => {
+    if (!lens) return [];
+    const now = live(shown.duties)
+      .filter((duty) => duty.part === partId)
+      .flatMap((duty) => { const entry = lensEntries.get(duty.id); return entry && entry.change !== 'removed' ? [{ duty, entry, gone: false }] : []; });
     const gone = live(lens.before.duties)
       .filter((duty) => duty.part === partId)
-      .filter((duty) => {
+      .flatMap((duty) => {
         const entry = lensEntries.get(duty.id);
-        return entry?.change === 'removed' || (entry?.change === 'changed' && entry.was?.part === partId);
-      })
-      .map((duty) => ({ duty, ghost: true }));
+        return entry && (entry.change === 'removed' || (entry.change === 'changed' && entry.was?.part === partId)) ? [{ duty, entry, gone: true }] : [];
+      });
     return [...now, ...gone];
   };
 
-  const card = (part: DesignPart, ghost: boolean, placedAt?: Placed) => {
-    const at = placedAt ?? geometry.placed.get(part.id);
+  const card = (part: DesignPart, ghost: boolean) => {
+    const at = geometry.placed.get(part.id);
     if (!at) return null;
     const entry = lens ? lensEntries.get(part.id) : undefined;
     const dragging = drag?.id === part.id;
     const x = at.x + (dragging ? drag.dx : 0);
     const y = at.y + (dragging ? drag.dy : 0);
+    const order = arrival(part.id);
+    const emphasis = focus ?? glance;
+    const relocating = dutyDrag !== null;
+    const technology = technologyLine(part);
     const classes = [
       'system-part',
+      `kind-${partLook(part)}`,
       ghost && 'ghost',
-      selectedPart === part.id && 'selected',
-      selection && selectedPart !== part.id && !lens && 'receded',
-      entering.has(part.id) && 'entering',
-      touched.has(part.id) && 'touched',
+      chosenParts.has(part.id) && 'selected',
+      emphasis && !relocating && (emphasis.parts.has(part.id) ? (chosenParts.has(part.id) ? '' : 'near') : focus ? 'far' : 'faint'),
+      marquee?.hits.has(part.id) && 'gathering',
+      order !== -1 && 'entering',
+      changes.touched.has(part.id) && !changes.retech.has(part.id) && 'touched',
+      changes.regrouped.has(part.id) && 'regrouped',
       checking === part.id && 'checking',
       dragging && 'dragging',
-      dutyDrag?.over === part.id && 'drop-target',
+      relocating && dutyDrag.from !== part.id && (dutyDrag.over === part.id ? 'drop-target' : 'receiving'),
+      relocating && dutyDrag.from === part.id && 'giving',
       entry?.change === 'added' && 'lens-added',
       entry?.change === 'changed' && entry.fields!.some((field) => field === 'name' || field === 'role') && 'lens-changed',
     ].filter(Boolean).join(' ');
-    const duties = dutiesOn(part.id);
+    const diffs = lensDuties(part.id);
     return (
       <div
         key={`${ghost ? 'ghost:' : ''}${part.id}`}
-        ref={ghost ? undefined : measure}
         data-part={part.id}
         className={classes}
-        style={{ transform: `translate(${x}px, ${y}px)`, width: at.w }}
+        style={{ transform: `translate(${x}px, ${y}px)`, width: at.w, height: at.h, '--arrive-delay': `${reduced ? 0 : Math.max(0, order) * STAGGER_MS}ms` } as CSSProperties}
+        tabIndex={ghost ? -1 : 0}
+        role={ghost ? undefined : 'button'}
+        aria-label={ghost ? undefined : `${part.name}${part.role ? ` — ${part.role}` : ''}`}
+        aria-pressed={ghost ? undefined : chosenParts.has(part.id)}
+        title={part.name.length > 28 ? part.name : undefined}
         onPointerDown={ghost ? undefined : (event) => onPartDown(event, part.id)}
         onPointerMove={ghost ? undefined : onPartMove}
         onPointerUp={ghost ? undefined : (event) => onPartUp(event, part.id)}
+        onPointerCancel={ghost ? undefined : letGo}
+        onLostPointerCapture={ghost ? undefined : () => { if (press.current?.id === part.id && !press.current.moved) press.current = null; }}
+        onPointerEnter={ghost ? undefined : () => setHover({ kind: 'part', id: part.id })}
+        onPointerLeave={ghost ? undefined : () => setHover((current) => (current?.id === part.id ? null : current))}
+        onKeyDown={ghost ? undefined : (event: ReactKeyboardEvent) => {
+          if (event.target !== event.currentTarget || event.key !== 'Enter') return;
+          event.preventDefault();
+          if (selectedPart === part.id) startRename(part.id);
+          else choose({ kind: 'part', id: part.id }, event);
+        }}
         onDoubleClick={(event) => {
-          if (ghost || !editable || lens) return;
+          if (ghost) return;
           event.stopPropagation();
-          onSelect({ kind: 'part', id: part.id });
-          setRenaming(part.id);
+          startRename(part.id);
         }}
       >
-        {renaming === part.id ? (
-          <RenameField
-            name={part.name}
-            onDone={(name) => {
-              setRenaming(null);
-              if (name && name !== part.name) props.onRename(part.id, name);
-            }}
-          />
-        ) : (
-          <span className="system-part-name">{part.name}</span>
+        <div className="system-part-face" data-face={ghost ? undefined : part.id} ref={ghost ? undefined : measure}>
+          {renaming === part.id ? (
+            <RenameField
+              name={part.name}
+              onDone={(name) => {
+                setRenaming(null);
+                if (name && name !== part.name) props.onRename(part.id, name);
+              }}
+            />
+          ) : (
+            <span className="system-part-name">
+              {part.name}
+              {technology && !technology.name && technology.mark && <TechMark d={technology.mark} />}
+            </span>
+          )}
+          {part.role && <span className="system-part-role">{part.role}</span>}
+          <TechLine technology={technology} changed={changes.retech.has(part.id)} />
+        </div>
+        {lens && (diffs.length > 0 || entry?.was?.name) && (
+          <div className="system-part-annex" onPointerDown={(event) => event.stopPropagation()}>
+            {lens && entry?.was?.name && <span className="system-part-was">was {entry.was.name}</span>}
+            {diffs.length > 0 && (
+              <ul className="system-duty-diff">
+                {diffs.map(({ duty, entry: dutyEntry, gone }) => (
+                  <li key={`${gone ? 'was:' : ''}${duty.id}`} className={gone ? 'ghost' : dutyEntry.change === 'added' ? 'added' : 'changed'}>{duty.text}</li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
-        {entry?.was?.name && <span className="system-part-was">was {entry.was.name}</span>}
-        <span className="system-part-role">{checking === part.id ? 'Checking current behavior…' : part.role}</span>
-        {duties.length > 0 && (
-          <ul className="system-duties">
-            {duties.map(({ duty, ghost: gone, entry: dutyEntry }) => (
-              <li
-                key={`${gone ? 'was:' : ''}${duty.id}`}
-                className={[
-                  'system-duty',
-                  gone && 'ghost',
-                  selection?.kind === 'duty' && selection.id === duty.id && 'selected',
-                  touched.has(duty.id) && 'touched',
-                  dutyEntry?.change === 'added' && 'lens-added',
-                  dutyEntry?.change === 'changed' && 'lens-added',
-                  editable && !gone && !lens && 'movable',
-                ].filter(Boolean).join(' ')}
-                onPointerDown={gone ? undefined : (event) => onDutyDown(event, duty)}
-                onPointerMove={gone ? undefined : onDutyMove}
-                onPointerUp={gone ? undefined : (event) => onDutyUp(event, duty)}
-              >
-                {duty.text}
-              </li>
-            ))}
-          </ul>
-        )}
-        {!ghost && !lens && note && noteOn === part.id && dismissed !== note.id && (
-          <span className="system-note" onPointerDown={(event) => event.stopPropagation()}>
-            {note.text}
-            <button type="button" aria-label="Dismiss" onClick={() => setDismissed(note.id)}><CloseIcon /></button>
+      </div>
+    );
+  };
+
+  // Boundaries that just took a part in brighten once, as it arrives.
+  const receiving = new Set([...changes.regrouped.values()].flatMap((move) => (move.to ? [move.to] : [])));
+  const frameState = (group: DesignPart, at: NonNullable<ReturnType<typeof geometry.frames.get>>) => {
+    const chosen = chosenParts.has(group.id);
+    const emphasis = focus ?? glance;
+    const members = groups.get(group.id) ?? [];
+    const near = emphasis && (emphasis.parts.has(group.id) || members.some((member) => emphasis.parts.has(member)));
+    const within = drag ? shown.parts.find((part) => part.id === drag.id)?.within : undefined;
+    return [
+      at.empty && 'empty',
+      chosen && 'selected',
+      emphasis && !chosen && !dutyDrag && (near ? 'near' : focus ? 'far' : 'faint'),
+      arrival(group.id) !== -1 && 'entering',
+      changes.touched.has(group.id) && 'touched',
+      receiving.has(group.id) && 'receiving',
+      drag?.into === group.id && 'drop-target',
+      drag?.out && within === group.id && 'releasing',
+      lens?.diff.entries.some((entry) => entry.id === group.id && entry.change === 'added') && 'lens-added',
+    ].filter(Boolean).join(' ');
+  };
+  const frame = (group: DesignPart) => {
+    const at = geometry.frames.get(group.id);
+    if (!at) return null;
+    const chosen = chosenParts.has(group.id);
+    return (
+      <div
+        key={group.id}
+        data-group={group.id}
+        className={`system-group ${frameState(group, at)}`}
+        style={{ transform: `translate(${at.x}px, ${at.y}px)`, width: at.w, height: at.h, '--arrive-delay': `${reduced ? 0 : Math.max(0, arrival(group.id)) * STAGGER_MS}ms` } as CSSProperties}
+        role="button"
+        tabIndex={0}
+        aria-label={`${group.name}${group.role ? ` — ${group.role}` : ''}`}
+        aria-pressed={chosen}
+        onPointerDown={(event) => event.stopPropagation()}
+        onPointerEnter={() => setHover({ kind: 'part', id: group.id })}
+        onPointerLeave={() => setHover((current) => (current?.id === group.id ? null : current))}
+        onClick={(event) => { event.stopPropagation(); if (!lens) choose({ kind: 'part', id: group.id }, event); }}
+        onKeyDown={(event: ReactKeyboardEvent) => {
+          if (event.target !== event.currentTarget || event.key !== 'Enter') return;
+          event.preventDefault();
+          choose({ kind: 'part', id: group.id }, event);
+        }}
+      />
+    );
+  };
+  // A boundary's name sits above the lines, so a line passes behind it rather than through it.
+  const frameLabel = (group: DesignPart) => {
+    const at = geometry.frames.get(group.id);
+    if (!at) return null;
+    const technology = technologyLine(group);
+    // Backed only where a line actually runs beneath the name; elsewhere the name sits on the boundary itself.
+    const box = { x: at.x + 12, y: at.y + 8, w: 24 + group.name.length * 7 + (technology?.name ? 16 + technology.name.length * 6.5 : technology?.mark ? 16 : 0), h: 24 };
+    const crossed = !at.empty && [...routes.values()].some((route) => route.points.slice(0, -1).some((a, index) => {
+      const b = route.points[index + 1]!;
+      return Math.max(a.x, b.x) >= box.x && Math.min(a.x, b.x) <= box.x + box.w && Math.max(a.y, b.y) >= box.y && Math.min(a.y, b.y) <= box.y + box.h;
+    }));
+    const style: CSSProperties = at.empty
+      ? { transform: `translate(${at.x}px, ${at.y + at.h / 2}px)`, width: at.w }
+      : { transform: `translate(${at.x + 12}px, ${at.y + 8}px)`, maxWidth: at.w - 24 };
+    return (
+      <div
+        key={group.id}
+        className={`system-group-label ${frameState(group, at)}${crossed ? ' crossed' : ''}`}
+        style={{ ...style, '--arrive-delay': `${reduced ? 0 : Math.max(0, arrival(group.id)) * STAGGER_MS}ms` } as CSSProperties}
+        onPointerDown={(event) => event.stopPropagation()}
+        onPointerEnter={() => setHover({ kind: 'part', id: group.id })}
+        onPointerLeave={() => setHover((current) => (current?.id === group.id ? null : current))}
+        onClick={(event) => { event.stopPropagation(); if (!lens) choose({ kind: 'part', id: group.id }, event); }}
+      >
+        <span className="system-group-name">{group.name}</span>
+        {technology && (technology.mark || technology.name) && (
+          <span className="system-group-tech">
+            {technology.mark && <TechMark d={technology.mark} />}
+            {technology.name && <span>{technology.name}</span>}
           </span>
         )}
       </div>
@@ -357,42 +634,139 @@ export function SystemCanvas(props: Props): ReactElement {
   };
 
   const edge = (link: DesignLink, ghost: boolean) => {
-    const from = geometry.placed.get(link.from);
-    const to = geometry.placed.get(link.to);
+    const from = geometry.placed.get(link.from) ?? geometry.frames.get(link.from);
+    const to = geometry.placed.get(link.to) ?? geometry.frames.get(link.to);
     if (!from || !to) return null;
-    const fromAt = drag?.id === link.from ? { ...from, x: from.x + drag.dx, y: from.y + drag.dy } : from;
-    const toAt = drag?.id === link.to ? { ...to, x: to.x + drag.dx, y: to.y + drag.dy } : to;
-    const others = [...geometry.placed.values()].filter((card) => card.id !== drag?.id);
-    const { d, mid } = edgePath(fromAt, toAt, others);
+    let route: Route | undefined = routes.get(link.id);
+    if (drag && (drag.id === link.from || drag.id === link.to)) {
+      const moveBy = (card: Pick<Placed, 'id' | 'x' | 'y' | 'w' | 'h'>) => (drag.id === card.id ? { ...card, x: card.x + drag.dx, y: card.y + drag.dy } : card);
+      route = looseRoute(moveBy(from), moveBy(to));
+    }
+    if (!route) return null;
     const entry = lens ? lensEntries.get(link.id) : undefined;
-    const selected = selection?.kind === 'link' && selection.id === link.id;
-    const classes = ['system-link', ghost && 'ghost', selected && 'selected', entry?.change === 'added' && 'lens-added', drag && 'still'].filter(Boolean).join(' ');
+    const emphasis = focus ?? glance;
+    const selected = chosenLinks.has(link.id);
+    const bond = bonds.has(link.id);
+    // With several things gathered, only what holds them together lights up;
+    // their other lines stay quiet rather than turning the canvas into a web.
+    const lit = several ? bond || selected || hover?.id === link.id : emphasis?.links.has(link.id) || hover?.id === link.id;
+    const drawing = changes.drawn.has(link.id) && !reduced;
+    const delay = drawing ? Math.max(arrival(link.from), arrival(link.to), 0) * STAGGER_MS + 260 : 0;
+    const classes = [
+      'system-link',
+      ghost && 'ghost',
+      selected && 'selected',
+      bond && 'bond',
+      lit && 'lit',
+      emphasis && !lit && (focus ? 'far' : 'faint'),
+      dutyDrag && 'faint',
+      drawing && 'drawing',
+      entry?.change === 'added' && 'lens-added',
+      drag && 'still',
+    ].filter(Boolean).join(' ');
+    const label = labels.has(link.id) && link.label;
+    const at = drag ? undefined : labelAt.get(link.id);
     return (
-      <g key={`${ghost ? 'ghost:' : ''}${link.id}`} className={classes}>
-        <path className="system-link-line" style={{ d: `path('${d}')` } as CSSProperties} markerEnd="url(#system-arrow)" />
+      <g key={`${ghost ? 'ghost:' : ''}${link.id}`} className={classes} style={{ '--draw-delay': `${delay}ms` } as CSSProperties}>
+        <path
+          className="system-link-line"
+          style={{ d: `path('${route.d}')` } as CSSProperties}
+          pathLength={drawing ? 1 : undefined}
+          markerEnd={`url(#${bond ? 'system-arrow-bond' : lit || selected ? 'system-arrow-lit' : 'system-arrow'})`}
+        />
+        {lit && !reduced && !ghost && <path className="system-link-flow" style={{ d: `path('${route.d}')` } as CSSProperties} />}
         {!ghost && (
           <path
             className="system-link-hit"
-            d={d}
+            d={route.d}
             onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => { event.stopPropagation(); onSelect({ kind: 'link', id: link.id }); }}
+            onPointerEnter={() => setHover({ kind: 'link', id: link.id })}
+            onPointerLeave={() => setHover((current) => (current?.id === link.id ? null : current))}
+            onClick={(event) => { event.stopPropagation(); choose({ kind: 'link', id: link.id }, event); }}
           />
         )}
-        {link.label && (
-          <text className="system-link-label" x={mid.x + 8} y={mid.y + 3}>{link.label}</text>
+        {label && at && (
+          <text className="system-link-label" x={at.x} y={at.y} textAnchor={at.anchor}>{label}</text>
         )}
       </g>
     );
   };
 
-  const detailFor = selection?.kind === 'part' && !lens ? shown.parts.find((part) => part.id === selection.id && !part.retired) : undefined;
-  const detailAt = detailFor ? geometry.placed.get(detailFor.id) : undefined;
+  function isLit(id: string): boolean {
+    if (several) return bonds.has(id) || chosenLinks.has(id) || hover?.id === id;
+    return Boolean((focus ?? glance)?.links.has(id) || hover?.id === id || chosenLinks.has(id));
+  }
+
+  const noteShown = Boolean(note && noteOn && !lens && !depth && dismissed !== note.id && !drag && !dutyDrag);
+  const noteAt = noteOn ? boundsOf(noteOn) : undefined;
+
+  const focusPart = selectedPart && !lens && !depth && !renaming ? shown.parts.find((part) => part.id === selectedPart && !part.retired) : undefined;
+  const focusAt = focusPart ? boundsOf(focusPart.id) : undefined;
+  const focusLink = selectedLink && !lens && !depth ? shown.links.find((link) => link.id === selectedLink && !link.retired) : undefined;
+  const focusLinkRoute = focusLink ? routes.get(focusLink.id) : undefined;
+  const nameOf = (id: string) => shown.parts.find((part) => part.id === id)?.name ?? id;
+
+  const anchorFor = (at: Pick<Placed, 'x' | 'y' | 'w' | 'h'>) => {
+    const topLeft = toView(at.x, at.y);
+    const bottomRight = toView(at.x + at.w, at.y + at.h);
+    return { left: topLeft.x, top: topLeft.y, right: bottomRight.x, bottom: bottomRight.y };
+  };
 
   return (
     <div
-      className={`system-canvas${measured ? ' measured' : ''}${lens ? ' lensed' : ''}${dutyDrag ? ' relocating' : ''}`}
+      className={[
+        'system-canvas',
+        measured && 'measured',
+        lens && 'lensed',
+        dutyDrag && 'relocating',
+        drag && 'arranging',
+        drag?.into && 'regrouping',
+        focus && 'focusing',
+        several && 'several',
+        marquee && 'gathering',
+        depth && 'deep',
+      ].filter(Boolean).join(' ')}
       ref={viewport}
-      onPointerDown={(event) => { if (event.target === event.currentTarget || (event.target as HTMLElement).classList.contains('system-stage')) onSelect(null); }}
+      onScroll={() => setScroll({ left: viewport.current!.scrollLeft, top: viewport.current!.scrollTop })}
+      onPointerDown={(event) => {
+        const target = event.target as Element;
+        const background = target === event.currentTarget || target.classList.contains('system-stage') || target.classList.contains('system-parts') || target.classList.contains('system-links');
+        if (!background || event.button !== 0) return;
+        const rect = viewport.current!.getBoundingClientRect();
+        sweep.current = { x: event.clientX - rect.left, y: event.clientY - rect.top, additive: event.shiftKey || event.metaKey || event.ctrlKey, moved: false };
+        capture(event);
+      }}
+      onPointerMove={(event) => {
+        const started = sweep.current;
+        if (!started || lens) return;
+        if (event.buttons === 0) { sweep.current = null; setMarquee(null); return; }
+        const rect = viewport.current!.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        if (!started.moved && Math.hypot(x - started.x, y - started.y) < 5) return;
+        started.moved = true;
+        const box = { left: Math.min(started.x, x), top: Math.min(started.y, y), right: Math.max(started.x, x), bottom: Math.max(started.y, y) };
+        const hits = new Set([...geometry.placed.values()]
+          .filter((at) => parts.some((part) => part.id === at.id))
+          .filter((at) => { const view = anchorFor(at); return view.left < box.right && view.right > box.left && view.top < box.bottom && view.bottom > box.top; })
+          .map((at) => at.id));
+        setMarquee({ ...box, hits });
+      }}
+      onPointerUp={() => {
+        const started = sweep.current;
+        sweep.current = null;
+        if (!started) return;
+        const gathered = marquee;
+        setMarquee(null);
+        if (!started.moved) {
+          if (!started.additive) onSelect([]);
+          return;
+        }
+        if (!gathered) return;
+        // A sweep gathers the parts it touches, in the order they read.
+        const swept = parts.filter((part) => gathered.hits.has(part.id)).map((part) => ({ kind: 'part' as const, id: part.id }));
+        onSelect(started.additive ? [...selection, ...swept.filter((element) => !isChosen(element))] : swept);
+      }}
     >
       <div
         className="system-stage"
@@ -402,44 +776,116 @@ export function SystemCanvas(props: Props): ReactElement {
           transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
         }}
       >
-        <svg className="system-links" width={contentWidth} height={contentHeight} style={{ left: 0, top: 0 }}>
+        <div className="system-groups" style={{ left: PAD, top: PAD }}>
+          {boundaries.map((group) => frame(group))}
+        </div>
+        <svg className="system-links" width={contentWidth} height={contentHeight}>
           <defs>
-            <marker id="system-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M 0 0.5 L 7.5 4 L 0 7.5 Z" />
+            <marker id="system-arrow" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+              <path d="M 1.5 1.5 L 8.5 5 L 1.5 8.5" className="system-arrow-head" />
+            </marker>
+            <marker id="system-arrow-lit" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto">
+              <path d="M 1.5 1.5 L 8.5 5 L 1.5 8.5" className="system-arrow-head lit" />
+            </marker>
+            <marker id="system-arrow-bond" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto">
+              <path d="M 1.5 1.5 L 8.5 5 L 1.5 8.5" className="system-arrow-head bond" />
             </marker>
           </defs>
           <g transform={`translate(${PAD} ${PAD})`}>
             {ghostLinks.map((link) => edge(link, true))}
-            {links.map((link) => edge(link, false))}
+            {/* A lit line shares its trunk with others; it is drawn last so it reads as whole. */}
+            {[...links].sort((a, b) => Number(isLit(a.id)) - Number(isLit(b.id))).map((link) => edge(link, false))}
           </g>
         </svg>
+        <div className="system-group-labels" style={{ left: PAD, top: PAD }}>
+          {boundaries.map((group) => frameLabel(group))}
+        </div>
         <div className="system-parts" style={{ left: PAD, top: PAD }}>
+          {drag?.slot && (() => {
+            const rect = geometry.slotRect(drag.slot);
+            const at = geometry.placed.get(drag.id);
+            return <div className="system-slot" style={{ transform: `translate(${rect.x}px, ${rect.y}px)`, width: rect.w, height: at?.h ?? rect.h }} />;
+          })()}
           {ghostParts.map((part) => card(part, true))}
           {parts.map((part) => card(part, false))}
           {!lens && leaving.map(({ part, at }) => (
-            <div key={`leaving:${part.id}`} className="system-part leaving" style={{ transform: `translate(${at.x}px, ${at.y}px)`, width: at.w }}>
-              <span className="system-part-name">{part.name}</span>
-              <span className="system-part-role">{part.role}</span>
+            <div key={`leaving:${part.id}`} className={`system-part leaving kind-${partLook(part)}`} style={{ transform: `translate(${at.x}px, ${at.y}px)`, width: at.w, height: at.h }}>
+              <div className="system-part-face">
+                <span className="system-part-name">{part.name}</span>
+                {part.role && <span className="system-part-role">{part.role}</span>}
+                <TechLine technology={technologyLine(part)} changed={false} />
+              </div>
             </div>
           ))}
+          {travelling.map(({ duty, from, to }) => {
+            const a = geometry.placed.get(from);
+            const b = geometry.placed.get(to);
+            if (!a || !b) return null;
+            return (
+              <span
+                key={`travel:${duty.id}`}
+                className="system-duty-travel"
+                style={{
+                  '--from-x': `${a.x + a.w / 2}px`, '--from-y': `${a.y + a.h / 2}px`,
+                  '--to-x': `${b.x + b.w / 2}px`, '--to-y': `${b.y + b.h / 2}px`,
+                } as CSSProperties}
+              >
+                {duty.text}
+              </span>
+            );
+          })}
         </div>
       </div>
 
-      {detailFor && detailAt && (
-        <PartDetail
-          part={detailFor}
-          left={offsetX + (PAD + detailAt.x + detailAt.w) * scale + 14 - (viewport.current?.scrollLeft ?? 0)}
-          top={offsetY + (PAD + detailAt.y) * scale - (viewport.current?.scrollTop ?? 0)}
-          flip={offsetX + (PAD + detailAt.x + detailAt.w) * scale + 330 > box.width}
-          flipLeft={offsetX + (PAD + detailAt.x) * scale - 14}
-          changes={props.changesOf(detailFor.id)}
+      {focusPart && focusAt && (
+        <PartFocus
+          part={focusPart}
+          model={shown}
+          anchor={anchorFor(focusAt)}
+          bounds={box}
+          obstacles={[...geometry.placed.values()].filter((at) => at.id !== focusPart.id).map(anchorFor)}
+          selectedDuty={single?.kind === 'duty' ? single.id : null}
+          movable={editable}
+          dragging={dutyDrag?.id ?? null}
+          gesture={dutyGesture}
+          changes={props.changesOf(focusPart.id)}
           onShowChange={props.onShowChange}
           onOpenRef={props.onOpenRef}
+          onAsk={props.onAsk}
+          onRename={editable && focusPart.kind !== 'group' ? () => startRename(focusPart.id) : null}
+          note={noteShown && noteOn === focusPart.id ? { text: note!.text, onDismiss: () => setDismissed(note!.id) } : null}
+        />
+      )}
+      {noteShown && noteAt && noteOn !== focusPart?.id && (
+        <PartNote
+          text={note!.text}
+          anchor={anchorFor(noteAt)}
+          bounds={box}
+          obstacles={[...geometry.placed.values()].filter((at) => at.id !== noteOn).map(anchorFor)}
+          onDismiss={() => setDismissed(note!.id)}
+        />
+      )}
+      {focusLink && focusLinkRoute && (
+        <LinkFocus
+          link={focusLink}
+          from={nameOf(focusLink.from)}
+          to={nameOf(focusLink.to)}
+          at={toView(focusLinkRoute.label.x, focusLinkRoute.label.y)}
+          bounds={box}
+          obstacles={[...geometry.placed.values()].map(anchorFor)}
+          onAsk={props.onAsk}
         />
       )}
 
+      {marquee && (
+        <div className="system-marquee" style={{ left: marquee.left, top: marquee.top, width: marquee.right - marquee.left, height: marquee.bottom - marquee.top }} />
+      )}
+
       {dutyDrag && (
-        <div className="system-duty-flying" style={{ left: dutyDrag.x, top: dutyDrag.y }}>{dutyDrag.text}</div>
+        <div className={`system-duty-flying${dutyDrag.over ? ' over' : ''}`} style={{ left: dutyDrag.x, top: dutyDrag.y }}>
+          {dutyDrag.text}
+          {dutyDrag.over && <span className="to">→ {nameOf(dutyDrag.over)}</span>}
+        </div>
       )}
     </div>
   );
@@ -448,92 +894,53 @@ export function SystemCanvas(props: Props): ReactElement {
 function RenameField({ name, onDone }: { name: string; onDone: (name: string | null) => void }): ReactElement {
   const [value, setValue] = useState(name);
   const field = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  const finish = (result: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(result);
+  };
   useEffect(() => { field.current?.focus(); field.current?.select(); }, []);
   return (
     <input
       ref={field}
       className="system-part-rename"
       value={value}
+      size={Math.max(4, value.length)}
       aria-label="Rename part"
+      spellCheck={false}
       onPointerDown={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
       onChange={(event) => setValue(event.target.value)}
-      onBlur={() => onDone(value.trim() || null)}
+      onBlur={() => finish(value.trim() || null)}
       onKeyDown={(event) => {
         event.stopPropagation();
-        if (event.key === 'Enter') onDone(value.trim() || null);
-        if (event.key === 'Escape') onDone(null);
+        if (event.key === 'Enter') finish(value.trim() || null);
+        if (event.key === 'Escape') { event.preventDefault(); finish(null); }
       }}
     />
   );
 }
 
-/**
- * A part, asked about. Nothing here shows until the part is selected, and the
- * reasoning and evidence only when asked for: the canvas stays the system,
- * and what Vowe knows about it is depth.
- */
-function PartDetail({
-  part, left, top, flip, flipLeft, changes, onShowChange, onOpenRef,
-}: {
-  part: DesignPart;
-  left: number;
-  top: number;
-  flip: boolean;
-  flipLeft: number;
-  changes: { ord: number; summary: string; by: string }[];
-  onShowChange: (ord: number) => void;
-  onOpenRef: (ref: ContextRef) => void;
-}): ReactElement {
-  const [open, setOpen] = useState<'why' | 'changes' | null>(null);
-  useEffect(() => setOpen(null), [part.id]);
-  const refs = (part.refs ?? []).flatMap((ref) => {
-    const parsed = refFromLink(`ref:${ref}`);
-    return parsed ? [{ ref: parsed, label: ref.split('/').pop()!.replace(/#.*$/, '') }] : [];
-  });
-  const todayDiffers = part.today && (part.today.name !== part.name || part.today.role !== part.role);
+/** A technology's mark, in the canvas's own ink. */
+function TechMark({ d }: { d: string }): ReactElement {
   return (
-    <aside
-      className={`system-detail${flip ? ' flipped' : ''}`}
-      style={flip ? { right: `calc(100% - ${flipLeft}px)`, top } : { left, top }}
-      onPointerDown={(event) => event.stopPropagation()}
-      aria-label={`${part.name} details`}
-    >
-      <div className="system-detail-actions">
-        <button type="button" className={`link-button${open === 'why' ? ' active' : ''}`} onClick={() => setOpen(open === 'why' ? null : 'why')}>Why</button>
-        {changes.length > 0 && (
-          <button type="button" className={`link-button${open === 'changes' ? ' active' : ''}`} onClick={() => setOpen(open === 'changes' ? null : 'changes')}>
-            Changes
-          </button>
-        )}
-      </div>
-      {open === 'why' && (
-        <div className="system-detail-body">
-          {part.detail ? (
-            <Markdown text={part.detail} onOpenRef={onOpenRef} />
-          ) : (
-            <p className="fine">No reasoning written down for this part yet. Ask Vowe why.</p>
-          )}
-          {todayDiffers && (
-            <p className="system-detail-today">In the code today: {part.today!.name} — {part.today!.role}</p>
-          )}
-          {refs.map(({ ref, label }) => (
-            <button key={label} type="button" className="link-button system-source" onClick={() => onOpenRef(ref)}>
-              Show source · {label} →
-            </button>
-          ))}
-        </div>
-      )}
-      {open === 'changes' && (
-        <ol className="system-detail-body system-detail-changes">
-          {changes.map((change) => (
-            <li key={change.ord}>
-              <button type="button" className="link-button" onClick={() => onShowChange(change.ord)}>
-                <span className="by">{change.by}</span> {change.summary || 'Changed the design'}
-              </button>
-            </li>
-          ))}
-        </ol>
-      )}
-    </aside>
+    <svg className="system-tech-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d={d} />
+    </svg>
+  );
+}
+
+/**
+ * The quiet line beneath a part: which technology it is. Keyed by name, so a
+ * change of technology fades one out and the other in.
+ */
+function TechLine({ technology, changed }: { technology: TechnologyLine | null; changed: boolean }): ReactElement | null {
+  if (!technology?.name) return null;
+  return (
+    <span key={technology.name} className={`system-part-tech${changed ? ' changed' : ''}`}>
+      {technology.mark && <TechMark d={technology.mark} />}
+      <span>{technology.name}</span>
+    </span>
   );
 }

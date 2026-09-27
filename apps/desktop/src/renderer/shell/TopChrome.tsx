@@ -38,9 +38,10 @@ import { createPortal } from 'react-dom';
  */
 interface Slots {
   actions: HTMLElement | null;
+  controls: HTMLElement | null;
 }
 
-const SlotContext = createContext<Slots>({ actions: null });
+const SlotContext = createContext<Slots>({ actions: null, controls: null });
 
 export function TopChrome({
   controls,
@@ -52,14 +53,18 @@ export function TopChrome({
   children: ReactNode;
 }): ReactElement {
   const [actions, setActions] = useState<HTMLDivElement | null>(null);
+  const [roomControls, setRoomControls] = useState<HTMLDivElement | null>(null);
 
   return (
     <>
       <header className="top-chrome">
-        <div className="chrome-controls">{controls}</div>
+        <div className="chrome-controls">
+          {controls}
+          <div className="chrome-room-controls" ref={setRoomControls} />
+        </div>
         <div className="chrome-actions" ref={setActions} />
       </header>
-      <SlotContext.Provider value={{ actions }}>{children}</SlotContext.Provider>
+      <SlotContext.Provider value={{ actions, controls: roomControls }}>{children}</SlotContext.Provider>
     </>
   );
 }
@@ -92,4 +97,15 @@ export function RoomIdentity({ children }: { children: ReactNode }): ReactElemen
 export function RoomActions({ children }: { children: ReactNode }): ReactElement | null {
   const { actions } = useContext(SlotContext);
   return actions ? createPortal(children, actions) : null;
+}
+
+/**
+ * A room's own window controls, on the band's left, straight after the
+ * window's. For a room that is a destination rather than a place in the
+ * browser — Studio — these replace the shell's controls entirely, and sit at
+ * one fixed position whatever the room below is doing.
+ */
+export function RoomControls({ children }: { children: ReactNode }): ReactElement | null {
+  const { controls } = useContext(SlotContext);
+  return controls ? createPortal(children, controls) : null;
 }
