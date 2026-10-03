@@ -60,6 +60,7 @@ import {
   type TemperamentProfile,
   type VoicePreference,
 } from '@vowe/core';
+import { normalizeFleetLayout } from '@vowe/core';
 import { ClaudeCodeAdapter, ClaudeCodeConsultant } from '@vowe/adapter-claude-code';
 import { CodexAdapter } from '@vowe/adapter-codex';
 import { PiAdapter } from '@vowe/adapter-pi';
@@ -514,6 +515,9 @@ async function createServices(): Promise<Services> {
   store.onDesignChanged((change) => {
     window?.webContents.send(IPC.designChanged, change);
   });
+  store.onFleetLayoutChanged((change) => {
+    window?.webContents.send(IPC.fleetLayoutChanged, change);
+  });
 
   const live = new LiveBridge({
     transport: liveTransport,
@@ -915,6 +919,14 @@ function registerIpc(): void {
   );
   ipcMain.handle(IPC.cancelDesignTurn, async (_event, designId: string) =>
     (await requireServices()).studio?.cancel(designId) ?? false,
+  );
+
+  // Fleet canvas: project state, replaced whole. The store normalises it.
+  ipcMain.handle(IPC.getFleetLayout, async (_event, projectId: string) =>
+    (await requireServices()).store.getFleetLayout(projectId),
+  );
+  ipcMain.handle(IPC.saveFleetLayout, async (_event, projectId: string, layout: unknown) =>
+    (await requireServices()).store.saveFleetLayout(projectId, normalizeFleetLayout(layout)),
   );
 
   ipcMain.handle(IPC.getProjectConversation, async (_event, projectId: string) =>

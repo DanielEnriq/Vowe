@@ -18,6 +18,7 @@ import type {
   VoicePreference,
   VoweRunActivity,
 } from '@vowe/core';
+import type { FleetLayoutChange } from '@vowe/core';
 import { IPC, type VoweApi } from '../shared/ipc.js';
 
 const api: VoweApi = {
@@ -175,6 +176,13 @@ const api: VoweApi = {
     const handler = (_: unknown, change: DesignChange) => listener(change);
     ipcRenderer.on(IPC.designChanged, handler);
     return () => ipcRenderer.off(IPC.designChanged, handler);
+  },
+  getFleetLayout: (projectId) => ipcRenderer.invoke(IPC.getFleetLayout, projectId),
+  saveFleetLayout: (projectId, layout) => ipcRenderer.invoke(IPC.saveFleetLayout, projectId, layout),
+  onFleetLayoutChanged: (listener) => {
+    const handler = (_: unknown, change: FleetLayoutChange) => listener(change);
+    ipcRenderer.on(IPC.fleetLayoutChanged, handler);
+    return () => ipcRenderer.off(IPC.fleetLayoutChanged, handler);
   },
   onInvestigationProgress: (listener) => {
     const handler = (_: unknown, progress: InvestigationProgress) => listener(progress);

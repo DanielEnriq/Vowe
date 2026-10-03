@@ -12,6 +12,10 @@
       "types": "./dist/studio/design-model.d.ts",
       "default": "./dist/studio/design-model.js"
     },
+    "./fleet-model": {
+      "types": "./dist/fleet/fleet-model.d.ts",
+      "default": "./dist/fleet/fleet-model.js"
+    },
     "./presence": {
       "types": "./dist/product/presence.d.ts",
       "default": "./dist/product/presence.js"

@@ -21,6 +21,8 @@ import type {
   VoicePreference,
   WorkerMilestone,
 } from '@vowe/core';
+import type { FleetLayout } from '@vowe/core';
+import { emptyFleetLayout } from '@vowe/core/fleet-model';
 import { DEFAULT_PRESENCE_PROFILE } from '@vowe/core/presence';
 import {
   DEFAULT_APPEARANCE_SETTING,
@@ -682,6 +684,68 @@ export function useDesigns(projectId: string | null): { designs: DesignSummary[]
     return () => { live = false; off(); };
   }, [projectId]);
   return { designs, loaded };
+}
+
+/**
+ * A project's fleet canvas, as stored, with a `save` that shows the change at
+ * once. While a save is in flight a change notice does not re-read — that read
+ * could return the layout from before a later save — and the newest save's
+ * stored (normalised) result is what the canvas settles on.
+ */
+export function useFleetLayout(projectId: string | null): {
+  layout: FleetLayout;
+  loaded: boolean;
+  save: (next: FleetLayout) => Promise<FleetLayout | null>;
+} {
+  const [layout, setLayout] = useState<FleetLayout>(emptyFleetLayout);
+  const [loaded, setLoaded] = useState(false);
+  const generation = useRef(0);
+  const saves = useRef({ pending: 0, latest: 0 });
+  useEffect(() => {
+    setLayout(emptyFleetLayout());
+    setLoaded(false);
+    if (!projectId) return;
+    const scope = ++generation.current;
+    const load = () => {
+      if (saves.current.pending > 0) return;
+      void window.vowe.getFleetLayout(projectId)
+        .then((next) => {
+          if (scope === generation.current && saves.current.pending === 0) {
+            setLayout(next);
+            setLoaded(true);
+          }
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const off = window.vowe.onFleetLayoutChanged((change) => {
+      if (change.projectId === projectId) load();
+    });
+    return () => { generation.current += 1; off(); };
+  }, [projectId]);
+  const save = useCallback(async (next: FleetLayout): Promise<FleetLayout | null> => {
+    if (!projectId) return null;
+    const scope = generation.current;
+    const ticket = ++saves.current.latest;
+    saves.current.pending += 1;
+    setLayout(next);
+    let stored: FleetLayout | null = null;
+    try {
+      stored = await window.vowe.saveFleetLayout(projectId, next);
+      if (scope === generation.current && ticket === saves.current.latest) setLayout(stored);
+    } catch {
+      // Not saved: fall back to what the store holds once nothing else is in flight.
+    } finally {
+      saves.current.pending -= 1;
+    }
+    if (stored === null && saves.current.pending === 0) {
+      void window.vowe.getFleetLayout(projectId)
+        .then((held) => { if (scope === generation.current && saves.current.pending === 0) setLayout(held); })
+        .catch(() => undefined);
+    }
+    return stored;
+  }, [projectId]);
+  return { layout, loaded, save };
 }
 
 /** One design as committed: its conversation and every revision. */

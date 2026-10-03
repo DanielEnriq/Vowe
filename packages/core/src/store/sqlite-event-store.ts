@@ -41,6 +41,9 @@ import type {
   DesignStore,
 } from '../studio/types.js';
 import type { DesignLayout } from '../studio/layout.js';
+import { normalizeFleetLayout, parseFleetLayout } from '../fleet/fleet-model.js';
+import type { FleetLayout, FleetLayoutChange } from '../fleet/fleet-model.js';
+import type { FleetLayoutStore } from '../fleet/fleet-store.js';
 import type {
   ConversationChange,
   EventQuery,
@@ -88,7 +91,7 @@ export interface SqliteEventStoreOptions {
 const EVENTS_WITHOUT_RAW = `session_id, seq, id, at, kind, summary, detail_json, NULL AS raw_json,
   raw_source, raw_byte_offset, raw_line, raw_ordinal, logical_key, active, evidence_json`;
 
-export class SqliteEventStore implements EventStore, DesignStore {
+export class SqliteEventStore implements EventStore, DesignStore, FleetLayoutStore {
   private readonly root: string;
   private readonly onError: (scope: string, error: unknown) => void;
   private readonly migrations: readonly Migration[] | undefined;
@@ -99,6 +102,7 @@ export class SqliteEventStore implements EventStore, DesignStore {
     (change: ProjectConversationChange) => void
   >();
   private readonly designListeners = new Set<(change: DesignChange) => void>();
+  private readonly fleetLayoutListeners = new Set<(change: FleetLayoutChange) => void>();
   private readonly cache = new Map<string, StatementSync>();
   private db: DatabaseSync | null = null;
   private evidence: EvidenceLedger | null = null;
@@ -793,6 +797,43 @@ export class SqliteEventStore implements EventStore, DesignStore {
         listener(change);
       } catch (error) {
         this.onError('design-listener', error);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------- fleet
+
+  getFleetLayout(projectId: string): FleetLayout {
+    const row = this.get('SELECT layout_json FROM fleet_layouts WHERE project_id = ?', projectId);
+    return parseFleetLayout(typeof row?.['layout_json'] === 'string' ? row['layout_json'] : null);
+  }
+
+  async saveFleetLayout(projectId: string, layout: FleetLayout): Promise<FleetLayout> {
+    const stored = normalizeFleetLayout(layout);
+    this.transaction(() =>
+      this.run(
+        `INSERT INTO fleet_layouts (project_id, layout_json, updated_at) VALUES (:projectId, :layout, :at)
+         ON CONFLICT (project_id) DO UPDATE SET layout_json = excluded.layout_json, updated_at = excluded.updated_at`,
+        { projectId, layout: JSON.stringify(stored), at: new Date().toISOString() },
+      ),
+    );
+    this.notifyFleetLayout({ projectId });
+    return stored;
+  }
+
+  onFleetLayoutChanged(listener: (change: FleetLayoutChange) => void): () => void {
+    this.fleetLayoutListeners.add(listener);
+    return () => {
+      this.fleetLayoutListeners.delete(listener);
+    };
+  }
+
+  private notifyFleetLayout(change: FleetLayoutChange): void {
+    for (const listener of this.fleetLayoutListeners) {
+      try {
+        listener(change);
+      } catch (error) {
+        this.onError('fleet-layout-listener', error);
       }
     }
   }

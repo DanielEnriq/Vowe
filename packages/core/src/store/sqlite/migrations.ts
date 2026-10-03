@@ -495,6 +495,19 @@ ALTER TABLE designs          ADD COLUMN layout_json TEXT;  -- NULL => nothing pl
 ALTER TABLE design_entries   ADD COLUMN anchor_json TEXT;  -- NULL => key ABSENT
 `;
 
+/**
+ * A project's fleet canvas: where its agents and captains sit, its clusters
+ * and its wires, as one document replaced whole on each save. Project state,
+ * not history.
+ */
+const FLEET_LAYOUTS = `
+CREATE TABLE fleet_layouts (
+  project_id  TEXT PRIMARY KEY REFERENCES projects(id),
+  layout_json TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+) STRICT;
+`;
+
 import {
   EVIDENCE_RECORDS_SCHEMA,
   EVIDENCE_SCHEMA,
@@ -563,6 +576,7 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   { version: 16, name: '016_studio', up: (db) => db.exec(STUDIO) },
   { version: 17, name: '017_studio_model', up: (db) => db.exec(STUDIO_MODEL) },
+  { version: 19, name: '019_fleet_layouts', up: (db) => db.exec(FLEET_LAYOUTS) },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

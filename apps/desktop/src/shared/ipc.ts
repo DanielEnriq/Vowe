@@ -41,6 +41,7 @@ import type {
   WorkbenchArtifact,
   WorkbenchCandidate,
 } from '@vowe/core';
+import type { FleetLayout, FleetLayoutChange } from '@vowe/core';
 
 /**
  * The renderer's view of the main process.
@@ -434,6 +435,13 @@ export interface VoweApi {
   onStudioProgress(listener: (progress: StudioProgress) => void): () => void;
   /** A design's conversation or revisions changed, after commit. */
   onDesignChanged(listener: (change: DesignChange) => void): () => void;
+
+  /** A project's fleet canvas; empty until something is placed. */
+  getFleetLayout(projectId: string): Promise<FleetLayout>;
+  /** Replaces the whole layout. Resolves with what was stored, after normalising. */
+  saveFleetLayout(projectId: string, layout: FleetLayout): Promise<FleetLayout>;
+  /** A project's fleet layout was saved, after commit. */
+  onFleetLayoutChanged(listener: (change: FleetLayoutChange) => void): () => void;
 }
 
 /**
@@ -586,4 +594,7 @@ export const IPC = {
   tidyDesign: 'vowe:studio:tidy',
   studioProgress: 'vowe:studio:progress',
   designChanged: 'vowe:studio:design-changed',
+  getFleetLayout: 'vowe:fleet:layout:get',
+  saveFleetLayout: 'vowe:fleet:layout:save',
+  fleetLayoutChanged: 'vowe:fleet:layout:changed',
 } as const;
