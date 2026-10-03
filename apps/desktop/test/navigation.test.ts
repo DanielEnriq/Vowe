@@ -67,6 +67,13 @@ describe('Navigation', () => {
     });
   });
 
+  it('keeps the fleet inside its project, and lets it go with the project', () => {
+    const route = { kind: 'project', projectId: PROJECT.id, view: 'fleet' } as const;
+    expect(reconcileRoute(route, context)).toBe(route);
+    expect(projectOf(route, context)).toBe(PROJECT.id);
+    expect(reconcileRoute({ ...route, projectId: 'git:gone' }, context)).toEqual({ kind: 'none' });
+  });
+
   it('leaves the studio alone', () => {
     expect(reconcileRoute({ kind: 'presence' }, context)).toEqual({ kind: 'presence' });
   });

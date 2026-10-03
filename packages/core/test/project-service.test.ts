@@ -208,7 +208,7 @@ describe('ProjectService — acceptance 7: persistence', () => {
 
     const stored = store.listProjects()[0]!;
     const keys = Object.keys(stored).sort();
-    expect(keys).toEqual(['createdAt', 'gitCommonDir', 'id', 'name', 'repoRoot']);
+    expect(keys).toEqual(['createdAt', 'folders', 'gitCommonDir', 'id', 'name', 'repoRoot']);
     // Nothing derivable is persisted.
     for (const forbidden of ['sessions', 'sessionIds', 'activeSessions', 'lastActivityAt']) {
       expect(stored).not.toHaveProperty(forbidden);

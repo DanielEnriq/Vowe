@@ -2,6 +2,7 @@ import type {
   AgentSession,
   AppearanceSetting,
   ContextRef,
+  CreateProjectInput,
   ConversationChange,
   DesignChange,
   DesignElementKind,
@@ -314,6 +315,21 @@ export interface VoweApi {
    */
   openProjectAt(directory: string): Promise<Project>;
 
+  /**
+   * Make a project: a name and a folder, plus any further folders. The
+   * identity is the folder's repository, so a folder Vowe already knows names
+   * that project — and restores it if it was removed. Opened on creation.
+   */
+  createProject(input: CreateProjectInput): Promise<Project>;
+  /** An empty name goes back to the repository's. */
+  renameProject(projectId: string, name: string): Promise<Project>;
+  /** Hidden and closed, across restarts. Creating it again restores it. */
+  removeProject(projectId: string): Promise<void>;
+  /** Rejects a folder another project already has. */
+  addProjectFolder(projectId: string, folder: string): Promise<Project>;
+  /** Rejects the root folder. */
+  removeProjectFolder(projectId: string, folder: string): Promise<Project>;
+
   openArtifact(ref: ContextRef): Promise<WorkbenchArtifact>;
 
   /**
@@ -544,6 +560,11 @@ export const IPC = {
   archiveSession: 'vowe:session:archive',
   setProjectOpen: 'vowe:project:set-open',
   openProjectAt: 'vowe:project:open-at',
+  createProject: 'vowe:project:create',
+  renameProject: 'vowe:project:rename',
+  removeProject: 'vowe:project:remove',
+  addProjectFolder: 'vowe:project:add-folder',
+  removeProjectFolder: 'vowe:project:remove-folder',
   openArtifact: 'vowe:artifact:open',
   findFiles: 'vowe:workbench:find-files',
   getWorkbench: 'vowe:workbench:get',

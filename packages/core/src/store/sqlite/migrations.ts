@@ -495,6 +495,35 @@ ALTER TABLE designs          ADD COLUMN layout_json TEXT;  -- NULL => nothing pl
 ALTER TABLE design_entries   ADD COLUMN anchor_json TEXT;  -- NULL => key ABSENT
 `;
 
+/**
+ * Projects the developer names, removes and gives more than one folder.
+ *
+ * The identity is still derived from the default folder's repository; these
+ * are what the developer chose on top of it. `display_name` overrides the
+ * derived `name` without replacing it, so discovery can keep writing the one
+ * while the person keeps the other. Removal is a timestamp rather than a
+ * delete, because the sessions recorded against the project keep its id.
+ *
+ * Every existing project gets its repository root as its default folder.
+ */
+const PROJECT_FOLDERS = `
+ALTER TABLE projects ADD COLUMN display_name TEXT;  -- NULL => the derived name
+ALTER TABLE projects ADD COLUMN removed_at   TEXT;  -- NULL => key ABSENT (not removed)
+
+CREATE TABLE project_folders (
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  path       TEXT NOT NULL,
+  is_default INTEGER NOT NULL,
+  added_at   TEXT NOT NULL,
+  PRIMARY KEY (project_id, path)
+) STRICT;
+CREATE UNIQUE INDEX project_folders_default ON project_folders (project_id) WHERE is_default = 1;
+CREATE INDEX project_folders_path ON project_folders (path);
+
+INSERT INTO project_folders (project_id, path, is_default, added_at)
+  SELECT id, repo_root, 1, created_at FROM projects;
+`;
+
 import {
   EVIDENCE_RECORDS_SCHEMA,
   EVIDENCE_SCHEMA,
@@ -563,6 +592,7 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   { version: 16, name: '016_studio', up: (db) => db.exec(STUDIO) },
   { version: 17, name: '017_studio_model', up: (db) => db.exec(STUDIO_MODEL) },
+  { version: 18, name: '018_project_folders', up: (db) => db.exec(PROJECT_FOLDERS) },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
