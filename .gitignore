@@ -7,3 +7,6 @@ out/
 # Local credentials. Never commit these — see .env.example for the template.
 .env
 .env.local
+
+# Satoshi is fetched at dev/build time; its licence forbids serving it from a public repo.
+apps/desktop/src/renderer/fonts/*.woff2

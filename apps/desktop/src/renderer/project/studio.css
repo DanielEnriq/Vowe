@@ -108,7 +108,7 @@
 .studio-title-project { flex: none; font-size: 13px; color: var(--ink-8); cursor: default; user-select: none; }
 .studio-title-sep { color: var(--ink-10); font-size: 13px; }
 .studio-title .design-switcher { min-width: 0; }
-.studio-title .design-switcher-button { font-size: 13px; font-weight: 550; color: var(--ink-2); align-items: center; gap: 7px; }
+.studio-title .design-switcher-button { font-size: 13px; font-weight: 500; color: var(--ink-2); align-items: center; gap: 7px; }
 .studio-title .design-switcher-button svg { flex: none; color: var(--ink-8); transition: transform 160ms ease; }
 .studio-title .design-switcher-button[aria-expanded='true'] svg { transform: rotate(180deg); }
 .studio-title .design-switcher-menu { left: -8px; right: auto; }
@@ -157,7 +157,7 @@
 .studio-question {
   margin: 0 0 10px;
   font-size: 36px;
-  font-weight: 560;
+  font-weight: 500;
   line-height: 1.1;
   letter-spacing: -0.028em;
   color: var(--ink-bright);
@@ -245,7 +245,7 @@
 .studio-rail .turn .message-body .markdown,
 .studio-rail .turn p,
 .studio-rail .turn li { font-size: 13px; line-height: 1.62; color: var(--ink-4); }
-.studio-rail .turn .markdown strong { color: var(--ink-2); font-weight: 600; }
+.studio-rail .turn .markdown strong { color: var(--ink-2); font-weight: 700; }
 .studio-rail .turn.user .message-body { max-width: 88%; padding: 7px 11px 8px; }
 .studio-rail .turn.user .message-body p,
 .studio-rail .turn.user .message-body .markdown { font-size: 13px; color: var(--ink-2); }
@@ -362,7 +362,7 @@ span.design-shape.empty { width: 56px; height: 42px; box-sizing: border-box; }
 .system-part:focus-visible { box-shadow: inset 0 1px 0 var(--studio-card-top), 0 0 0 2px var(--studio-accent), var(--studio-shadow); }
 .system-part-name {
   font-size: 14.5px;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.28;
   letter-spacing: -0.012em;
   color: var(--ink-bright);
@@ -376,7 +376,7 @@ span.design-shape.empty { width: 56px; height: 42px; box-sizing: border-box; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .system-part-rename {
-  font: inherit; font-size: 14.5px; font-weight: 600; letter-spacing: -0.012em; color: var(--ink-bright);
+  font: inherit; font-size: 14.5px; font-weight: 700; letter-spacing: -0.012em; color: var(--ink-bright);
   width: 100%; box-sizing: border-box; background: transparent; border: 0; padding: 0; margin: 0;
   border-bottom: 1.5px solid var(--studio-accent); border-radius: 0; outline: none; min-width: 0;
 }
@@ -424,7 +424,7 @@ span.design-shape.empty { width: 56px; height: 42px; box-sizing: border-box; }
   box-shadow: 0 0 0 1px var(--studio-card-edge);
 }
 .system-part.kind-external:hover { box-shadow: 0 0 0 1px var(--border-3); }
-.system-part.kind-external .system-part-name { color: var(--ink-2); font-weight: 560; }
+.system-part.kind-external .system-part-name { color: var(--ink-2); font-weight: 500; }
 
 .system-focus-role { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink-3); }
 
@@ -480,7 +480,7 @@ span.design-shape.empty { width: 56px; height: 42px; box-sizing: border-box; }
 .system-group-label.crossed { background: color-mix(in srgb, var(--studio-card) 42%, var(--studio-field)); }
 .system-canvas.measured .system-group-label { transition: transform 560ms var(--studio-ease), opacity 280ms ease; }
 .system-group-name {
-  font-size: 12px; font-weight: 600; letter-spacing: 0.005em; color: var(--ink-4);
+  font-size: 12px; font-weight: 700; letter-spacing: 0.005em; color: var(--ink-4);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .system-group-tech {
@@ -752,7 +752,7 @@ span.design-shape.empty { width: 56px; height: 42px; box-sizing: border-box; }
 .system-focus-actions .link-button { font-size: 12px; color: var(--ink-6); }
 .system-focus-actions .link-button:hover,
 .system-focus-actions .link-button.active { color: var(--ink-bright); }
-.system-focus-route { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 12.5px; font-weight: 550; color: var(--ink-2); }
+.system-focus-route { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--ink-2); }
 .system-focus-route .arrow { color: var(--ink-8); font-weight: 400; }
 .system-focus-carries { margin: 0; font-size: 12.5px; color: var(--ink-4); }
 

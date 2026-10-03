@@ -20,6 +20,34 @@
  * `product/appearance.ts`.
  */
 
+/*
+ * Satoshi, bundled with the app (ITF Free Font License, `fonts/Satoshi-LICENSE.txt`).
+ * Electron never fetches a font at runtime. It has no 600: the stylesheet asks for 700.
+ */
+@font-face {
+  font-family: 'Satoshi';
+  src: url('./fonts/Satoshi-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Satoshi';
+  src: url('./fonts/Satoshi-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Satoshi';
+  src: url('./fonts/Satoshi-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   color-scheme: dark;
 
@@ -218,7 +246,7 @@
   --fallback-core: rgba(235, 242, 255, 0.5);
   --fallback-body: rgba(120, 132, 145, 0.18);
 
-  --font: 'Schibsted Grotesk', -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+  --font: 'Satoshi', -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
   /*
@@ -694,7 +722,7 @@ textarea, input { font: inherit; color: inherit; }
   min-width: 0;
   /* Its capitals stand a traffic light tall — see `--chrome-title`. */
   font-size: var(--chrome-title, 17px);
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: -0.014em;
   color: var(--ink-bright);
 }
@@ -1196,7 +1224,7 @@ textarea, input { font: inherit; color: inherit; }
 .project-row .name {
   flex: 1;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: -0.005em;
   color: var(--ink-3);
 }
@@ -1572,7 +1600,7 @@ textarea, input { font: inherit; color: inherit; }
   background: var(--badge);
   color: var(--ink-2);
   font-size: 11.5px;
-  font-weight: 600;
+  font-weight: 700;
 }
 .sidebar-footer .who {
   flex: 1;
@@ -1714,7 +1742,7 @@ textarea, input { font: inherit; color: inherit; }
 .attention-card .title {
   flex: 1;
   font-size: 14.5px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: -0.01em;
 }
 .attention-card .waiting { font-size: 11.5px; color: var(--attention-ink); }
@@ -1748,7 +1776,7 @@ textarea, input { font: inherit; color: inherit; }
   border: 0;
   background: var(--attention);
   color: var(--on-attention);
-  font-weight: 600;
+  font-weight: 700;
 }
 .button.primary:hover { background: var(--attention-hover); }
 
@@ -1795,7 +1823,7 @@ textarea, input { font: inherit; color: inherit; }
 .work-line .title {
   grid-area: title;
   font-size: 14px;
-  font-weight: 550;
+  font-weight: 500;
   letter-spacing: -0.008em;
   color: var(--ink-2);
 }
@@ -2006,7 +2034,7 @@ textarea, input { font: inherit; color: inherit; }
 .empty-block h2 {
   margin: 0;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: -0.01em;
   color: var(--ink-2);
   font-family: var(--font);
@@ -3322,7 +3350,7 @@ button.check-row:hover .target-label { color: var(--ink-4); }
   background: var(--attention);
   color: var(--on-attention);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .viewing {
@@ -3912,7 +3940,7 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
 .markdown > :last-child { margin-bottom: 0; }
 .markdown h1, .markdown h2, .markdown h3, .markdown h4 {
   margin: 18px 0 8px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: -0.012em;
   color: var(--ink-strong);
   line-height: 1.3;
@@ -3967,7 +3995,7 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
   text-align: left;
   vertical-align: top;
 }
-.markdown th { color: var(--ink-2); font-weight: 600; background: var(--fill-1); }
+.markdown th { color: var(--ink-2); font-weight: 700; background: var(--fill-1); }
 .markdown img { max-width: 100%; }
 
 
@@ -4069,7 +4097,7 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
   gap: 24px;
 }
 .panel-heading { display: flex; flex-direction: column; gap: 2px; }
-.panel-heading .title { font-size: 13px; font-weight: 600; letter-spacing: -0.006em; }
+.panel-heading .title { font-size: 13px; font-weight: 700; letter-spacing: -0.006em; }
 .panel-heading .what { font-size: 11.5px; color: var(--ink-8); }
 
 .studio-section { display: flex; flex-direction: column; gap: 10px; }
@@ -4243,7 +4271,7 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
   background: var(--menu);
   box-shadow: var(--shadow-menu);
 }
-.sheet h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.sheet h2 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
 .sheet input, .sheet textarea {
   border: 1px solid var(--border);
   border-radius: 9px;
@@ -4268,7 +4296,7 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
   background: var(--surface);
   max-width: 60ch;
 }
-.notice strong { font-size: 13px; font-weight: 600; }
+.notice strong { font-size: 13px; font-weight: 700; }
 .notice p { margin: 0; font-size: 12.5px; color: var(--ink-6); text-wrap: pretty; }
 .notice code {
   font-family: var(--mono);
