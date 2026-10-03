@@ -21,6 +21,7 @@ import type {
   VoicePreference,
   WorkerMilestone,
 } from '@vowe/core';
+import type { AttemptSummary, CaptainExchange, FleetStatus } from '@vowe/core';
 import { DEFAULT_PRESENCE_PROFILE } from '@vowe/core/presence';
 import {
   DEFAULT_APPEARANCE_SETTING,
@@ -794,4 +795,89 @@ export function useStudioTurn(
   }, [designLanded]);
 
   return state;
+}
+
+/** Every question a worker in this project asked, newest first. */
+export function useCaptainExchanges(projectId: string | null): { exchanges: CaptainExchange[]; loaded: boolean } {
+  const [exchanges, setExchanges] = useState<CaptainExchange[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    setExchanges([]);
+    setLoaded(false);
+    if (!projectId) return;
+    let live = true;
+    const load = () => {
+      void window.vowe.listCaptainExchanges(projectId)
+        .then((next) => { if (live) { setExchanges(next); setLoaded(true); } })
+        .catch(() => undefined);
+    };
+    load();
+    const off = window.vowe.onCaptainExchangeChanged((change) => {
+      if (change.projectId === projectId) load();
+    });
+    return () => { live = false; off(); };
+  }, [projectId]);
+  return { exchanges, loaded };
+}
+
+/** Status words for these sessions, kept current as their turns and questions move. */
+export function useFleetStatuses(sessionIds: readonly string[]): Record<string, FleetStatus> {
+  const [statuses, setStatuses] = useState<Record<string, FleetStatus>>({});
+  const key = sessionIds.join('\n');
+  useEffect(() => {
+    const ids = key ? key.split('\n') : [];
+    setStatuses({});
+    if (!ids.length) return;
+    let live = true;
+    const load = () => {
+      void window.vowe.getFleetStatuses(ids)
+        .then((next) => { if (live) setStatuses(next); })
+        .catch(() => undefined);
+    };
+    load();
+    const watched = new Set(ids);
+    const offs = [
+      window.vowe.onSessionsChanged(load),
+      window.vowe.onFleetStatusChanged((sessionId) => { if (watched.has(sessionId)) load(); }),
+      window.vowe.onSessionEvent((event) => { if (watched.has(event.sessionId)) load(); }),
+      window.vowe.onCaptainExchangeChanged(load),
+    ];
+    return () => { live = false; offs.forEach((off) => off()); };
+  }, [key]);
+  return statuses;
+}
+
+/** Compare data for parallel attempts, re-read as they work. */
+export function useAttemptSummaries(sessionIds: readonly string[]): AttemptSummary[] {
+  const [summaries, setSummaries] = useState<AttemptSummary[]>([]);
+  const key = sessionIds.join('\n');
+  useEffect(() => {
+    const ids = key ? key.split('\n') : [];
+    setSummaries([]);
+    if (!ids.length) return;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const load = () => {
+      void window.vowe.getAttemptSummaries(ids)
+        .then((next) => { if (live) setSummaries(next); })
+        .catch(() => undefined);
+    };
+    // Events arrive in bursts while a worker edits; one read per burst.
+    const soon = () => {
+      if (timer !== null) return;
+      timer = setTimeout(() => { timer = null; load(); }, 1000);
+    };
+    load();
+    const watched = new Set(ids);
+    const offs = [
+      window.vowe.onSessionEvent((event) => { if (watched.has(event.sessionId)) soon(); }),
+      window.vowe.onCaptainExchangeChanged(soon),
+    ];
+    return () => {
+      live = false;
+      if (timer !== null) clearTimeout(timer);
+      offs.forEach((off) => off());
+    };
+  }, [key]);
+  return summaries;
 }

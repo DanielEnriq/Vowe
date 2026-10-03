@@ -64,3 +64,6 @@ export * from './studio/system-design-agent.js';
 export * from './studio/design-links.js';
 export * from './studio/studio-service.js';
 export * from './delegation/attachments.js';
+
+// Fleet: captains, the relay between workers, and compare data.
+export * from './fleet/index.js';

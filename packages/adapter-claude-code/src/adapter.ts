@@ -12,6 +12,8 @@ import {
   type SessionCapabilities,
   type SessionStatus,
   type Unsubscribe,
+  type WorkerOutcome,
+  type WorkerQuestionEvent,
 } from '@vowe/core';
 
 import { ControlChannel, type ControlChannelOptions } from './control.js';
@@ -91,6 +93,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     this.control = new ControlChannel({
       permissionMode: options.permissionMode,
       onError: this.onError,
+      ...(options.query ? { query: options.query } : {}),
     });
   }
 
@@ -196,7 +199,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   ): Promise<InstructionResult> {
     const voweId = `${PROVIDER}:${providerSessionId}`;
 
-    if (this.control.sendToManaged(providerSessionId, text)) {
+    const managed = this.control.sendToManaged(providerSessionId, text);
+    if (managed === 'answered') {
+      return {
+        delivered: true,
+        via: 'agent-sdk held question',
+        note: 'The agent was waiting on a question, so this was given as its answer.',
+      };
+    }
+    if (managed) {
       return { delivered: true, via: 'agent-sdk streaming input' };
     }
 
@@ -237,8 +248,26 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
   }
 
+  onQuestion(listener: (event: WorkerQuestionEvent) => void): Unsubscribe {
+    return this.control.onQuestion(listener);
+  }
+
+  async answerQuestion(providerSessionId: string, questionId: string, answer: string): Promise<boolean> {
+    return this.control.answerQuestion(providerSessionId, questionId, answer);
+  }
+
+  onOutcome(listener: (outcome: WorkerOutcome) => void): Unsubscribe {
+    return this.control.onOutcome(listener);
+  }
+
+  outcomeOf(providerSessionId: string): WorkerOutcome | null {
+    return this.control.outcomeOf(providerSessionId);
+  }
+
   async launchSession(options: LaunchOptions): Promise<AgentSession> {
-    const managed = await this.control.launch(options.cwd, options.prompt);
+    const managed = await this.control.launch(options.cwd, options.prompt, {
+      ...(options.readOnly ? { readOnly: true } : {}),
+    });
     const session = this.toSession(managed.sessionId, null);
     return {
       ...session,
@@ -442,7 +471,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // Adapters report where a session is, not what that means. The project
       // layer derives the repository from `cwd` and fills this in.
       projectId: null,
-      status: statusFor(attachMode, liveRecord),
+      status: statusFor(attachMode, liveRecord, this.control.outcomeOf(providerSessionId)),
       createdAt:
         meta?.createdAt ??
         (liveRecord?.startedAt ? new Date(liveRecord.startedAt).toISOString() : now),
@@ -528,11 +557,14 @@ function capabilitiesFor(
 function statusFor(
   attachMode: AgentSession['attachMode'],
   liveRecord: LiveSessionRecord | undefined,
+  outcome: WorkerOutcome | null,
 ): SessionStatus {
   if (liveRecord) {
     if (liveRecord.status === 'busy') return 'working';
     if (liveRecord.status === 'idle') return 'waiting';
     return 'unknown';
   }
-  return attachMode === 'managed' ? 'working' : 'idle';
+  if (attachMode !== 'managed') return 'idle';
+  // A managed session between turns is still open for the next one.
+  return outcome && outcome.state !== 'working' ? 'waiting' : 'working';
 }

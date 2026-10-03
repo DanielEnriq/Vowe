@@ -495,6 +495,35 @@ ALTER TABLE designs          ADD COLUMN layout_json TEXT;  -- NULL => nothing pl
 ALTER TABLE design_entries   ADD COLUMN anchor_json TEXT;  -- NULL => key ABSENT
 `;
 
+/**
+ * A worker's question and where it went: to a captain, or to the developer.
+ * Its own record, updated in place as the answer arrives — never a session's
+ * conversation entry. Session ids are not foreign keys: a session row is a
+ * cache of what an adapter reported, and an exchange outlives it.
+ */
+const CAPTAIN_EXCHANGES = `
+CREATE TABLE captain_exchanges (
+  id                   TEXT PRIMARY KEY,
+  project_id           TEXT NOT NULL REFERENCES projects(id),
+  asker_session_id     TEXT NOT NULL,
+  question_id          TEXT NOT NULL,
+  tool_use_id          TEXT,              -- NULL => key ABSENT
+  captain_session_id   TEXT,              -- NULL => null (key PRESENT)
+  question             TEXT NOT NULL,
+  options_json         TEXT,              -- NULL => key ABSENT
+  captain_answer       TEXT,              -- NULL => null (key PRESENT)
+  route                TEXT NOT NULL CHECK (route IN ('captain', 'you')),
+  passed_to_you_reason TEXT,              -- NULL => key ABSENT
+  user_answer          TEXT,              -- NULL => null (key PRESENT)
+  status               TEXT NOT NULL CHECK (status IN ('pending', 'answered', 'passed')),
+  delivery             TEXT CHECK (delivery IN ('in-place', 'instruction', 'failed')),
+  asked_at             TEXT NOT NULL,
+  answered_at          TEXT               -- NULL => null (key PRESENT)
+) STRICT;
+CREATE INDEX captain_exchanges_project ON captain_exchanges (project_id, asked_at);
+CREATE UNIQUE INDEX captain_exchanges_question ON captain_exchanges (asker_session_id, question_id);
+`;
+
 import {
   EVIDENCE_RECORDS_SCHEMA,
   EVIDENCE_SCHEMA,
@@ -563,6 +592,7 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   { version: 16, name: '016_studio', up: (db) => db.exec(STUDIO) },
   { version: 17, name: '017_studio_model', up: (db) => db.exec(STUDIO_MODEL) },
+  { version: 20, name: '020_captain_exchanges', up: (db) => db.exec(CAPTAIN_EXCHANGES) },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

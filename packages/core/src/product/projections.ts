@@ -25,3 +25,5 @@ export * from './session-title.js';
 export * from './user-profile.js';
 export * from './voice-preference.js';
 export * from './appearance.js';
+export * from '../fleet/status.js';
+export * from '../fleet/attempt.js';

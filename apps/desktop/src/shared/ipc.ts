@@ -41,6 +41,7 @@ import type {
   WorkbenchArtifact,
   WorkbenchCandidate,
 } from '@vowe/core';
+import type { AttemptSummary, CaptainExchange, CaptainExchangeChange, FleetStatus } from '@vowe/core';
 
 /**
  * The renderer's view of the main process.
@@ -434,6 +435,25 @@ export interface VoweApi {
   onStudioProgress(listener: (progress: StudioProgress) => void): () => void;
   /** A design's conversation or revisions changed, after commit. */
   onDesignChanged(listener: (change: DesignChange) => void): () => void;
+
+  // ------------------------------------------------------------------ fleet
+
+  /**
+   * A captain: a read-only Claude worker given the captain brief. Wiring it
+   * to agents is fleet layout; until wired, nothing is routed to it.
+   */
+  launchCaptain(projectId: string, folder: string): Promise<AgentSession>;
+  /** Every question a worker in this project asked, newest first. */
+  listCaptainExchanges(projectId: string): Promise<CaptainExchange[]>;
+  /** The developer answers a question that came to them. */
+  answerQuestion(exchangeId: string, text: string, alsoTellCaptain: boolean): Promise<CaptainExchange>;
+  /** After commit. */
+  onCaptainExchangeChanged(listener: (change: CaptainExchangeChange) => void): () => void;
+  getFleetStatuses(sessionIds: string[]): Promise<Record<string, FleetStatus>>;
+  /** A worker's turn started or ended; its fleet status may have changed. */
+  onFleetStatusChanged(listener: (sessionId: string) => void): () => void;
+  /** Compare data, in the order asked. Unknown sessions are left out. */
+  getAttemptSummaries(sessionIds: string[]): Promise<AttemptSummary[]>;
 }
 
 /**
@@ -586,4 +606,11 @@ export const IPC = {
   tidyDesign: 'vowe:studio:tidy',
   studioProgress: 'vowe:studio:progress',
   designChanged: 'vowe:studio:design-changed',
+  launchCaptain: 'vowe:fleet:launch-captain',
+  listCaptainExchanges: 'vowe:fleet:exchanges',
+  answerQuestion: 'vowe:fleet:answer',
+  captainExchangeChanged: 'vowe:fleet:exchange-changed',
+  getFleetStatuses: 'vowe:fleet:statuses',
+  fleetStatusChanged: 'vowe:fleet:status-changed',
+  getAttemptSummaries: 'vowe:fleet:attempts',
 } as const;

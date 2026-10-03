@@ -60,6 +60,16 @@ import {
   type TemperamentProfile,
   type VoicePreference,
 } from '@vowe/core';
+import {
+  FleetRelay,
+  NO_CAPTAINS,
+  attemptSummaries,
+  attentionFor,
+  fleetStatusOf,
+  registryWorkers,
+  type CaptainExchange,
+  type FleetStatus,
+} from '@vowe/core';
 import { ClaudeCodeAdapter, ClaudeCodeConsultant } from '@vowe/adapter-claude-code';
 import { CodexAdapter } from '@vowe/adapter-codex';
 import { PiAdapter } from '@vowe/adapter-pi';
@@ -166,6 +176,8 @@ interface Services {
    * project memory or the live bridge.
    */
   studio: StudioService | null;
+  /** Moves a wired worker's question to its captain and back. */
+  fleet: FleetRelay;
   status: AppStatus;
 }
 
@@ -515,6 +527,25 @@ async function createServices(): Promise<Services> {
     window?.webContents.send(IPC.designChanged, change);
   });
 
+  /*
+   * The fleet relay. Routing is the fleet layout's wires; until those are
+   * connected here, nothing is wired and every question comes to the
+   * developer, exactly as an unwired agent should.
+   */
+  const fleet = new FleetRelay({
+    store,
+    workers: registryWorkers(registry),
+    routing: NO_CAPTAINS,
+    onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
+  });
+  fleet.start();
+  store.onCaptainExchangeChanged((change) => {
+    window?.webContents.send(IPC.captainExchangeChanged, change);
+  });
+  registry.on('outcome', (outcome) => {
+    window?.webContents.send(IPC.fleetStatusChanged, outcome.sessionId);
+  });
+
   const live = new LiveBridge({
     transport: liveTransport,
     projectBrief: (projectId) => brief.get(projectId),
@@ -650,6 +681,7 @@ async function createServices(): Promise<Services> {
     observation,
     live,
     studio,
+    fleet,
     status: {
       llmConfigured: llm !== undefined,
       voiceConfigured: liveTransport.available,
@@ -916,6 +948,53 @@ function registerIpc(): void {
   ipcMain.handle(IPC.cancelDesignTurn, async (_event, designId: string) =>
     (await requireServices()).studio?.cancel(designId) ?? false,
   );
+
+  // Fleet. Text between workers moves only through the relay.
+  ipcMain.handle(IPC.launchCaptain, async (_event, projectId: string, folder: string) => {
+    const services = await requireServices();
+    const session = await services.fleet.launchCaptain(projectId, folder);
+    if (services.observing.allows(session.id)) void services.titles.ensure(session.id);
+    return session;
+  });
+  ipcMain.handle(IPC.listCaptainExchanges, async (_event, projectId: string) =>
+    (await requireServices()).store.listCaptainExchanges(projectId),
+  );
+  ipcMain.handle(
+    IPC.answerQuestion,
+    async (_event, exchangeId: string, text: string, alsoTellCaptain: boolean) =>
+      (await requireServices()).fleet.answerAsUser(exchangeId, text, alsoTellCaptain === true),
+  );
+  ipcMain.handle(IPC.getFleetStatuses, async (_event, sessionIds: string[]) => {
+    const { registry, store } = await requireServices();
+    const exchanges = new Map<string, CaptainExchange[]>();
+    const statuses: Record<string, FleetStatus> = {};
+    for (const sessionId of Array.isArray(sessionIds) ? sessionIds : []) {
+      const session = registry.get(sessionId);
+      if (!session) continue;
+      const events = store.getEvents(sessionId);
+      const projectId = session.projectId;
+      if (projectId && !exchanges.has(projectId)) {
+        exchanges.set(projectId, store.listCaptainExchanges(projectId));
+      }
+      statuses[sessionId] = fleetStatusOf({
+        session,
+        attention: projectId ? attentionFor(session, projectId, events) : [],
+        events,
+        outcome: registry.outcomeOf(sessionId),
+        exchanges: projectId ? exchanges.get(projectId)! : [],
+      });
+    }
+    return statuses;
+  });
+  ipcMain.handle(IPC.getAttemptSummaries, async (_event, sessionIds: string[]) => {
+    const { registry, store } = await requireServices();
+    return attemptSummaries(Array.isArray(sessionIds) ? sessionIds : [], {
+      getSession: (sessionId) => registry.get(sessionId),
+      listSessions: () => registry.list(),
+      getEvents: (sessionId) => store.getEvents(sessionId),
+      listCaptainExchanges: (projectId) => store.listCaptainExchanges(projectId),
+    });
+  });
 
   ipcMain.handle(IPC.getProjectConversation, async (_event, projectId: string) =>
     (await requireServices()).store.getProjectConversation(projectId),
