@@ -4,7 +4,7 @@ import type { AgentSession, Project } from '@vowe/core';
 
 import { Fading } from '../shell/Fading.js';
 import { formatAgoShort } from '../components/ui.js';
-import { FolderIcon } from '../shell/icons.js';
+import { FolderIcon, PlusIcon } from '../shell/icons.js';
 import {
   closedProjects,
   lastActivityByProject,
@@ -17,6 +17,7 @@ interface Props {
   now: number;
   /** Called with the project once it is open, so the room can follow. */
   onOpened: (projectId: string) => void;
+  onNewProject: () => void;
   onDismiss: () => void;
 }
 
@@ -36,6 +37,7 @@ export function ProjectOpener({
   sessions,
   now,
   onOpened,
+  onNewProject,
   onDismiss,
 }: Props): ReactElement {
   const root = useRef<HTMLDivElement>(null);
@@ -176,6 +178,18 @@ export function ProjectOpener({
       >
         <FolderIcon />
         Open folder…
+      </button>
+      <button
+        className="opener-folder"
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          onDismiss();
+          onNewProject();
+        }}
+      >
+        <PlusIcon />
+        New project…
       </button>
     </div>
   );

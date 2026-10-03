@@ -12,6 +12,8 @@ export type Route =
   | { kind: 'project'; projectId: string; view?: 'home' | 'conversation'; entryId?: string }
   /** Studio: a project's designs. Without a `designId`, the most recent one. */
   | { kind: 'project'; projectId: string; view: 'studio'; designId?: string }
+  /** The fleet: the project's agents, on a canvas. */
+  | { kind: 'project'; projectId: string; view: 'fleet' }
   | { kind: 'session'; sessionId: string }
   /** Your Vowe: how Vowe looks, sounds and talks. Presence Studio in code. */
   | { kind: 'presence' }

@@ -4440,3 +4440,253 @@ pre.code .line.focus { background: color-mix(in srgb, var(--ask) 10%, transparen
 
 .project-places { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 
+
+/* ------------------------------------------------------------- board */
+
+/*
+ * A room laid out as cards on the darker ground: a full-width card, then a
+ * wide one beside a narrow one. Used by a project's home.
+ */
+.board {
+  grid-row: 2;
+  grid-column: 1;
+  min-height: 0;
+  min-width: 0;
+  background: var(--app);
+  padding: 6px 20px 20px;
+}
+.board-inner { display: flex; flex-direction: column; gap: 16px; min-height: 100%; }
+.board-split { flex: 1 1 auto; display: flex; gap: 16px; min-height: 0; }
+@media (max-width: 900px) { .board-split { flex-direction: column; } }
+
+.card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--pane);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+}
+.card.grow { flex: 1 1 auto; }
+.card.side { flex: 0 0 300px; }
+.card-head {
+  height: 38px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.card-head.bare { border-bottom: 0; height: auto; padding: 16px 16px 4px; }
+.card-head .caps { flex: 1; }
+.card-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+
+.caps {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-6);
+}
+
+.mono-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.folder-row { display: flex; align-items: center; gap: 11px; min-height: 28px; }
+.folder-glyph { display: inline-flex; flex: 0 0 auto; color: var(--ink-6); }
+.folder-glyph.lit { color: var(--ask); }
+.folder-glyph svg { width: 16px; height: 16px; }
+
+.flat-chip {
+  height: 20px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  background: var(--chip);
+  color: var(--ink-4);
+  font-size: 11px;
+}
+
+.button.small {
+  height: 24px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-color: var(--border);
+  color: var(--ink-4);
+  font-size: 12px;
+  font-weight: 400;
+}
+.button.small svg { width: 12px; height: 12px; }
+/* The one light button: the strongest act in a room or a sheet. */
+.button.solid {
+  border: 0;
+  background: var(--ink-bright);
+  color: var(--rail);
+  font-weight: 700;
+}
+.button.solid:hover { background: var(--ink-2); }
+.button.solid:disabled { background: var(--chip); color: var(--ink-8); cursor: default; }
+.button.solid.compact {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.button.solid.compact svg { width: 13px; height: 13px; }
+.button.raised { height: 28px; background: var(--chip); border-color: var(--border-3); color: var(--ink); font-size: 12px; }
+.link-button.tint { color: var(--ask); font-size: 12px; }
+.link-button.tint:hover { color: var(--lit); }
+
+.dot.ask { background: var(--ask); }
+.dot.attention { background: var(--attention); }
+.dot.good { background: var(--good); }
+.dot.bad { background: var(--bad); }
+
+.stats { flex-direction: row; align-items: center; gap: 20px; padding: 14px 16px; border-bottom: 1px solid var(--hairline); }
+.stat { display: flex; flex-direction: column; gap: 3px; }
+.stat-figure { display: flex; align-items: center; gap: 7px; }
+.stat-number { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.stat-label { font-size: 12px; color: var(--ink-4); }
+
+.stat-number.ask { color: var(--ask); }
+.stat-number.attention { color: var(--attention-ink); }
+.stat-number.good { color: var(--good); }
+.stat-number.bad { color: var(--bad); }
+
+.line-list { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+.line-row {
+  height: 44px;
+  flex: 0 0 44px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.line-row:last-child { border-bottom: 0; }
+.line-row:hover { background: var(--hover); }
+.line-title { flex: 1 1 auto; min-width: 0; font-size: 13px; color: var(--ink); white-space: nowrap; }
+.status-word { flex: 0 0 auto; font-family: var(--mono); font-size: 11.5px; }
+.status-word.ask { color: var(--ink-6); }
+.status-word.attention { color: var(--attention-text); }
+.status-word.idle { color: var(--idle); }
+.status-word.good { color: var(--good); }
+.status-word.bad { color: var(--bad); }
+.line-empty { padding: 14px 16px; }
+
+.jump-list { display: flex; flex-direction: column; gap: 2px; padding: 6px 6px 10px; }
+.jump-row {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  text-align: left;
+}
+.jump-row:hover { background: var(--hover-strong); }
+.jump-label { flex: 1; }
+.jump-count { font-size: 11.5px; color: var(--attention-text); }
+
+/* A sheet in three bands: its title, its fields, its actions. */
+.sheet.sectioned { padding: 0; gap: 0; width: min(520px, calc(100vw - 80px)); overflow: hidden; }
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--hairline);
+}
+.sheet-head h2 { flex: 1; font-size: 17px; font-weight: 700; color: var(--ink-bright); }
+.icon-button.outlined { width: 26px; height: 26px; flex-basis: 26px; border: 1px solid var(--border); border-radius: 6px; }
+.sheet-body { display: flex; flex-direction: column; gap: 18px; padding: 20px 22px; }
+.sheet-field { display: flex; flex-direction: column; gap: 6px; }
+.sheet-field label,
+.sheet-label { font-size: 12px; color: var(--ink-4); }
+.sheet .sheet-field input {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border-3);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink);
+  font-size: 13.5px;
+}
+.folder-field {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--border-3);
+  border-radius: 8px;
+  background: var(--field);
+}
+.folder-field .folder-glyph { color: var(--ask); }
+.quiet-add {
+  align-self: flex-start;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-4);
+  font-size: 12px;
+}
+.quiet-add:hover:not(:disabled) { color: var(--ink); }
+.quiet-add:disabled { color: var(--ink-10); cursor: default; }
+.quiet-add svg { width: 12px; height: 12px; }
+.sheet-error { margin: 0; font-size: 12px; color: var(--attention-ink); }
+.sheet-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.sheet-foot .link-button { font-size: 12.5px; padding: 0 14px; }
+.sheet-foot .button.solid { height: 32px; padding: 0 18px; border-radius: 8px; }
+
+/* A row whose button holds a name and, under it, one quiet line. */
+.project-row .open.stacked { flex-direction: column; align-items: stretch; gap: 2px; }
+.project-row .open.stacked .name { flex: none; }
+.project-row .sub { font-size: 11.5px; color: var(--ink-6); }
+.project-row .rename-field {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  margin: 4px 8px 4px 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border-3);
+  border-radius: 6px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}

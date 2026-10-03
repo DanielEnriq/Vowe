@@ -31,7 +31,7 @@ import type {
   VoweRun,
   VoweTraceItem,
 } from '../types/execution.js';
-import type { Project } from '../projects/project.js';
+import type { Project, ProjectRecord } from '../projects/project.js';
 import type { PersistedWorkbench } from '../workbench/persisted.js';
 import type {
   Design,
@@ -103,6 +103,7 @@ export class SqliteEventStore implements EventStore, DesignStore, FleetLayoutSto
   >();
   private readonly designListeners = new Set<(change: DesignChange) => void>();
   private readonly fleetLayoutListeners = new Set<(change: FleetLayoutChange) => void>();
+  private readonly projectListeners = new Set<(projectId: string) => void>();
   private readonly cache = new Map<string, StatementSync>();
   private db: DatabaseSync | null = null;
   private evidence: EvidenceLedger | null = null;
@@ -164,50 +165,140 @@ export class SqliteEventStore implements EventStore, DesignStore, FleetLayoutSto
 
   // ---------------------------------------------------------------- projects
 
-  async upsertProject(project: Project): Promise<void> {
+  async upsertProject(project: ProjectRecord): Promise<void> {
     // `createdAt` is when Vowe first saw the repository, so the original wins —
     // expressed here as COALESCE over the existing row rather than a read
     // followed by a write.
-    this.run(
-      `INSERT INTO projects (id, name, repo_root, git_common_dir, remote_url, created_at)
-       VALUES (:id, :name, :repoRoot, :gitCommonDir, :remoteUrl, :createdAt)
-       ON CONFLICT (id) DO UPDATE SET
-         name           = excluded.name,
-         repo_root      = excluded.repo_root,
-         git_common_dir = excluded.git_common_dir,
-         remote_url     = excluded.remote_url,
-         created_at     = COALESCE(projects.created_at, excluded.created_at)`,
-      {
-        id: project.id,
-        name: project.name,
-        repoRoot: project.repoRoot,
-        gitCommonDir: rows.text(project.gitCommonDir),
-        remoteUrl: rows.text(project.remoteUrl),
-        createdAt: project.createdAt,
-      },
-    );
+    this.transaction(() => {
+      this.run(
+        `INSERT INTO projects (id, name, repo_root, git_common_dir, remote_url, created_at)
+         VALUES (:id, :name, :repoRoot, :gitCommonDir, :remoteUrl, :createdAt)
+         ON CONFLICT (id) DO UPDATE SET
+           name           = excluded.name,
+           repo_root      = excluded.repo_root,
+           git_common_dir = excluded.git_common_dir,
+           remote_url     = excluded.remote_url,
+           created_at     = COALESCE(projects.created_at, excluded.created_at)`,
+        {
+          id: project.id,
+          name: project.name,
+          repoRoot: project.repoRoot,
+          gitCommonDir: rows.text(project.gitCommonDir),
+          remoteUrl: rows.text(project.remoteUrl),
+          createdAt: project.createdAt,
+        },
+      );
+      // The default folder follows the repository root. A folder the developer
+      // added at the same path stops being an extra one.
+      this.run(
+        'DELETE FROM project_folders WHERE project_id = :id AND path = :path AND is_default = 0',
+        { id: project.id, path: project.repoRoot },
+      );
+      const moved = this.run(
+        'UPDATE project_folders SET path = :path WHERE project_id = :id AND is_default = 1',
+        { id: project.id, path: project.repoRoot },
+      );
+      if (Number(moved.changes) === 0) {
+        this.run(
+          `INSERT INTO project_folders (project_id, path, is_default, added_at)
+           VALUES (:id, :path, 1, :at)`,
+          { id: project.id, path: project.repoRoot, at: project.createdAt },
+        );
+      }
+    });
+    this.notifyProject(project.id);
   }
 
   /**
    * Open a project in the projects panel, or close it.
    *
    * Attention only, like archiving a session: a closed project is still
-   * discovered, still observed, and keeps everything it had.
+   * discovered, still observed, and keeps everything it had. Opening a
+   * removed project is a deliberate act too, so it restores it.
    */
   async setProjectOpen(projectId: string, open: boolean): Promise<void> {
-    this.run('UPDATE projects SET opened_at = :at WHERE id = :id', {
+    this.run(
+      `UPDATE projects SET opened_at = :at,
+         removed_at = CASE WHEN :at IS NULL THEN removed_at ELSE NULL END
+       WHERE id = :id`,
+      { id: projectId, at: open ? new Date().toISOString() : null },
+    );
+    this.notifyProject(projectId);
+  }
+
+  async setProjectName(projectId: string, name: string | null): Promise<void> {
+    const trimmed = name?.trim() ?? '';
+    this.run('UPDATE projects SET display_name = :name WHERE id = :id', {
       id: projectId,
-      at: open ? new Date().toISOString() : null,
+      name: trimmed === '' ? null : trimmed,
     });
+    this.notifyProject(projectId);
+  }
+
+  async setProjectRemoved(projectId: string, removed: boolean): Promise<void> {
+    this.run(
+      removed
+        ? 'UPDATE projects SET removed_at = :at, opened_at = NULL WHERE id = :id'
+        : 'UPDATE projects SET removed_at = NULL WHERE id = :id',
+      removed ? { id: projectId, at: new Date().toISOString() } : { id: projectId },
+    );
+    this.notifyProject(projectId);
+  }
+
+  async addProjectFolder(projectId: string, folder: string): Promise<void> {
+    this.run(
+      `INSERT INTO project_folders (project_id, path, is_default, added_at)
+       VALUES (:id, :path, 0, :at)
+       ON CONFLICT (project_id, path) DO NOTHING`,
+      { id: projectId, path: folder, at: new Date().toISOString() },
+    );
+    this.notifyProject(projectId);
+  }
+
+  async removeProjectFolder(projectId: string, folder: string): Promise<boolean> {
+    const result = this.run(
+      'DELETE FROM project_folders WHERE project_id = :id AND path = :path AND is_default = 0',
+      { id: projectId, path: folder },
+    );
+    const removed = Number(result.changes) > 0;
+    if (removed) this.notifyProject(projectId);
+    return removed;
+  }
+
+  onProjectsChanged(listener: (projectId: string) => void): () => void {
+    this.projectListeners.add(listener);
+    return () => {
+      this.projectListeners.delete(listener);
+    };
   }
 
   listProjects(): Project[] {
-    return this.all('SELECT * FROM projects ORDER BY rowid').map(rows.toProject);
+    const folders = rows.groupFolders(
+      this.all('SELECT * FROM project_folders ORDER BY is_default DESC, added_at, path'),
+    );
+    return this.all('SELECT * FROM projects ORDER BY rowid').map((row) =>
+      rows.toProject(row, folders.get(String(row['id'])) ?? []),
+    );
   }
 
   getProject(projectId: string): Project | null {
     const row = this.get('SELECT * FROM projects WHERE id = ?', projectId);
-    return row ? rows.toProject(row) : null;
+    if (!row) return null;
+    const folders = this.all(
+      'SELECT * FROM project_folders WHERE project_id = ? ORDER BY is_default DESC, added_at, path',
+      projectId,
+    ).map(rows.toProjectFolder);
+    return rows.toProject(row, folders);
+  }
+
+  private notifyProject(projectId: string): void {
+    for (const listener of this.projectListeners) {
+      try {
+        listener(projectId);
+      } catch (error) {
+        this.onError('project-listener', error);
+      }
+    }
   }
 
   /**

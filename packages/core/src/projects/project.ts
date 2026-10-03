@@ -15,8 +15,13 @@ import type { AgentSession } from '../types/session.js';
 export interface Project {
   /** Stable and opaque. Derived from the repository, not allocated. */
   id: string;
-  /** Display name, from the repository. Disambiguated only on collision. */
+  /**
+   * Display name. The developer's own when they gave one (see `displayName`),
+   * otherwise the repository's, disambiguated only on collision.
+   */
   name: string;
+  /** The name the developer gave it. Absent means the derived name is shown. */
+  displayName?: string;
   /** The main worktree. Metadata — the path is not the identity. */
   repoRoot: string;
   gitCommonDir?: string;
@@ -27,7 +32,30 @@ export interface Project {
    * which is where every discovered project starts. Attention, not identity.
    */
   openedAt?: string;
+  /**
+   * When the developer removed it. A removed project is hidden everywhere and
+   * stays hidden across restarts; creating a project at the same folder
+   * brings it back with what it had.
+   */
+  removedAt?: string;
+  /**
+   * The folders the project's work happens in. The first is the default — the
+   * repository root, from which the identity is derived. Any other was added
+   * by hand; none is ever added automatically.
+   */
+  folders: ProjectFolder[];
 }
+
+export interface ProjectFolder {
+  /** Absolute. */
+  path: string;
+  /** The repository root. Exactly one per project, and it cannot be removed. */
+  isDefault: boolean;
+  addedAt: string;
+}
+
+/** What discovery knows about a project: identity, and nothing the developer chose. */
+export type ProjectRecord = Omit<Project, 'displayName' | 'openedAt' | 'removedAt' | 'folders'>;
 
 /**
  * What is happening in a project right now.

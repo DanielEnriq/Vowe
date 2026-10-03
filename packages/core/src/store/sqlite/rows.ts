@@ -23,7 +23,7 @@ import type {
   SemanticState,
   SessionCapabilities,
 } from '../../types/session.js';
-import type { Project } from '../../projects/project.js';
+import type { Project, ProjectFolder } from '../../projects/project.js';
 import type { Design, DesignEntry, DesignRevision } from '../../studio/types.js';
 import type {
   CommunicationDecision,
@@ -96,12 +96,14 @@ function parse<T>(value: unknown, table: string, id: string): T {
 
 // ------------------------------------------------------------------ projects
 
-export function toProject(row: Row): Project {
+export function toProject(row: Row, folders: ProjectFolder[] = []): Project {
+  const derived = str(row['name']);
   const project: Project = {
     id: str(row['id']),
-    name: str(row['name']),
+    name: derived,
     repoRoot: str(row['repo_root']),
     createdAt: str(row['created_at']),
+    folders,
   };
   // Optional keys: present only when there is something to say.
   if (row['git_common_dir'] !== null) {
@@ -111,7 +113,36 @@ export function toProject(row: Row): Project {
   if (row['opened_at'] !== null && row['opened_at'] !== undefined) {
     project.openedAt = str(row['opened_at']);
   }
+  // NULL => the derived name. The override is what is shown, and is also kept
+  // as its own key so a reader can tell the developer chose it.
+  if (row['display_name'] !== null && row['display_name'] !== undefined) {
+    project.displayName = str(row['display_name']);
+    project.name = project.displayName;
+  }
+  if (row['removed_at'] !== null && row['removed_at'] !== undefined) {
+    project.removedAt = str(row['removed_at']);
+  }
   return project;
+}
+
+export function toProjectFolder(row: Row): ProjectFolder {
+  return {
+    path: str(row['path']),
+    isDefault: Number(row['is_default']) === 1,
+    addedAt: str(row['added_at']),
+  };
+}
+
+/** Folder rows by project, in the order they were read. */
+export function groupFolders(folderRows: Row[]): Map<string, ProjectFolder[]> {
+  const byProject = new Map<string, ProjectFolder[]>();
+  for (const row of folderRows) {
+    const id = str(row['project_id']);
+    const list = byProject.get(id) ?? [];
+    list.push(toProjectFolder(row));
+    byProject.set(id, list);
+  }
+  return byProject;
 }
 
 // ------------------------------------------------------------------ sessions

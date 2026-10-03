@@ -55,6 +55,7 @@ import {
   type LiveVoice,
   type PersistedWorkbench,
   type Project,
+  type CreateProjectInput,
   type SemanticInterpreter,
   type WorkbenchCandidate,
   type TemperamentProfile,
@@ -999,6 +1000,68 @@ function registerIpc(): void {
       await services.store.setProjectOpen(project.id, true);
       broadcastSessions();
       return services.projects.listProjectsForDisplay().find((item) => item.id === project.id) ?? project;
+    },
+  );
+
+  /*
+   * Making, naming and removing projects, and their folders. Every folder is
+   * checked here the way `openProjectAt` checks one; the rules about which
+   * folder may belong where are `ProjectService`'s. The panel re-reads
+   * projects on the sessions announcement, so each sends it.
+   */
+  const existingFolder = async (directory: string): Promise<string> => {
+    const trimmed = directory.trim();
+    const absolute = path.resolve(
+      trimmed === '~' || trimmed.startsWith('~/')
+        ? path.join(os.homedir(), trimmed.slice(1))
+        : trimmed,
+    );
+    const stat = await fs.stat(absolute).catch(() => null);
+    if (!stat?.isDirectory()) throw new Error(`No folder at ${absolute}`);
+    return absolute;
+  };
+  const displayed = (services: Services, project: Project): Project =>
+    services.projects.listProjectsForDisplay().find((item) => item.id === project.id) ?? project;
+  ipcMain.handle(
+    IPC.createProject,
+    async (_event, input: CreateProjectInput): Promise<Project> => {
+      const services = await requireServices();
+      const folder = await existingFolder(input.folder);
+      const folders = await Promise.all((input.folders ?? []).map(existingFolder));
+      const project = await services.projects.createProject({ name: input.name, folder, folders });
+      broadcastSessions();
+      return displayed(services, project);
+    },
+  );
+  ipcMain.handle(
+    IPC.renameProject,
+    async (_event, projectId: string, name: string): Promise<Project> => {
+      const services = await requireServices();
+      const project = await services.projects.renameProject(projectId, name);
+      broadcastSessions();
+      return displayed(services, project);
+    },
+  );
+  ipcMain.handle(IPC.removeProject, async (_event, projectId: string): Promise<void> => {
+    await (await requireServices()).projects.removeProject(projectId);
+    broadcastSessions();
+  });
+  ipcMain.handle(
+    IPC.addProjectFolder,
+    async (_event, projectId: string, folder: string): Promise<Project> => {
+      const services = await requireServices();
+      const project = await services.projects.addFolder(projectId, await existingFolder(folder));
+      broadcastSessions();
+      return displayed(services, project);
+    },
+  );
+  ipcMain.handle(
+    IPC.removeProjectFolder,
+    async (_event, projectId: string, folder: string): Promise<Project> => {
+      const services = await requireServices();
+      const project = await services.projects.removeFolder(projectId, folder);
+      broadcastSessions();
+      return displayed(services, project);
     },
   );
 

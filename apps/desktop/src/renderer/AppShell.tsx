@@ -12,6 +12,7 @@ import type { UserProfile } from '@vowe/core';
 import { DEFAULT_USER_PROFILE } from '@vowe/core/projections';
 
 import { NewSessionSheet } from './components/NewSessionSheet.js';
+import { NewProjectSheet } from './project/NewProjectSheet.js';
 import { ComposeIcon } from './shell/icons.js';
 import { PanelToggle } from './shell/PanelToggle.js';
 import { TopChrome } from './shell/TopChrome.js';
@@ -106,6 +107,7 @@ export function AppShell(): ReactElement {
   const [voice, saveVoice] = useVoicePreference();
   const [route, setRoute] = useState<Route>({ kind: 'none' });
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [creatingProject, setCreatingProject] = useState(false);
   const [commandHeld, setCommandHeld] = useState(false);
   const [user, setUser] = useState<UserProfile>(DEFAULT_USER_PROFILE);
   const [expanded, setExpanded] = useState<string[]>(readExpanded);
@@ -170,6 +172,12 @@ export function AppShell(): ReactElement {
    */
   const closeProject = async (projectId: string) => {
     await window.vowe.setProjectOpen(projectId, false).catch(() => undefined);
+    await refresh().catch(() => undefined);
+    if (routeProject === projectId) setRoute({ kind: 'none' });
+  };
+  // Removing hides the project everywhere, so the room it was showing goes too.
+  const removeProject = async (projectId: string) => {
+    await window.vowe.removeProject(projectId).catch(() => undefined);
     await refresh().catch(() => undefined);
     if (routeProject === projectId) setRoute({ kind: 'none' });
   };
@@ -330,6 +338,8 @@ export function AppShell(): ReactElement {
             showSessionShortcuts={commandHeld && shortcutTargets.length > 0}
             onNavigate={setRoute}
             onCloseProject={(projectId) => void closeProject(projectId)}
+            onRemoveProject={(projectId) => void removeProject(projectId)}
+            onNewProject={() => setCreatingProject(true)}
           />
         </aside>
 
@@ -378,6 +388,8 @@ export function AppShell(): ReactElement {
             onHome={() => setRoute({ kind: 'project', projectId: project.id })}
             onOpenSession={(sessionId) => setRoute({ kind: 'session', sessionId })}
           />
+        ) : project && live.kind === 'project' && live.view === 'fleet' ? (
+          <FleetRoom onHome={() => setRoute({ kind: 'project', projectId: project.id })} />
         ) : project ? (
           <ProjectSpace
             key={project.id}
@@ -385,12 +397,14 @@ export function AppShell(): ReactElement {
             brief={brief}
             presence={presence}
             presenceState={presenceState}
-            view={live.kind === 'project' && live.view !== 'studio' ? live.view ?? 'home' : 'home'}
-            entryId={live.kind === 'project' && live.view !== 'studio' ? live.entryId : undefined}
+            view={live.kind === 'project' && live.view !== 'studio' && live.view !== 'fleet' ? live.view ?? 'home' : 'home'}
+            entryId={live.kind === 'project' && live.view !== 'studio' && live.view !== 'fleet' ? live.entryId : undefined}
             narrow={paneWidth < NARROW_PANE}
             onNavigate={(view, entryId) => setRoute({ kind: 'project', projectId: project.id, view, ...(entryId ? { entryId } : {}) })}
             onOpenStudio={(designId) => setRoute({ kind: 'project', projectId: project.id, view: 'studio', ...(designId ? { designId } : {}) })}
             onOpenSession={(sessionId) => setRoute({ kind: 'session', sessionId })}
+            onOpenFleet={() => setRoute({ kind: 'project', projectId: project.id, view: 'fleet' })}
+            onRunAgents={() => undefined}
           />
         ) : live.kind === 'presence' ? (
           <PresenceStudio
@@ -416,6 +430,17 @@ export function AppShell(): ReactElement {
           />
         )}
       </TopChrome>
+
+      {creatingProject && (
+        <NewProjectSheet
+          onClose={() => setCreatingProject(false)}
+          onCreated={(created) => {
+            setCreatingProject(false);
+            void refresh().catch(() => undefined);
+            setRoute({ kind: 'project', projectId: created.id });
+          }}
+        />
+      )}
 
       {sheetOpen && (
         <NewSessionSheet
@@ -470,6 +495,27 @@ function Nowhere({
                 <code>export ANTHROPIC_API_KEY=sk-ant-…</code>
               </div>
             )}
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+/** The fleet, before its canvas exists. The project's home is one step back. */
+function FleetRoom({ onHome }: { onHome: () => void }): ReactElement {
+  return (
+    <main className="pane">
+      <div className="scroll room">
+        <div className="room-inner">
+          <div className="empty-block" style={{ paddingTop: 48 }}>
+            <h2>Fleet</h2>
+            <p className="empty">No agents on the canvas yet.</p>
+            <div>
+              <button className="button" type="button" onClick={onHome}>
+                Back to project
+              </button>
+            </div>
           </div>
         </div>
       </div>

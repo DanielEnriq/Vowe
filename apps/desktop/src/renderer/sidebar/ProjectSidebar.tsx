@@ -23,6 +23,7 @@ import {
   type Route,
 } from '../state/navigation.js';
 import { ProviderGlyph, statusLabel } from '../components/ui.js';
+import { projectLine } from '../state/project-fleet.js';
 import { sessionActivity, sessionTitle } from '@vowe/core/projections';
 
 interface Props {
@@ -46,6 +47,8 @@ interface Props {
   showSessionShortcuts?: boolean;
   onNavigate: (route: Route) => void;
   onCloseProject: (projectId: string) => void;
+  onRemoveProject: (projectId: string) => void;
+  onNewProject: () => void;
 }
 
 /**
@@ -67,6 +70,8 @@ export function ProjectSidebar({
   showSessionShortcuts = false,
   onNavigate,
   onCloseProject,
+  onRemoveProject,
+  onNewProject,
 }: Props): ReactElement {
   const user = useUserProfile();
   const [opening, setOpening] = useState(false);
@@ -126,6 +131,7 @@ export function ProjectSidebar({
             sessions={sessions}
             now={now}
             onOpened={(projectId) => onNavigate({ kind: 'project', projectId })}
+            onNewProject={onNewProject}
             onDismiss={() => setOpening(false)}
           />
         )}
@@ -155,6 +161,7 @@ export function ProjectSidebar({
             onToggleObserving={() => void setObserving(project.id, paused.has(project.id))}
             onArchive={archive}
             onClose={() => onCloseProject(project.id)}
+            onRemove={() => onRemoveProject(project.id)}
             sessionShortcuts={sessionShortcuts}
             showSessionShortcuts={showSessionShortcuts}
           />
@@ -234,6 +241,7 @@ function ProjectBlock({
   onToggleObserving,
   onArchive,
   onClose,
+  onRemove,
   sessionShortcuts,
   showSessionShortcuts,
 }: {
@@ -249,6 +257,7 @@ function ProjectBlock({
   onToggleObserving: () => void;
   onArchive: (sessionId: string, archived: boolean) => void;
   onClose: () => void;
+  onRemove: () => void;
   sessionShortcuts?: ReadonlyMap<string, number>;
   showSessionShortcuts: boolean;
 }): ReactElement {
@@ -265,6 +274,7 @@ function ProjectBlock({
   const [finding, setFinding] = useState(false);
   /** Where the row was right-clicked, relative to the row. */
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  const [renaming, setRenaming] = useState(false);
 
   return (
     <>
@@ -301,13 +311,18 @@ function ProjectBlock({
         >
           <RepoIcon />
         </button>
-        <button
-          className="open"
-          type="button"
-          onClick={() => onNavigate({ kind: 'project', projectId: project.id })}
-        >
-          <Fading className="name">{project.name}</Fading>
-        </button>
+        {renaming ? (
+          <RenameField name={project.name} projectId={project.id} onDone={() => setRenaming(false)} />
+        ) : (
+          <button
+            className="open stacked"
+            type="button"
+            onClick={() => onNavigate({ kind: 'project', projectId: project.id })}
+          >
+            <Fading className="name">{project.name}</Fading>
+            <Fading className="sub">{projectLine(project, sessions)}</Fading>
+          </button>
+        )}
         {/*
           Whether Vowe is observing this project, and how much of it is live.
           The count is just the number, beside the eye: how many workers are
@@ -363,6 +378,8 @@ function ProjectBlock({
             at={menuAt}
             name={project.name}
             onClose={onClose}
+            onRename={() => setRenaming(true)}
+            onRemove={onRemove}
             onDismiss={() => setMenuAt(null)}
           />
         )}
@@ -390,17 +407,22 @@ function ProjectBlock({
  * A project row's right-click menu.
  *
  * Closing only takes the project out of the panel. Its sessions are still
- * observed, and it comes back from the `+` beside the heading.
+ * observed, and it comes back from the `+` beside the heading. Removing hides
+ * it everywhere until a project is created at its folder again.
  */
 function ProjectMenu({
   at,
   name,
   onClose,
+  onRename,
+  onRemove,
   onDismiss,
 }: {
   at: { x: number; y: number };
   name: string;
   onClose: () => void;
+  onRename: () => void;
+  onRemove: () => void;
   onDismiss: () => void;
 }): ReactElement {
   const root = useRef<HTMLDivElement>(null);
@@ -441,7 +463,66 @@ function ProjectMenu({
       >
         Close project
       </button>
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          onDismiss();
+          onRename();
+        }}
+      >
+        Rename…
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          onDismiss();
+          onRemove();
+        }}
+      >
+        Remove project
+      </button>
     </div>
+  );
+}
+
+/** The row's name, editable in place. Enter keeps it, Escape leaves it. */
+function RenameField({
+  name,
+  projectId,
+  onDone,
+}: {
+  name: string;
+  projectId: string;
+  onDone: () => void;
+}): ReactElement {
+  const [draft, setDraft] = useState(name);
+  const settled = useRef(false);
+  const commit = () => {
+    if (settled.current) return;
+    settled.current = true;
+    if (draft.trim() !== name) {
+      void window.vowe.renameProject(projectId, draft).catch(() => undefined);
+    }
+    onDone();
+  };
+  return (
+    <input
+      className="rename-field"
+      aria-label="Project name"
+      autoFocus
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') commit();
+        if (event.key === 'Escape') {
+          settled.current = true;
+          onDone();
+        }
+      }}
+    />
   );
 }
 

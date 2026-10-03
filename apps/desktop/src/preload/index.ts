@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppearanceSetting,
   ContextRef,
+  CreateProjectInput,
   DesignChange,
   InvestigationProgress,
   StudioProgress,
@@ -96,6 +97,14 @@ const api: VoweApi = {
   setProjectOpen: (projectId: string, open: boolean) =>
     ipcRenderer.invoke(IPC.setProjectOpen, projectId, open),
   openProjectAt: (directory: string) => ipcRenderer.invoke(IPC.openProjectAt, directory),
+  createProject: (input: CreateProjectInput) => ipcRenderer.invoke(IPC.createProject, input),
+  renameProject: (projectId: string, name: string) =>
+    ipcRenderer.invoke(IPC.renameProject, projectId, name),
+  removeProject: (projectId: string) => ipcRenderer.invoke(IPC.removeProject, projectId),
+  addProjectFolder: (projectId: string, folder: string) =>
+    ipcRenderer.invoke(IPC.addProjectFolder, projectId, folder),
+  removeProjectFolder: (projectId: string, folder: string) =>
+    ipcRenderer.invoke(IPC.removeProjectFolder, projectId, folder),
   openArtifact: (ref: ContextRef) => ipcRenderer.invoke(IPC.openArtifact, ref),
   findFiles: (sessionId: string, query: string) =>
     ipcRenderer.invoke(IPC.findFiles, sessionId, query),

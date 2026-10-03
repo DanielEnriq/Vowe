@@ -25,3 +25,4 @@ export * from './session-title.js';
 export * from './user-profile.js';
 export * from './voice-preference.js';
 export * from './appearance.js';
+export * from '../projects/folder-label.js';
