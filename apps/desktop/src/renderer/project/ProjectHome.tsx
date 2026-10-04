@@ -3,14 +3,17 @@ import { useState, type ReactElement, type ReactNode } from 'react';
 import type { Project, ProjectBrief } from '@vowe/core';
 
 import { messageOf, tildePath } from '../components/ui.js';
+import type { FleetTab } from '../fleet/types.js';
+import { useFleetStatuses } from '../hooks/useVoweData.js';
 import { Fading } from '../shell/Fading.js';
 import { CloseIcon, FolderIcon, PlusIcon } from '../shell/icons.js';
-import { fleetSummary, ipcMessage, type StatusTone } from '../state/project-fleet.js';
+import { briefSessionIds, fleetSummary, ipcMessage, type StatusTone } from '../state/project-fleet.js';
 
 interface Props {
   project: Project;
   brief: ProjectBrief | null;
-  onOpenFleet: () => void;
+  /** The fleet, on the canvas unless a tab is named. */
+  onOpenFleet: (tab?: FleetTab) => void;
   onOpenSession: (sessionId: string) => void;
   onOpenConversation: () => void;
   onOpenStudio: () => void;
@@ -32,7 +35,8 @@ export function ProjectHome({
 }: Props): ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const fleet = fleetSummary(brief);
+  const statuses = useFleetStatuses(briefSessionIds(brief));
+  const fleet = fleetSummary(brief, statuses);
 
   const change = async (act: () => Promise<unknown>) => {
     setBusy(true);
@@ -91,7 +95,7 @@ export function ProjectHome({
           <section className="card grow">
             <header className="card-head">
               <h2 className="caps">Fleet</h2>
-              <button className="link-button tint" type="button" onClick={onOpenFleet}>Open Fleet</button>
+              <button className="link-button tint" type="button" onClick={() => onOpenFleet()}>Open Fleet</button>
             </header>
             <div className="card-body stats">
               <Stat tone="ask" value={fleet.running} label="Running" />
@@ -115,9 +119,9 @@ export function ProjectHome({
               <h2 className="caps">Jump to</h2>
             </header>
             <nav className="jump-list">
-              <Jump label="Panes" onClick={onOpenFleet} />
-              <Jump label="Compare attempts" onClick={onOpenFleet} />
-              <Jump label="Questions" onClick={onOpenFleet} count={fleet.needsYou || null} />
+              <Jump label="Panes" onClick={() => onOpenFleet('panes')} />
+              <Jump label="Compare attempts" onClick={() => onOpenFleet('compare')} />
+              <Jump label="Questions" onClick={() => onOpenFleet('questions')} count={fleet.needsYou || null} />
               <Jump label="Conversation" onClick={onOpenConversation} />
               <Jump label="Studio" onClick={onOpenStudio} />
             </nav>

@@ -12,6 +12,8 @@ import type { UserProfile } from '@vowe/core';
 import { DEFAULT_USER_PROFILE } from '@vowe/core/projections';
 
 import { NewSessionSheet } from './components/NewSessionSheet.js';
+import { FleetRoom } from './fleet/FleetRoom.js';
+import { ProjectRunSheet } from './fleet/NewRunSheet.js';
 import { NewProjectSheet } from './project/NewProjectSheet.js';
 import { ComposeIcon } from './shell/icons.js';
 import { PanelToggle } from './shell/PanelToggle.js';
@@ -38,7 +40,7 @@ import {
   withExpanded,
   writeExpanded,
 } from './state/disclosure.js';
-import { projectOf, reconcileRoute, type Route } from './state/navigation.js';
+import { fleetTabOf, projectOf, reconcileRoute, type Route } from './state/navigation.js';
 import { isOpenProject, panelProjects } from './state/project-visibility.js';
 import { sessionShortcutNumbers, sessionShortcutTargets } from './state/session-shortcuts.js';
 
@@ -108,6 +110,7 @@ export function AppShell(): ReactElement {
   const [route, setRoute] = useState<Route>({ kind: 'none' });
   const [sheetOpen, setSheetOpen] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
+  const [runningFor, setRunningFor] = useState<string | null>(null);
   const [commandHeld, setCommandHeld] = useState(false);
   const [user, setUser] = useState<UserProfile>(DEFAULT_USER_PROFILE);
   const [expanded, setExpanded] = useState<string[]>(readExpanded);
@@ -389,7 +392,16 @@ export function AppShell(): ReactElement {
             onOpenSession={(sessionId) => setRoute({ kind: 'session', sessionId })}
           />
         ) : project && live.kind === 'project' && live.view === 'fleet' ? (
-          <FleetRoom onHome={() => setRoute({ kind: 'project', projectId: project.id })} />
+          <FleetRoom
+            key={project.id}
+            project={project}
+            sessions={sessions}
+            tab={fleetTabOf(live)}
+            providers={status?.launchCapableProviders ?? []}
+            onTab={(tab) => setRoute({ kind: 'project', projectId: project.id, view: 'fleet', ...(tab === 'canvas' ? {} : { tab }) })}
+            onHome={() => setRoute({ kind: 'project', projectId: project.id })}
+            onOpenSession={(sessionId) => setRoute({ kind: 'session', sessionId })}
+          />
         ) : project ? (
           <ProjectSpace
             key={project.id}
@@ -403,8 +415,8 @@ export function AppShell(): ReactElement {
             onNavigate={(view, entryId) => setRoute({ kind: 'project', projectId: project.id, view, ...(entryId ? { entryId } : {}) })}
             onOpenStudio={(designId) => setRoute({ kind: 'project', projectId: project.id, view: 'studio', ...(designId ? { designId } : {}) })}
             onOpenSession={(sessionId) => setRoute({ kind: 'session', sessionId })}
-            onOpenFleet={() => setRoute({ kind: 'project', projectId: project.id, view: 'fleet' })}
-            onRunAgents={() => undefined}
+            onOpenFleet={(tab) => setRoute({ kind: 'project', projectId: project.id, view: 'fleet', ...(tab && tab !== 'canvas' ? { tab } : {}) })}
+            onRunAgents={() => setRunningFor(project.id)}
           />
         ) : live.kind === 'presence' ? (
           <PresenceStudio
@@ -439,6 +451,14 @@ export function AppShell(): ReactElement {
             void refresh().catch(() => undefined);
             setRoute({ kind: 'project', projectId: created.id });
           }}
+        />
+      )}
+
+      {runningFor && project?.id === runningFor && (
+        <ProjectRunSheet
+          project={project}
+          providers={status?.launchCapableProviders ?? []}
+          onClose={() => setRunningFor(null)}
         />
       )}
 
@@ -495,27 +515,6 @@ function Nowhere({
                 <code>export ANTHROPIC_API_KEY=sk-ant-…</code>
               </div>
             )}
-          </div>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-/** The fleet, before its canvas exists. The project's home is one step back. */
-function FleetRoom({ onHome }: { onHome: () => void }): ReactElement {
-  return (
-    <main className="pane">
-      <div className="scroll room">
-        <div className="room-inner">
-          <div className="empty-block" style={{ paddingTop: 48 }}>
-            <h2>Fleet</h2>
-            <p className="empty">No agents on the canvas yet.</p>
-            <div>
-              <button className="button" type="button" onClick={onHome}>
-                Back to project
-              </button>
-            </div>
           </div>
         </div>
       </div>

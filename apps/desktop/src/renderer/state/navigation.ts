@@ -1,5 +1,7 @@
 import type { AgentSession, Project } from '@vowe/core';
 
+import type { FleetTab } from '../fleet/types.js';
+
 /**
  * Where the developer is.
  *
@@ -12,12 +14,19 @@ export type Route =
   | { kind: 'project'; projectId: string; view?: 'home' | 'conversation'; entryId?: string }
   /** Studio: a project's designs. Without a `designId`, the most recent one. */
   | { kind: 'project'; projectId: string; view: 'studio'; designId?: string }
-  /** The fleet: the project's agents, on a canvas. */
-  | { kind: 'project'; projectId: string; view: 'fleet' }
+  /** The fleet: the project's agents, on a canvas, or one of its other views. Without a `tab`, the canvas. */
+  | { kind: 'project'; projectId: string; view: 'fleet'; tab?: FleetTab }
   | { kind: 'session'; sessionId: string }
   /** Your Vowe: how Vowe looks, sounds and talks. Presence Studio in code. */
   | { kind: 'presence' }
   | { kind: 'none' };
+
+export const FLEET_TABS: readonly FleetTab[] = ['canvas', 'panes', 'compare', 'questions'];
+
+/** The fleet's tab a route shows: the canvas unless it names another. */
+export function fleetTabOf(route: Route): FleetTab {
+  return route.kind === 'project' && route.view === 'fleet' && route.tab && FLEET_TABS.includes(route.tab) ? route.tab : 'canvas';
+}
 
 export interface NavigationContext {
   projects: readonly Project[];
@@ -40,7 +49,12 @@ export function reconcileRoute(route: Route, context: NavigationContext): Route 
     }
     case 'project': {
       const project = context.projects.find((candidate) => candidate.id === route.projectId);
-      return project ? route : { kind: 'none' };
+      if (!project) return { kind: 'none' };
+      // A tab that is not one of the fleet's is the canvas.
+      if (route.view === 'fleet' && route.tab !== undefined && !FLEET_TABS.includes(route.tab)) {
+        return { kind: 'project', projectId: route.projectId, view: 'fleet' };
+      }
+      return route;
     }
     default:
       return route;

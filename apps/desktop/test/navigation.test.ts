@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentSession, Project } from '@vowe/core';
 import {
   activeCount,
+  fleetTabOf,
   projectOf,
   reconcileRoute,
   sessionsForProject,
@@ -72,6 +73,21 @@ describe('Navigation', () => {
     expect(reconcileRoute(route, context)).toBe(route);
     expect(projectOf(route, context)).toBe(PROJECT.id);
     expect(reconcileRoute({ ...route, projectId: 'git:gone' }, context)).toEqual({ kind: 'none' });
+  });
+
+  it('keeps the fleet tab it was asked for, and reads no tab as the canvas', () => {
+    const panes = { kind: 'project', projectId: PROJECT.id, view: 'fleet', tab: 'panes' } as const;
+    expect(reconcileRoute(panes, context)).toBe(panes);
+    expect(fleetTabOf(panes)).toBe('panes');
+    expect(fleetTabOf({ kind: 'project', projectId: PROJECT.id, view: 'fleet' })).toBe('canvas');
+    expect(fleetTabOf({ kind: 'project', projectId: PROJECT.id })).toBe('canvas');
+    expect(reconcileRoute({ ...panes, projectId: 'git:gone' }, context)).toEqual({ kind: 'none' });
+  });
+
+  it('turns a tab that is not the fleet’s into the canvas', () => {
+    const odd = { kind: 'project', projectId: PROJECT.id, view: 'fleet', tab: 'nonsense' } as unknown as Parameters<typeof reconcileRoute>[0];
+    expect(reconcileRoute(odd, context)).toEqual({ kind: 'project', projectId: PROJECT.id, view: 'fleet' });
+    expect(fleetTabOf(odd)).toBe('canvas');
   });
 
   it('leaves the studio alone', () => {
