@@ -1,61 +1,115 @@
-import type { AgentSession, Project, ProjectBrief, ProjectSessionSummary } from '@vowe/core';
+import type { AgentSession, FleetStatus, Project, ProjectBrief, ProjectSessionSummary } from '@vowe/core';
 
 /**
- * What a project's home and its row in the panel say about the work in it.
+ * What a project's home, its row in the panel and the fleet band say about the
+ * work in it.
  *
- * Pure, and read from what the main process already projected — the sessions
- * and the brief — so nothing here can disagree with the rooms behind it.
+ * One vocabulary: the main process's `FleetStatus` projection. The brief is
+ * only read for which sessions to list, and for a status in the moment before
+ * the projection has answered.
  */
 
 /** The tone a status is drawn in. Each one a token, each a different lightness. */
 export type StatusTone = 'ask' | 'attention' | 'good' | 'bad' | 'idle';
 
-export interface FleetStatus {
-  tone: StatusTone;
-  /** Always said in words beside the dot. */
-  word: 'running' | 'needs you' | 'done' | 'failed' | 'idle';
+export const STATUS_TONE: Record<FleetStatus, StatusTone> = {
+  running: 'ask',
+  'needs-you': 'attention',
+  done: 'good',
+  failed: 'bad',
+  idle: 'idle',
+};
+
+/** Always said in words beside the dot. */
+export function statusWord(status: FleetStatus): string {
+  return status === 'needs-you' ? 'needs you' : status;
 }
 
-export interface FleetRow extends FleetStatus {
-  sessionId: string;
-  title: string;
-}
-
-export interface FleetSummary {
-  running: number;
-  needsYou: number;
-  done: number;
-  rows: FleetRow[];
-}
-
-/** A session in the brief, as a dot and a word. Needing you outranks running. */
-export function fleetStatusOf(session: Pick<ProjectSessionSummary, 'status' | 'needsAttention'>): FleetStatus {
-  if (session.needsAttention) return { tone: 'attention', word: 'needs you' };
+/**
+ * A brief's session as a status, until the projection says otherwise. It can
+ * tell neither a failure nor a captain's question apart, so it never says
+ * `failed`, and attention reads as needing you.
+ */
+export function statusFromBrief(session: Pick<ProjectSessionSummary, 'status' | 'needsAttention'>): FleetStatus {
+  if (session.needsAttention) return 'needs-you';
   switch (session.status) {
     case 'working':
     case 'starting':
-      return { tone: 'ask', word: 'running' };
+      return 'running';
     case 'finished':
-      return { tone: 'good', word: 'done' };
+      return 'done';
     default:
-      return { tone: 'idle', word: 'idle' };
+      return 'idle';
   }
 }
 
+export interface FleetCounts {
+  running: number;
+  needsYou: number;
+  done: number;
+  failed: number;
+}
+
+/** Counts over `sessionIds` (every key when absent); a session with no status yet is not counted. */
+export function fleetCounts(statuses: Readonly<Record<string, FleetStatus>>, sessionIds?: readonly string[]): FleetCounts {
+  const counts: FleetCounts = { running: 0, needsYou: 0, done: 0, failed: 0 };
+  for (const id of new Set(sessionIds ?? Object.keys(statuses))) {
+    const status = statuses[id];
+    if (status === 'running') counts.running += 1;
+    else if (status === 'needs-you') counts.needsYou += 1;
+    else if (status === 'done') counts.done += 1;
+    else if (status === 'failed') counts.failed += 1;
+  }
+  return counts;
+}
+
+/** `4 running · 1 needs you · 2 done`, as parts so each can carry its dot. */
+export function countParts(counts: FleetCounts): { tone: StatusTone; text: string }[] {
+  return [
+    { tone: 'ask', text: `${counts.running} running` },
+    { tone: 'attention', text: `${counts.needsYou} needs you` },
+    { tone: 'good', text: `${counts.done} done` },
+  ];
+}
+
+export interface FleetRow {
+  sessionId: string;
+  title: string;
+  status: FleetStatus;
+  tone: StatusTone;
+  word: string;
+}
+
+export interface FleetSummary extends Omit<FleetCounts, 'failed'> {
+  rows: FleetRow[];
+}
+
+/** The sessions a brief lists, live work first. */
+export function briefSessionIds(brief: ProjectBrief | null): string[] {
+  return brief ? [...new Set([...brief.active, ...brief.recent].map((session) => session.sessionId))] : [];
+}
+
 /** The fleet card: counts, then the live work and what finished after it. */
-export function fleetSummary(brief: ProjectBrief | null, limit = 6): FleetSummary {
+export function fleetSummary(
+  brief: ProjectBrief | null,
+  statuses: Readonly<Record<string, FleetStatus>> = {},
+  limit = 6,
+): FleetSummary {
   const sessions = brief ? [...brief.active, ...brief.recent] : [];
-  const rows = sessions.map((session) => ({
-    sessionId: session.sessionId,
-    title: session.title,
-    ...fleetStatusOf(session),
-  }));
-  const count = (word: FleetStatus['word']) => rows.filter((row) => row.word === word).length;
+  const seen = new Set<string>();
+  const rows: FleetRow[] = [];
+  for (const session of sessions) {
+    if (seen.has(session.sessionId)) continue;
+    seen.add(session.sessionId);
+    const status = statuses[session.sessionId] ?? statusFromBrief(session);
+    rows.push({ sessionId: session.sessionId, title: session.title, status, tone: STATUS_TONE[status], word: statusWord(status) });
+  }
+  const count = (status: FleetStatus) => rows.filter((row) => row.status === status).length;
   return {
     running: count('running'),
-    needsYou: count('needs you'),
+    needsYou: count('needs-you'),
     done: count('done'),
-    rows: rows.filter((row) => row.word !== 'idle').slice(0, limit),
+    rows: rows.filter((row) => row.status !== 'idle').slice(0, limit),
   };
 }
 

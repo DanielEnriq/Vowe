@@ -20,6 +20,7 @@ import { Workbench } from '../workbench/Workbench.js';
 import { ProjectAsk } from './ProjectAsk.js';
 import { ProjectConversation } from './ProjectConversation.js';
 import { ProjectHome } from './ProjectHome.js';
+import type { FleetTab } from '../fleet/types.js';
 
 interface Props {
   project: Project;
@@ -33,8 +34,8 @@ interface Props {
   /** Into Studio: a particular design, or the most recent one. */
   onOpenStudio: (designId?: string) => void;
   onOpenSession: (sessionId: string) => void;
-  onOpenFleet: () => void;
-  /** Spawning agents. Its sheet arrives with the fleet canvas. */
+  onOpenFleet: (tab?: FleetTab) => void;
+  /** Opens the sheet that runs agents. */
   onRunAgents: () => void;
 }
 

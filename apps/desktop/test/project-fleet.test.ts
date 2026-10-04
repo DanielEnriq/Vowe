@@ -5,10 +5,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentSession, Project, ProjectBrief, ProjectSessionSummary } from '@vowe/core';
 import { ProjectHome } from '../src/renderer/project/ProjectHome.js';
 import {
-  fleetStatusOf,
+  STATUS_TONE,
+  briefSessionIds,
+  countParts,
+  fleetCounts,
   fleetSummary,
   ipcMessage,
   projectLine,
+  statusFromBrief,
+  statusWord,
 } from '../src/renderer/state/project-fleet.js';
 
 function summary(overrides: Partial<ProjectSessionSummary> & { sessionId: string }): ProjectSessionSummary {
@@ -60,12 +65,18 @@ function session(overrides: Partial<AgentSession> & { id: string }): AgentSessio
 }
 
 describe('Fleet status', () => {
-  it('says each status as a tone and a word, needing you first', () => {
-    expect(fleetStatusOf({ status: 'working', needsAttention: false })).toEqual({ tone: 'ask', word: 'running' });
-    expect(fleetStatusOf({ status: 'starting', needsAttention: false }).word).toBe('running');
-    expect(fleetStatusOf({ status: 'working', needsAttention: true })).toEqual({ tone: 'attention', word: 'needs you' });
-    expect(fleetStatusOf({ status: 'finished', needsAttention: false })).toEqual({ tone: 'good', word: 'done' });
-    expect(fleetStatusOf({ status: 'waiting', needsAttention: false })).toEqual({ tone: 'idle', word: 'idle' });
+  it('draws each status in its own token and says it in a word', () => {
+    expect(STATUS_TONE).toEqual({ running: 'ask', 'needs-you': 'attention', done: 'good', failed: 'bad', idle: 'idle' });
+    expect(statusWord('needs-you')).toBe('needs you');
+    expect(statusWord('failed')).toBe('failed');
+  });
+
+  it('reads a brief session as a status until the projection answers, needing you first', () => {
+    expect(statusFromBrief({ status: 'working', needsAttention: false })).toBe('running');
+    expect(statusFromBrief({ status: 'starting', needsAttention: false })).toBe('running');
+    expect(statusFromBrief({ status: 'working', needsAttention: true })).toBe('needs-you');
+    expect(statusFromBrief({ status: 'finished', needsAttention: false })).toBe('done');
+    expect(statusFromBrief({ status: 'waiting', needsAttention: false })).toBe('idle');
   });
 
   it('counts the fleet and lists what is not idle', () => {
@@ -80,15 +91,43 @@ describe('Fleet status', () => {
       ),
     );
     expect(fleet).toMatchObject({ running: 1, needsYou: 1, done: 1 });
-    expect(fleet.rows.map((row) => [row.sessionId, row.word])).toEqual([
-      ['a', 'running'],
-      ['b', 'needs you'],
-      ['d', 'done'],
+    expect(fleet.rows.map((row) => [row.sessionId, row.word, row.tone])).toEqual([
+      ['a', 'running', 'ask'],
+      ['b', 'needs you', 'attention'],
+      ['d', 'done', 'good'],
     ]);
+  });
+
+  /** The main process's projection is the one vocabulary: it can say failed, and that a captain has a question. */
+  it('prefers the projected status over what the brief suggests', () => {
+    const fleet = fleetSummary(
+      brief([summary({ sessionId: 'a' }), summary({ sessionId: 'b', needsAttention: true })], [summary({ sessionId: 'c', status: 'finished' })]),
+      { a: 'failed', b: 'running', c: 'done' },
+    );
+    expect(fleet.rows.map((row) => [row.sessionId, row.status, row.tone])).toEqual([
+      ['a', 'failed', 'bad'],
+      ['b', 'running', 'ask'],
+      ['c', 'done', 'good'],
+    ]);
+    expect(fleet).toMatchObject({ running: 1, needsYou: 0, done: 1 });
   });
 
   it('is empty before the brief arrives', () => {
     expect(fleetSummary(null)).toEqual({ running: 0, needsYou: 0, done: 0, rows: [] });
+    expect(briefSessionIds(null)).toEqual([]);
+  });
+
+  it('lists a brief’s sessions once each', () => {
+    expect(briefSessionIds(brief([summary({ sessionId: 'a' })], [summary({ sessionId: 'a' }), summary({ sessionId: 'b' })]))).toEqual(['a', 'b']);
+  });
+
+  it('counts statuses over the sessions asked about, ignoring ones not yet known', () => {
+    const statuses = { a: 'running', b: 'needs-you', c: 'done', d: 'failed', e: 'idle', f: 'running' } as const;
+    expect(fleetCounts(statuses)).toEqual({ running: 2, needsYou: 1, done: 1, failed: 1 });
+    expect(fleetCounts(statuses, ['a', 'a', 'c', 'unknown'])).toEqual({ running: 1, needsYou: 0, done: 1, failed: 0 });
+    expect(countParts({ running: 4, needsYou: 1, done: 2, failed: 0 }).map((part) => part.text).join(' · ')).toBe(
+      '4 running · 1 needs you · 2 done',
+    );
   });
 });
 
