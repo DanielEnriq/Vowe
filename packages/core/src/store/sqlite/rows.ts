@@ -25,6 +25,7 @@ import type {
 } from '../../types/session.js';
 import type { Project, ProjectFolder } from '../../projects/project.js';
 import type { Design, DesignEntry, DesignRevision } from '../../studio/types.js';
+import type { CaptainExchange } from '../../fleet/types.js';
 import type {
   CommunicationDecision,
   ObservationState,
@@ -619,4 +620,33 @@ export function toWorkbench(row: Row): PersistedWorkbench | null {
     activeId:
       typeof activeId === 'string' && seen.has(activeId) ? activeId : null,
   };
+}
+
+// ---------------------------------------------------------- captain exchanges
+
+export function toCaptainExchange(row: Row): CaptainExchange {
+  const id = str(row['id']);
+  const exchange: CaptainExchange = {
+    id,
+    projectId: str(row['project_id']),
+    askerSessionId: str(row['asker_session_id']),
+    questionId: str(row['question_id']),
+    captainSessionId: strOrNull(row['captain_session_id']),
+    question: str(row['question']),
+    captainAnswer: strOrNull(row['captain_answer']),
+    route: str(row['route']) as CaptainExchange['route'],
+    userAnswer: strOrNull(row['user_answer']),
+    status: str(row['status']) as CaptainExchange['status'],
+    delivery: strOrNull(row['delivery']) as CaptainExchange['delivery'],
+    askedAt: str(row['asked_at']),
+    answeredAt: strOrNull(row['answered_at']),
+  };
+  if (row['tool_use_id'] !== null) exchange.toolUseId = str(row['tool_use_id']);
+  if (row['options_json'] !== null) {
+    exchange.options = parse<string[]>(row['options_json'], 'captain_exchanges', id);
+  }
+  if (row['passed_to_you_reason'] !== null) {
+    exchange.passedToYouReason = str(row['passed_to_you_reason']);
+  }
+  return exchange;
 }

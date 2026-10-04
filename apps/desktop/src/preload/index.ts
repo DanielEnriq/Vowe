@@ -20,6 +20,7 @@ import type {
   VoweRunActivity,
 } from '@vowe/core';
 import type { FleetLayoutChange } from '@vowe/core';
+import type { CaptainExchangeChange } from '@vowe/core';
 import { IPC, type VoweApi } from '../shared/ipc.js';
 
 const api: VoweApi = {
@@ -203,6 +204,22 @@ const api: VoweApi = {
     ipcRenderer.on(IPC.runActivityChanged, handler);
     return () => ipcRenderer.off(IPC.runActivityChanged, handler);
   },
+  launchCaptain: (projectId, folder) => ipcRenderer.invoke(IPC.launchCaptain, projectId, folder),
+  listCaptainExchanges: (projectId) => ipcRenderer.invoke(IPC.listCaptainExchanges, projectId),
+  answerQuestion: (exchangeId, text, alsoTellCaptain) =>
+    ipcRenderer.invoke(IPC.answerQuestion, exchangeId, text, alsoTellCaptain),
+  onCaptainExchangeChanged: (listener) => {
+    const handler = (_: unknown, change: CaptainExchangeChange) => listener(change);
+    ipcRenderer.on(IPC.captainExchangeChanged, handler);
+    return () => ipcRenderer.off(IPC.captainExchangeChanged, handler);
+  },
+  getFleetStatuses: (sessionIds) => ipcRenderer.invoke(IPC.getFleetStatuses, sessionIds),
+  onFleetStatusChanged: (listener) => {
+    const handler = (_: unknown, sessionId: string) => listener(sessionId);
+    ipcRenderer.on(IPC.fleetStatusChanged, handler);
+    return () => ipcRenderer.off(IPC.fleetStatusChanged, handler);
+  },
+  getAttemptSummaries: (sessionIds) => ipcRenderer.invoke(IPC.getAttemptSummaries, sessionIds),
 };
 
 contextBridge.exposeInMainWorld('vowe', api);

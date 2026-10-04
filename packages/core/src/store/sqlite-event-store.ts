@@ -45,6 +45,11 @@ import { normalizeFleetLayout, parseFleetLayout } from '../fleet/fleet-model.js'
 import type { FleetLayout, FleetLayoutChange } from '../fleet/fleet-model.js';
 import type { FleetLayoutStore } from '../fleet/fleet-store.js';
 import type {
+  CaptainExchange,
+  CaptainExchangeChange,
+  CaptainExchangeStore,
+} from '../fleet/types.js';
+import type {
   ConversationChange,
   EventQuery,
   ProjectConversationChange,
@@ -91,7 +96,7 @@ export interface SqliteEventStoreOptions {
 const EVENTS_WITHOUT_RAW = `session_id, seq, id, at, kind, summary, detail_json, NULL AS raw_json,
   raw_source, raw_byte_offset, raw_line, raw_ordinal, logical_key, active, evidence_json`;
 
-export class SqliteEventStore implements EventStore, DesignStore, FleetLayoutStore {
+export class SqliteEventStore implements EventStore, DesignStore, FleetLayoutStore, CaptainExchangeStore {
   private readonly root: string;
   private readonly onError: (scope: string, error: unknown) => void;
   private readonly migrations: readonly Migration[] | undefined;
@@ -104,6 +109,7 @@ export class SqliteEventStore implements EventStore, DesignStore, FleetLayoutSto
   private readonly designListeners = new Set<(change: DesignChange) => void>();
   private readonly fleetLayoutListeners = new Set<(change: FleetLayoutChange) => void>();
   private readonly projectListeners = new Set<(projectId: string) => void>();
+  private readonly captainListeners = new Set<(change: CaptainExchangeChange) => void>();
   private readonly cache = new Map<string, StatementSync>();
   private db: DatabaseSync | null = null;
   private evidence: EvidenceLedger | null = null;
@@ -927,6 +933,78 @@ export class SqliteEventStore implements EventStore, DesignStore, FleetLayoutSto
         this.onError('fleet-layout-listener', error);
       }
     }
+  }
+
+  // ------------------------------------------------------- captain exchanges
+
+  async saveCaptainExchange(exchange: CaptainExchange): Promise<CaptainExchange> {
+    const saved = this.transaction(() => {
+      const row = this.get(
+        `INSERT INTO captain_exchanges (id, project_id, asker_session_id, question_id, tool_use_id,
+           captain_session_id, question, options_json, captain_answer, route, passed_to_you_reason,
+           user_answer, status, delivery, asked_at, answered_at)
+         VALUES (:id, :projectId, :askerSessionId, :questionId, :toolUseId, :captainSessionId,
+           :question, :options, :captainAnswer, :route, :passedToYouReason, :userAnswer, :status,
+           :delivery, :askedAt, :answeredAt)
+         ON CONFLICT (id) DO UPDATE SET
+           captain_session_id = excluded.captain_session_id,
+           captain_answer = excluded.captain_answer,
+           route = excluded.route,
+           passed_to_you_reason = excluded.passed_to_you_reason,
+           user_answer = excluded.user_answer,
+           status = excluded.status,
+           delivery = excluded.delivery,
+           answered_at = excluded.answered_at
+         RETURNING *`,
+        {
+          id: exchange.id,
+          projectId: exchange.projectId,
+          askerSessionId: exchange.askerSessionId,
+          questionId: exchange.questionId,
+          toolUseId: rows.text(exchange.toolUseId),
+          captainSessionId: rows.text(exchange.captainSessionId),
+          question: exchange.question,
+          options: rows.json(exchange.options),
+          captainAnswer: rows.text(exchange.captainAnswer),
+          route: exchange.route,
+          passedToYouReason: rows.text(exchange.passedToYouReason),
+          userAnswer: rows.text(exchange.userAnswer),
+          status: exchange.status,
+          delivery: rows.text(exchange.delivery),
+          askedAt: exchange.askedAt,
+          answeredAt: rows.text(exchange.answeredAt),
+        },
+      );
+      return rows.toCaptainExchange(row!);
+    });
+    const change = { exchangeId: saved.id, projectId: saved.projectId };
+    for (const listener of this.captainListeners) {
+      try {
+        listener(change);
+      } catch (error) {
+        this.onError('captain-exchange-listener', error);
+      }
+    }
+    return saved;
+  }
+
+  getCaptainExchange(exchangeId: string): CaptainExchange | null {
+    const row = this.get('SELECT * FROM captain_exchanges WHERE id = ?', exchangeId);
+    return row ? rows.toCaptainExchange(row) : null;
+  }
+
+  listCaptainExchanges(projectId: string): CaptainExchange[] {
+    return this.all(
+      'SELECT * FROM captain_exchanges WHERE project_id = ? ORDER BY asked_at DESC, rowid DESC',
+      projectId,
+    ).map(rows.toCaptainExchange);
+  }
+
+  onCaptainExchangeChanged(listener: (change: CaptainExchangeChange) => void): () => void {
+    this.captainListeners.add(listener);
+    return () => {
+      this.captainListeners.delete(listener);
+    };
   }
 
   // --------------------------------------------------------------- delivery

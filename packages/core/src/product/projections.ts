@@ -26,3 +26,5 @@ export * from './user-profile.js';
 export * from './voice-preference.js';
 export * from './appearance.js';
 export * from '../projects/folder-label.js';
+export * from '../fleet/status.js';
+export * from '../fleet/attempt.js';

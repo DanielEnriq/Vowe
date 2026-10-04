@@ -43,6 +43,7 @@ import type {
   WorkbenchCandidate,
 } from '@vowe/core';
 import type { FleetLayout, FleetLayoutChange } from '@vowe/core';
+import type { AttemptSummary, CaptainExchange, CaptainExchangeChange, FleetStatus } from '@vowe/core';
 
 /**
  * The renderer's view of the main process.
@@ -458,6 +459,24 @@ export interface VoweApi {
   saveFleetLayout(projectId: string, layout: FleetLayout): Promise<FleetLayout>;
   /** A project's fleet layout was saved, after commit. */
   onFleetLayoutChanged(listener: (change: FleetLayoutChange) => void): () => void;
+  // ------------------------------------------------------------------ fleet
+
+  /**
+   * A captain: a read-only Claude worker given the captain brief. Wiring it
+   * to agents is fleet layout; until wired, nothing is routed to it.
+   */
+  launchCaptain(projectId: string, folder: string): Promise<AgentSession>;
+  /** Every question a worker in this project asked, newest first. */
+  listCaptainExchanges(projectId: string): Promise<CaptainExchange[]>;
+  /** The developer answers a question that came to them. */
+  answerQuestion(exchangeId: string, text: string, alsoTellCaptain: boolean): Promise<CaptainExchange>;
+  /** After commit. */
+  onCaptainExchangeChanged(listener: (change: CaptainExchangeChange) => void): () => void;
+  getFleetStatuses(sessionIds: string[]): Promise<Record<string, FleetStatus>>;
+  /** A worker's turn started or ended; its fleet status may have changed. */
+  onFleetStatusChanged(listener: (sessionId: string) => void): () => void;
+  /** Compare data, in the order asked. Unknown sessions are left out. */
+  getAttemptSummaries(sessionIds: string[]): Promise<AttemptSummary[]>;
 }
 
 /**
@@ -618,4 +637,11 @@ export const IPC = {
   getFleetLayout: 'vowe:fleet:layout:get',
   saveFleetLayout: 'vowe:fleet:layout:save',
   fleetLayoutChanged: 'vowe:fleet:layout:changed',
+  launchCaptain: 'vowe:fleet:launch-captain',
+  listCaptainExchanges: 'vowe:fleet:exchanges',
+  answerQuestion: 'vowe:fleet:answer',
+  captainExchangeChanged: 'vowe:fleet:exchange-changed',
+  getFleetStatuses: 'vowe:fleet:statuses',
+  fleetStatusChanged: 'vowe:fleet:status-changed',
+  getAttemptSummaries: 'vowe:fleet:attempts',
 } as const;
