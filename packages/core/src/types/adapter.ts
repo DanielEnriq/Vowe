@@ -1,5 +1,6 @@
 import type { EvidenceSource } from '../evidence/types.js';
 import type { WorkerOutcome, WorkerQuestionEvent } from '../fleet/types.js';
+import type { TranscriptDelta, TranscriptPage } from '../fleet/transcript.js';
 import type { AdapterEvent } from './events.js';
 import type { AgentSession } from './session.js';
 
@@ -99,6 +100,17 @@ export interface AgentAdapter {
   /** Optional: how a worker's turns end, for workers whose turns it can see. */
   onOutcome?(listener: (outcome: WorkerOutcome) => void): Unsubscribe;
   outcomeOf?(providerSessionId: string): WorkerOutcome | null;
+
+  /**
+   * Optional: Fleet's transcript feed, a reading surface separate from
+   * `subscribeToEvents`. A page's `sessionId` and every delta's `sessionId`
+   * are Vowe's session id, not the provider's.
+   */
+  readTranscript?(
+    providerSessionId: string,
+    options?: { before?: string; limit?: number },
+  ): Promise<TranscriptPage>;
+  onTranscriptDelta?(listener: (delta: TranscriptDelta) => void): Unsubscribe;
 
   /** Release watchers, subprocesses and handles. */
   dispose?(): Promise<void>;

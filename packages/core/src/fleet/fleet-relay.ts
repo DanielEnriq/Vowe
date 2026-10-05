@@ -376,7 +376,7 @@ export class FleetRelay {
     try {
       const result = await this.workers.relay(
         exchange.askerSessionId,
-        `Answer to your earlier question (${oneLine(exchange.question)}):\n${answer}`,
+        `${CAPTAIN_ANSWER_MARK}${oneLine(exchange.question)}):\n${answer}`,
       );
       return result.delivered ? 'instruction' : 'failed';
     } catch (error) {
@@ -420,10 +420,26 @@ function nameOf(session: AgentSession | null): string {
   return session.generatedTitle ?? session.displayLabel;
 }
 
+/** How the relay's own messages begin, so a transcript can tell them apart. */
+const RELAY_MARK = '[Vowe relay]';
+const CAPTAIN_ANSWER_MARK = 'Answer to your earlier question (';
+
+/**
+ * Who a user-role message delivered by the relay came from: a captain's answer
+ * passed to the agent that asked, or the relay writing to a captain. Null for
+ * anything the relay did not write.
+ */
+export function relayOriginOf(text: string): 'captain' | 'relay' | null {
+  const start = text.trimStart();
+  if (start.startsWith(CAPTAIN_ANSWER_MARK)) return 'captain';
+  if (start.startsWith(RELAY_MARK)) return 'relay';
+  return null;
+}
+
 /** What the captain is told when a question is relayed to it. */
 export function relayMessage(asker: AgentSession | null, exchange: CaptainExchange): string {
   const lines = [
-    `[Vowe relay] A question from ${nameOf(asker)}${asker?.task ? `, working on: ${oneLine(asker.task)}` : ''}.`,
+    `${RELAY_MARK} A question from ${nameOf(asker)}${asker?.task ? `, working on: ${oneLine(asker.task)}` : ''}.`,
     '',
     exchange.question,
   ];
@@ -438,7 +454,7 @@ export function relayMessage(asker: AgentSession | null, exchange: CaptainExchan
 
 function informMessage(asker: AgentSession | null, exchange: CaptainExchange): string {
   return [
-    `[Vowe relay] For your context: the developer answered a question from ${nameOf(asker)}.`,
+    `${RELAY_MARK} For your context: the developer answered a question from ${nameOf(asker)}.`,
     '',
     `Question: ${exchange.question}`,
     `Answer: ${exchange.userAnswer ?? ''}`,

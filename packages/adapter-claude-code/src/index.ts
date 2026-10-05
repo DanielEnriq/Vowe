@@ -5,3 +5,4 @@ export * from './normalize.js';
 export * from './paths.js';
 export * from './transcript.js';
 export * from './consultant.js';
+export * from './transcript-feed.js';

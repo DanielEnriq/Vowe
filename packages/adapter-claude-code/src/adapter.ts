@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import {
   CapabilityUnsupportedError,
+  pageTranscript,
   type AdapterEvent,
   type AgentAdapter,
   type AgentSession,
@@ -11,6 +12,9 @@ import {
   type LaunchOptions,
   type SessionCapabilities,
   type SessionStatus,
+  type TranscriptDelta,
+  type TranscriptItem,
+  type TranscriptPage,
   type Unsubscribe,
   type WorkerOutcome,
   type WorkerQuestionEvent,
@@ -27,6 +31,7 @@ import {
 } from './normalize.js';
 import { defaultPaths, type ClaudeCodePaths } from './paths.js';
 import { IncrementalTranscriptReader, type TranscriptLine } from './transcript.js';
+import { LiveTranscript, TranscriptBuilder } from './transcript-feed.js';
 
 export const PROVIDER = 'claude-code';
 
@@ -43,6 +48,17 @@ interface TranscriptMeta {
   task: string | null;
   providerTitle: string | null;
 }
+
+/** A transcript the feed has read, kept current while someone may be reading it. */
+interface TranscriptWatch {
+  reader: IncrementalTranscriptReader;
+  builder: TranscriptBuilder;
+  /** Serialises reads, so the poll and a page request never share a cursor. */
+  busy: Promise<unknown>;
+}
+
+/** Transcripts kept current at once; the least recently read is let go. */
+const WATCHED_TRANSCRIPTS = 12;
 
 interface EventStream {
   reader: IncrementalTranscriptReader;
@@ -82,6 +98,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   private readonly meta = new Map<string, TranscriptMeta>();
   private readonly streams = new Map<string, EventStream>();
   private readonly live = new Map<string, LiveSessionRecord>();
+  private readonly watches = new Map<string, TranscriptWatch>();
+  private readonly liveTranscripts = new Map<string, LiveTranscript>();
+  private readonly transcriptListeners = new Set<(delta: TranscriptDelta) => void>();
   private readonly onError: (scope: string, error: unknown) => void;
   private timer: NodeJS.Timeout | null = null;
 
@@ -94,6 +113,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       permissionMode: options.permissionMode,
       onError: this.onError,
       ...(options.query ? { query: options.query } : {}),
+    });
+    this.control.onMessage((providerSessionId, message) => {
+      let tee = this.liveTranscripts.get(providerSessionId);
+      if (!tee) {
+        tee = new LiveTranscript(`${PROVIDER}:${providerSessionId}`);
+        this.liveTranscripts.set(providerSessionId, tee);
+      }
+      for (const delta of tee.consume(message)) this.emitTranscript(delta);
     });
   }
 
@@ -264,6 +291,31 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     return this.control.outcomeOf(providerSessionId);
   }
 
+  // --------------------------------------------------------- transcript feed
+
+  /**
+   * A page of the session's transcript, oldest first. History is the JSONL on
+   * disk; for a session Vowe launched, what the SDK already delivered is laid
+   * over it, so a page read just after a block streamed still has it.
+   */
+  async readTranscript(
+    providerSessionId: string,
+    options: { before?: string; limit?: number } = {},
+  ): Promise<TranscriptPage> {
+    const watch = await this.watchTranscript(providerSessionId);
+    const items = withLive(watch?.builder.all() ?? [], this.liveTranscripts.get(providerSessionId)?.items() ?? []);
+    return {
+      sessionId: `${PROVIDER}:${providerSessionId}`,
+      ...pageTranscript(items, options),
+      live: this.control.isManaged(providerSessionId) || this.live.has(providerSessionId),
+    };
+  }
+
+  onTranscriptDelta(listener: (delta: TranscriptDelta) => void): Unsubscribe {
+    this.transcriptListeners.add(listener);
+    return () => this.transcriptListeners.delete(listener);
+  }
+
   async launchSession(options: LaunchOptions): Promise<AgentSession> {
     const managed = await this.control.launch(options.cwd, options.prompt, {
       ...(options.readOnly ? { readOnly: true } : {}),
@@ -282,6 +334,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.streams.clear();
+    this.watches.clear();
+    this.liveTranscripts.clear();
     await this.control.dispose();
   }
 
@@ -301,6 +355,71 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         await this.pumpStream(sessionId);
       } catch (error) {
         this.onError(`pump:${sessionId}`, error);
+      }
+    }
+    for (const sessionId of [...this.watches.keys()]) {
+      try {
+        await this.watchTranscript(sessionId, false);
+      } catch (error) {
+        this.onError(`transcript:${sessionId}`, error);
+      }
+    }
+  }
+
+  /**
+   * Read what is new in a session's transcript into its feed, starting the
+   * watch on first use. New records become an `items` delta; for a session
+   * Vowe holds, only user messages do, since the SDK tee already sent the rest
+   * (and with thinking text the file may not keep). Null while no transcript
+   * exists yet.
+   */
+  private async watchTranscript(providerSessionId: string, touch = true): Promise<TranscriptWatch | null> {
+    let watch = this.watches.get(providerSessionId);
+    const file =
+      this.meta.get(providerSessionId)?.file ??
+      watch?.reader.file ??
+      (await this.locateTranscript(providerSessionId));
+    if (!file) return null;
+    const fresh = !watch || watch.reader.file !== file;
+    if (!watch || fresh) {
+      watch = { reader: new IncrementalTranscriptReader(file), builder: new TranscriptBuilder(), busy: Promise.resolve() };
+    }
+    if (touch || fresh) {
+      // Most recently read last, so eviction takes the oldest.
+      this.watches.delete(providerSessionId);
+      this.watches.set(providerSessionId, watch);
+      for (const stale of [...this.watches.keys()].slice(0, Math.max(0, this.watches.size - WATCHED_TRANSCRIPTS))) {
+        this.watches.delete(stale);
+      }
+    }
+    this.ensurePolling();
+
+    const current = watch;
+    const read = current.busy.then(async () => {
+      const changed = new Map<string, TranscriptItem>();
+      for await (const line of current.reader.drain(() => {
+        current.builder = new TranscriptBuilder();
+        changed.clear();
+      })) {
+        for (const item of current.builder.consume(line.record)) changed.set(item.id, item);
+      }
+      // A first read is history, delivered as a page rather than a delta.
+      if (fresh || !changed.size) return;
+      const held = this.control.isManaged(providerSessionId);
+      const items = [...changed.values()].filter((item) => !held || item.kind === 'user');
+      if (items.length) this.emitTranscript({ type: 'items', sessionId: `${PROVIDER}:${providerSessionId}`, items });
+    });
+    current.busy = read.catch(() => undefined);
+    await read;
+    return current;
+  }
+
+  private emitTranscript(delta: TranscriptDelta): void {
+    for (const listener of this.transcriptListeners) {
+      try {
+        listener(delta);
+      } catch (error) {
+        this.onError('transcript-listener', error);
       }
     }
   }
@@ -480,6 +599,22 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       semanticState: null,
     };
   }
+}
+
+/**
+ * The file's items with the SDK's versions laid over them by id, then what
+ * the SDK delivered that the file does not have yet, which is the newest.
+ */
+function withLive(fromFile: TranscriptItem[], fromSdk: TranscriptItem[]): TranscriptItem[] {
+  if (!fromSdk.length) return fromFile;
+  const sdk = new Map(fromSdk.map((item) => [item.id, item]));
+  const merged = fromFile.map((item) => {
+    const live = sdk.get(item.id);
+    if (!live) return item;
+    sdk.delete(item.id);
+    return live;
+  });
+  return [...merged, ...sdk.values()];
 }
 
 /**

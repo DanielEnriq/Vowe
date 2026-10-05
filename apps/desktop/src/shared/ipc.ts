@@ -44,6 +44,7 @@ import type {
 } from '@vowe/core';
 import type { FleetLayout, FleetLayoutChange } from '@vowe/core';
 import type { AttemptSummary, CaptainExchange, CaptainExchangeChange, FleetStatus } from '@vowe/core';
+import type { TranscriptDelta, TranscriptPage } from '@vowe/core';
 
 /**
  * The renderer's view of the main process.
@@ -477,6 +478,16 @@ export interface VoweApi {
   onFleetStatusChanged(listener: (sessionId: string) => void): () => void;
   /** Compare data, in the order asked. Unknown sessions are left out. */
   getAttemptSummaries(sessionIds: string[]): Promise<AttemptSummary[]>;
+  /**
+   * Fleet's transcript feed: newest page by default, items oldest first.
+   * Separate from session events; empty for a provider without one.
+   */
+  getTranscript(sessionId: string, options?: { before?: string; limit?: number }): Promise<TranscriptPage>;
+  onTranscriptDelta(listener: (delta: TranscriptDelta) => void): () => void;
+  /** Straight to the agent over the control channel; no Vowe conversation entry. */
+  sendToAgent(sessionId: string, text: string): Promise<InstructionResult>;
+  /** False when the session cannot be interrupted. */
+  interruptAgent(sessionId: string): Promise<boolean>;
 }
 
 /**
@@ -644,4 +655,8 @@ export const IPC = {
   getFleetStatuses: 'vowe:fleet:statuses',
   fleetStatusChanged: 'vowe:fleet:status-changed',
   getAttemptSummaries: 'vowe:fleet:attempts',
+  getTranscript: 'vowe:fleet:transcript:get',
+  transcriptDelta: 'vowe:fleet:transcript:delta',
+  sendToAgent: 'vowe:fleet:agent:send',
+  interruptAgent: 'vowe:fleet:agent:interrupt',
 } as const;
