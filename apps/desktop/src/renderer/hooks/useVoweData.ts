@@ -24,6 +24,7 @@ import type {
 import type { FleetLayout } from '@vowe/core';
 import { emptyFleetLayout } from '@vowe/core/fleet-model';
 import type { AttemptSummary, CaptainExchange, FleetStatus } from '@vowe/core';
+import type { StreamingText, TranscriptItem } from '@vowe/core';
 import { DEFAULT_PRESENCE_PROFILE } from '@vowe/core/presence';
 import {
   DEFAULT_APPEARANCE_SETTING,
@@ -32,6 +33,12 @@ import {
 } from '@vowe/core/projections';
 
 import type { AppStatus } from '../../shared/ipc.js';
+import {
+  emptyTranscriptFeed,
+  feedWithDelta,
+  feedWithOlder,
+  feedWithPage,
+} from '../state/transcript-feed.js';
 import {
   NOTHING_STREAMED,
   QUIET,
@@ -948,4 +955,54 @@ export function useAttemptSummaries(sessionIds: readonly string[]): AttemptSumma
     };
   }, [key]);
   return summaries;
+}
+
+/**
+ * Fleet's transcript of one agent: the newest page, kept current by deltas
+ * for that session only. `loadOlder` reads the page before the oldest held.
+ */
+export function useTranscript(sessionId: string | null): {
+  items: TranscriptItem[];
+  streaming: Record<string, StreamingText>;
+  loaded: boolean;
+  live: boolean;
+  loadOlder(): Promise<void>;
+} {
+  const [feed, setFeed] = useState(() => emptyTranscriptFeed(sessionId));
+  const latest = useRef(feed);
+  latest.current = feed;
+  const loadingOlder = useRef(false);
+
+  useEffect(() => {
+    setFeed(emptyTranscriptFeed(sessionId));
+    if (!sessionId) return;
+    let live = true;
+    // Subscribed before reading, so nothing between the read and the
+    // subscription is missed; the page is laid under what already arrived.
+    const off = window.vowe.onTranscriptDelta((delta) => {
+      if (live) setFeed((current) => feedWithDelta(current, delta));
+    });
+    void window.vowe.getTranscript(sessionId)
+      .then((page) => { if (live) setFeed((current) => feedWithPage(current, page)); })
+      .catch(() => {
+        if (live) setFeed((current) => (current.sessionId === sessionId ? { ...current, loaded: true } : current));
+      });
+    return () => { live = false; off(); };
+  }, [sessionId]);
+
+  const loadOlder = useCallback(async () => {
+    const current = latest.current;
+    if (!current.sessionId || !current.before || loadingOlder.current) return;
+    loadingOlder.current = true;
+    try {
+      const page = await window.vowe.getTranscript(current.sessionId, { before: current.before });
+      setFeed((now) => feedWithOlder(now, page));
+    } finally {
+      loadingOlder.current = false;
+    }
+  }, []);
+
+  // Until the effect resets it, the state may still be the previous session's.
+  const shown = feed.sessionId === sessionId ? feed : emptyTranscriptFeed(sessionId);
+  return { items: shown.items, streaming: shown.streaming, loaded: shown.loaded, live: shown.live, loadOlder };
 }

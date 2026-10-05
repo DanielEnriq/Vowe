@@ -62,6 +62,7 @@ import {
   type VoicePreference,
 } from '@vowe/core';
 import { normalizeFleetLayout } from '@vowe/core';
+import { CapabilityUnsupportedError, UnknownSessionError } from '@vowe/core';
 import {
   FleetRelay,
   attemptSummaries,
@@ -554,6 +555,9 @@ async function createServices(): Promise<Services> {
   registry.on('outcome', (outcome) => {
     window?.webContents.send(IPC.fleetStatusChanged, outcome.sessionId);
   });
+  registry.on('transcript', (delta) => {
+    window?.webContents.send(IPC.transcriptDelta, delta);
+  });
 
   const live = new LiveBridge({
     transport: liveTransport,
@@ -1010,6 +1014,28 @@ function registerIpc(): void {
       getEvents: (sessionId) => store.getEvents(sessionId),
       listCaptainExchanges: (projectId) => store.listCaptainExchanges(projectId),
     });
+  });
+  // Fleet's agent view: its own transcript feed, and control straight to the
+  // worker. The relay path writes no Vowe conversation entries.
+  ipcMain.handle(
+    IPC.getTranscript,
+    async (_event, sessionId: string, options?: { before?: string; limit?: number }) =>
+      (await requireServices()).registry.getTranscript(sessionId, {
+        ...(typeof options?.before === 'string' ? { before: options.before } : {}),
+        ...(typeof options?.limit === 'number' ? { limit: options.limit } : {}),
+      }),
+  );
+  ipcMain.handle(IPC.sendToAgent, async (_event, sessionId: string, text: string) =>
+    (await requireServices()).registry.relayToWorker(sessionId, text),
+  );
+  ipcMain.handle(IPC.interruptAgent, async (_event, sessionId: string) => {
+    try {
+      await (await requireServices()).registry.interrupt(sessionId);
+      return true;
+    } catch (error) {
+      if (error instanceof CapabilityUnsupportedError || error instanceof UnknownSessionError) return false;
+      throw error;
+    }
   });
 
   ipcMain.handle(IPC.getProjectConversation, async (_event, projectId: string) =>

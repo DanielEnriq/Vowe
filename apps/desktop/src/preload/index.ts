@@ -21,6 +21,7 @@ import type {
 } from '@vowe/core';
 import type { FleetLayoutChange } from '@vowe/core';
 import type { CaptainExchangeChange } from '@vowe/core';
+import type { TranscriptDelta } from '@vowe/core';
 import { IPC, type VoweApi } from '../shared/ipc.js';
 
 const api: VoweApi = {
@@ -220,6 +221,14 @@ const api: VoweApi = {
     return () => ipcRenderer.off(IPC.fleetStatusChanged, handler);
   },
   getAttemptSummaries: (sessionIds) => ipcRenderer.invoke(IPC.getAttemptSummaries, sessionIds),
+  getTranscript: (sessionId, options) => ipcRenderer.invoke(IPC.getTranscript, sessionId, options),
+  onTranscriptDelta: (listener) => {
+    const handler = (_: unknown, delta: TranscriptDelta) => listener(delta);
+    ipcRenderer.on(IPC.transcriptDelta, handler);
+    return () => ipcRenderer.off(IPC.transcriptDelta, handler);
+  },
+  sendToAgent: (sessionId, text) => ipcRenderer.invoke(IPC.sendToAgent, sessionId, text),
+  interruptAgent: (sessionId) => ipcRenderer.invoke(IPC.interruptAgent, sessionId),
 };
 
 contextBridge.exposeInMainWorld('vowe', api);

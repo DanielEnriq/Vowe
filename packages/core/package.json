@@ -16,6 +16,10 @@
       "types": "./dist/fleet/fleet-model.d.ts",
       "default": "./dist/fleet/fleet-model.js"
     },
+    "./fleet-transcript": {
+      "types": "./dist/fleet/transcript.d.ts",
+      "default": "./dist/fleet/transcript.js"
+    },
     "./presence": {
       "types": "./dist/product/presence.d.ts",
       "default": "./dist/product/presence.js"

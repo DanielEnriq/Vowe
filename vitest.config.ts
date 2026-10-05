@@ -48,6 +48,10 @@ export default defineConfig({
         replacement: new URL('./packages/core/src/fleet/fleet-model.ts', import.meta.url).pathname,
       },
       {
+        find: '@vowe/core/fleet-transcript',
+        replacement: new URL('./packages/core/src/fleet/transcript.ts', import.meta.url).pathname,
+      },
+      {
         find: '@vowe/core/refs',
         replacement: new URL('./packages/core/src/context/refs.ts', import.meta.url).pathname,
       },

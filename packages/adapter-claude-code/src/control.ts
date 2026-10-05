@@ -134,6 +134,7 @@ export class ControlChannel {
   private readonly outcomes = new Map<string, WorkerOutcome>();
   private readonly questionListeners = new Set<(event: WorkerQuestionEvent) => void>();
   private readonly outcomeListeners = new Set<(outcome: WorkerOutcome) => void>();
+  private readonly messageListeners = new Set<(providerSessionId: string, message: SDKMessage) => void>();
   private readonly permissionMode: Options['permissionMode'];
   private readonly onError: (scope: string, error: unknown) => void;
   private readonly query: typeof query;
@@ -183,6 +184,8 @@ export class ControlChannel {
       cwd,
       permissionMode: this.permissionMode,
       canUseTool: (toolName, input, context) => this.decide(session, toolName, input, context),
+      // Streamed tokens feed the transcript; nothing else reads them.
+      includePartialMessages: true,
     };
     if (launchOptions.readOnly) options.disallowedTools = WRITING_TOOLS;
     const running = this.query({ prompt: queue, options });
@@ -202,7 +205,10 @@ export class ControlChannel {
               this.noteOutcome({ sessionId: id, state: 'working', at: now() });
               resolve(id);
             }
-            if (session.sessionId) this.observeResult(session.sessionId, message);
+            if (session.sessionId) {
+              this.observeResult(session.sessionId, message);
+              this.emitMessage(session.sessionId, message);
+            }
           }
         } catch (error) {
           failed = true;
@@ -272,6 +278,16 @@ export class ControlChannel {
   onOutcome(listener: (outcome: WorkerOutcome) => void): () => void {
     this.outcomeListeners.add(listener);
     return () => this.outcomeListeners.delete(listener);
+  }
+
+  /**
+   * Every SDK message a launched session produces, partial ones included, by
+   * provider session id. For the transcript feed; observation reads the
+   * transcript file and control reads only results.
+   */
+  onMessage(listener: (providerSessionId: string, message: SDKMessage) => void): () => void {
+    this.messageListeners.add(listener);
+    return () => this.messageListeners.delete(listener);
   }
 
   /**
@@ -374,6 +390,16 @@ export class ControlChannel {
         listener(published);
       } catch (error) {
         this.onError('outcome-listener', error);
+      }
+    }
+  }
+
+  private emitMessage(sessionId: string, message: SDKMessage): void {
+    for (const listener of this.messageListeners) {
+      try {
+        listener(sessionId, message);
+      } catch (error) {
+        this.onError('message-listener', error);
       }
     }
   }
