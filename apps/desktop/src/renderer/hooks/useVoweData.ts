@@ -966,6 +966,8 @@ export function useTranscript(sessionId: string | null): {
   streaming: Record<string, StreamingText>;
   loaded: boolean;
   live: boolean;
+  /** Whether an older page is there to load. */
+  hasOlder: boolean;
   loadOlder(): Promise<void>;
 } {
   const [feed, setFeed] = useState(() => emptyTranscriptFeed(sessionId));
@@ -1004,5 +1006,12 @@ export function useTranscript(sessionId: string | null): {
 
   // Until the effect resets it, the state may still be the previous session's.
   const shown = feed.sessionId === sessionId ? feed : emptyTranscriptFeed(sessionId);
-  return { items: shown.items, streaming: shown.streaming, loaded: shown.loaded, live: shown.live, loadOlder };
+  return {
+    items: shown.items,
+    streaming: shown.streaming,
+    loaded: shown.loaded,
+    live: shown.live,
+    hasOlder: shown.before !== null,
+    loadOlder,
+  };
 }
