@@ -1,4 +1,6 @@
 import type { EvidenceSource } from '../evidence/types.js';
+import type { WorkerOutcome, WorkerQuestionEvent } from '../fleet/types.js';
+import type { TranscriptDelta, TranscriptPage } from '../fleet/transcript.js';
 import type { AdapterEvent } from './events.js';
 import type { AgentSession } from './session.js';
 
@@ -16,6 +18,11 @@ export interface InstructionResult {
 export interface LaunchOptions {
   cwd: string;
   prompt: string;
+  /**
+   * Withhold the provider's file-writing tools. For a worker whose job is to
+   * read and answer, such as a captain; not a sandbox.
+   */
+  readOnly?: boolean;
 }
 
 /**
@@ -74,6 +81,36 @@ export interface AgentAdapter {
 
   /** Optional: providers that can interrupt work in progress. */
   interrupt?(providerSessionId: string): Promise<void>;
+
+  /**
+   * Optional: questions a worker put to a person and is blocked on.
+   *
+   * Only for questions the adapter is actually holding open, so that
+   * `answerQuestion` can settle them in place. A question that merely appears
+   * in a transcript is evidence, not this.
+   */
+  onQuestion?(listener: (event: WorkerQuestionEvent) => void): Unsubscribe;
+
+  /**
+   * Answer a held question in place. False when it is no longer held — the
+   * caller decides whether to send the answer some other way.
+   */
+  answerQuestion?(providerSessionId: string, questionId: string, answer: string): Promise<boolean>;
+
+  /** Optional: how a worker's turns end, for workers whose turns it can see. */
+  onOutcome?(listener: (outcome: WorkerOutcome) => void): Unsubscribe;
+  outcomeOf?(providerSessionId: string): WorkerOutcome | null;
+
+  /**
+   * Optional: Fleet's transcript feed, a reading surface separate from
+   * `subscribeToEvents`. A page's `sessionId` and every delta's `sessionId`
+   * are Vowe's session id, not the provider's.
+   */
+  readTranscript?(
+    providerSessionId: string,
+    options?: { before?: string; limit?: number },
+  ): Promise<TranscriptPage>;
+  onTranscriptDelta?(listener: (delta: TranscriptDelta) => void): Unsubscribe;
 
   /** Release watchers, subprocesses and handles. */
   dispose?(): Promise<void>;

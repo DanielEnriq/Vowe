@@ -55,10 +55,23 @@ import {
   type LiveVoice,
   type PersistedWorkbench,
   type Project,
+  type CreateProjectInput,
   type SemanticInterpreter,
   type WorkbenchCandidate,
   type TemperamentProfile,
   type VoicePreference,
+} from '@vowe/core';
+import { normalizeFleetLayout } from '@vowe/core';
+import { CapabilityUnsupportedError, UnknownSessionError } from '@vowe/core';
+import {
+  FleetRelay,
+  attemptSummaries,
+  mayAskCaptain,
+  attentionFor,
+  fleetStatusOf,
+  registryWorkers,
+  type CaptainExchange,
+  type FleetStatus,
 } from '@vowe/core';
 import { ClaudeCodeAdapter, ClaudeCodeConsultant } from '@vowe/adapter-claude-code';
 import { CodexAdapter } from '@vowe/adapter-codex';
@@ -166,6 +179,8 @@ interface Services {
    * project memory or the live bridge.
    */
   studio: StudioService | null;
+  /** Moves a wired worker's question to its captain and back. */
+  fleet: FleetRelay;
   status: AppStatus;
 }
 
@@ -514,6 +529,35 @@ async function createServices(): Promise<Services> {
   store.onDesignChanged((change) => {
     window?.webContents.send(IPC.designChanged, change);
   });
+  store.onFleetLayoutChanged((change) => {
+    window?.webContents.send(IPC.fleetLayoutChanged, change);
+  });
+
+  /*
+   * The fleet relay. Routing is the fleet layout's wires; until those are
+   * connected here, nothing is wired and every question comes to the
+   * developer, exactly as an unwired agent should.
+   */
+  const fleet = new FleetRelay({
+    store,
+    workers: registryWorkers(registry),
+    // A wire drawn on the fleet canvas is the only permission to ask a captain.
+    routing: {
+      captainFor: async (projectId, sessionId) =>
+        mayAskCaptain(store.getFleetLayout(projectId), sessionId),
+    },
+    onError: (scope, error) => console.error(`[vowe] ${scope}`, error),
+  });
+  fleet.start();
+  store.onCaptainExchangeChanged((change) => {
+    window?.webContents.send(IPC.captainExchangeChanged, change);
+  });
+  registry.on('outcome', (outcome) => {
+    window?.webContents.send(IPC.fleetStatusChanged, outcome.sessionId);
+  });
+  registry.on('transcript', (delta) => {
+    window?.webContents.send(IPC.transcriptDelta, delta);
+  });
 
   const live = new LiveBridge({
     transport: liveTransport,
@@ -650,6 +694,7 @@ async function createServices(): Promise<Services> {
     observation,
     live,
     studio,
+    fleet,
     status: {
       llmConfigured: llm !== undefined,
       voiceConfigured: liveTransport.available,
@@ -917,6 +962,82 @@ function registerIpc(): void {
     (await requireServices()).studio?.cancel(designId) ?? false,
   );
 
+  // Fleet canvas: project state, replaced whole. The store normalises it.
+  ipcMain.handle(IPC.getFleetLayout, async (_event, projectId: string) =>
+    (await requireServices()).store.getFleetLayout(projectId),
+  );
+  ipcMain.handle(IPC.saveFleetLayout, async (_event, projectId: string, layout: unknown) =>
+    (await requireServices()).store.saveFleetLayout(projectId, normalizeFleetLayout(layout)),
+  );
+  // Fleet. Text between workers moves only through the relay.
+  ipcMain.handle(IPC.launchCaptain, async (_event, projectId: string, folder: string) => {
+    const services = await requireServices();
+    const session = await services.fleet.launchCaptain(projectId, folder);
+    if (services.observing.allows(session.id)) void services.titles.ensure(session.id);
+    return session;
+  });
+  ipcMain.handle(IPC.listCaptainExchanges, async (_event, projectId: string) =>
+    (await requireServices()).store.listCaptainExchanges(projectId),
+  );
+  ipcMain.handle(
+    IPC.answerQuestion,
+    async (_event, exchangeId: string, text: string, alsoTellCaptain: boolean) =>
+      (await requireServices()).fleet.answerAsUser(exchangeId, text, alsoTellCaptain === true),
+  );
+  ipcMain.handle(IPC.getFleetStatuses, async (_event, sessionIds: string[]) => {
+    const { registry, store } = await requireServices();
+    const exchanges = new Map<string, CaptainExchange[]>();
+    const statuses: Record<string, FleetStatus> = {};
+    for (const sessionId of Array.isArray(sessionIds) ? sessionIds : []) {
+      const session = registry.get(sessionId);
+      if (!session) continue;
+      const events = store.getEvents(sessionId);
+      const projectId = session.projectId;
+      if (projectId && !exchanges.has(projectId)) {
+        exchanges.set(projectId, store.listCaptainExchanges(projectId));
+      }
+      statuses[sessionId] = fleetStatusOf({
+        session,
+        attention: projectId ? attentionFor(session, projectId, events) : [],
+        events,
+        outcome: registry.outcomeOf(sessionId),
+        exchanges: projectId ? exchanges.get(projectId)! : [],
+      });
+    }
+    return statuses;
+  });
+  ipcMain.handle(IPC.getAttemptSummaries, async (_event, sessionIds: string[]) => {
+    const { registry, store } = await requireServices();
+    return attemptSummaries(Array.isArray(sessionIds) ? sessionIds : [], {
+      getSession: (sessionId) => registry.get(sessionId),
+      listSessions: () => registry.list(),
+      getEvents: (sessionId) => store.getEvents(sessionId),
+      listCaptainExchanges: (projectId) => store.listCaptainExchanges(projectId),
+    });
+  });
+  // Fleet's agent view: its own transcript feed, and control straight to the
+  // worker. The relay path writes no Vowe conversation entries.
+  ipcMain.handle(
+    IPC.getTranscript,
+    async (_event, sessionId: string, options?: { before?: string; limit?: number }) =>
+      (await requireServices()).registry.getTranscript(sessionId, {
+        ...(typeof options?.before === 'string' ? { before: options.before } : {}),
+        ...(typeof options?.limit === 'number' ? { limit: options.limit } : {}),
+      }),
+  );
+  ipcMain.handle(IPC.sendToAgent, async (_event, sessionId: string, text: string) =>
+    (await requireServices()).registry.relayToWorker(sessionId, text),
+  );
+  ipcMain.handle(IPC.interruptAgent, async (_event, sessionId: string) => {
+    try {
+      await (await requireServices()).registry.interrupt(sessionId);
+      return true;
+    } catch (error) {
+      if (error instanceof CapabilityUnsupportedError || error instanceof UnknownSessionError) return false;
+      throw error;
+    }
+  });
+
   ipcMain.handle(IPC.getProjectConversation, async (_event, projectId: string) =>
     (await requireServices()).store.getProjectConversation(projectId),
   );
@@ -987,6 +1108,68 @@ function registerIpc(): void {
       await services.store.setProjectOpen(project.id, true);
       broadcastSessions();
       return services.projects.listProjectsForDisplay().find((item) => item.id === project.id) ?? project;
+    },
+  );
+
+  /*
+   * Making, naming and removing projects, and their folders. Every folder is
+   * checked here the way `openProjectAt` checks one; the rules about which
+   * folder may belong where are `ProjectService`'s. The panel re-reads
+   * projects on the sessions announcement, so each sends it.
+   */
+  const existingFolder = async (directory: string): Promise<string> => {
+    const trimmed = directory.trim();
+    const absolute = path.resolve(
+      trimmed === '~' || trimmed.startsWith('~/')
+        ? path.join(os.homedir(), trimmed.slice(1))
+        : trimmed,
+    );
+    const stat = await fs.stat(absolute).catch(() => null);
+    if (!stat?.isDirectory()) throw new Error(`No folder at ${absolute}`);
+    return absolute;
+  };
+  const displayed = (services: Services, project: Project): Project =>
+    services.projects.listProjectsForDisplay().find((item) => item.id === project.id) ?? project;
+  ipcMain.handle(
+    IPC.createProject,
+    async (_event, input: CreateProjectInput): Promise<Project> => {
+      const services = await requireServices();
+      const folder = await existingFolder(input.folder);
+      const folders = await Promise.all((input.folders ?? []).map(existingFolder));
+      const project = await services.projects.createProject({ name: input.name, folder, folders });
+      broadcastSessions();
+      return displayed(services, project);
+    },
+  );
+  ipcMain.handle(
+    IPC.renameProject,
+    async (_event, projectId: string, name: string): Promise<Project> => {
+      const services = await requireServices();
+      const project = await services.projects.renameProject(projectId, name);
+      broadcastSessions();
+      return displayed(services, project);
+    },
+  );
+  ipcMain.handle(IPC.removeProject, async (_event, projectId: string): Promise<void> => {
+    await (await requireServices()).projects.removeProject(projectId);
+    broadcastSessions();
+  });
+  ipcMain.handle(
+    IPC.addProjectFolder,
+    async (_event, projectId: string, folder: string): Promise<Project> => {
+      const services = await requireServices();
+      const project = await services.projects.addFolder(projectId, await existingFolder(folder));
+      broadcastSessions();
+      return displayed(services, project);
+    },
+  );
+  ipcMain.handle(
+    IPC.removeProjectFolder,
+    async (_event, projectId: string, folder: string): Promise<Project> => {
+      const services = await requireServices();
+      const project = await services.projects.removeFolder(projectId, folder);
+      broadcastSessions();
+      return displayed(services, project);
     },
   );
 

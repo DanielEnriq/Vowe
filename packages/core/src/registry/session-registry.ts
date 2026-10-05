@@ -6,6 +6,8 @@ import { randomUUID } from 'node:crypto';
 import type { AgentAdapter, InstructionResult, LaunchOptions, Unsubscribe } from '../types/adapter.js';
 import type { EvidenceBatch, EvidenceChange } from '../evidence/types.js';
 import type { NormalizedEvent } from '../types/events.js';
+import type { WorkerOutcome, WorkerQuestionEvent } from '../fleet/types.js';
+import type { TranscriptDelta, TranscriptPage } from '../fleet/transcript.js';
 import type { WorkerActivity } from '../product/worker-activity.js';
 import {
   MEANINGFUL_UPDATE_LIMIT,
@@ -47,6 +49,12 @@ export type SessionRegistryEvents = {
   'session:removed': [AgentSession];
   event: [NormalizedEvent];
   'evidence:changed': [EvidenceChange];
+  /** A question a worker is blocked on was asked, or settled. */
+  question: [WorkerQuestionEvent];
+  /** A worker's turn started or ended, as its provider reported it. */
+  outcome: [WorkerOutcome];
+  /** Fleet's transcript feed moved; not observation, and never stored. */
+  transcript: [TranscriptDelta];
 };
 
 /**
@@ -63,6 +71,7 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
   private readonly adapters = new Map<string, AgentAdapter>();
   private readonly sessions = new Map<string, AgentSession>();
   private readonly subscriptions = new Map<string, Unsubscribe>();
+  private readonly adapterSignals: Unsubscribe[] = [];
   private readonly reconcileIntervalMs: number;
   private readonly onError: (scope: string, error: unknown) => void;
   private timer: NodeJS.Timeout | null = null;
@@ -97,6 +106,12 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
 
   registerAdapter(adapter: AgentAdapter): void {
     this.adapters.set(adapter.provider, adapter);
+    const stops = [
+      adapter.onQuestion?.((event) => this.emit('question', event)),
+      adapter.onOutcome?.((outcome) => this.emit('outcome', outcome)),
+      adapter.onTranscriptDelta?.((delta) => this.emit('transcript', delta)),
+    ].filter((stop): stop is Unsubscribe => stop !== undefined);
+    if (stops.length) this.adapterSignals.push(...stops);
   }
 
   /** Every provider Vowe is currently attached to, in registration order. */
@@ -147,6 +162,7 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
     this.timer = null;
     for (const unsubscribe of this.subscriptions.values()) unsubscribe();
     this.subscriptions.clear();
+    for (const stop of this.adapterSignals.splice(0)) stop();
     await this.writer;
     for (const adapter of this.adapters.values()) {
       try {
@@ -265,21 +281,7 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
     sessionId: string,
     text: string,
   ): Promise<InstructionResult> {
-    const session = this.sessions.get(sessionId);
-    if (!session) throw new UnknownSessionError(sessionId);
-    const adapter = this.requireAdapter(session.provider);
-
-    const fresh = await adapter.getSession(session.providerSessionId);
-    if (fresh) await this.absorb(fresh);
-    const current = this.sessions.get(sessionId) ?? session;
-
-    if (!current.capabilities.sendInstruction) {
-      throw new CapabilityUnsupportedError(
-        sessionId,
-        'sendInstruction',
-        describeWhyNoControl(current),
-      );
-    }
+    const { adapter, current } = await this.controllable(sessionId);
 
     await this.store.appendConversationEntry({
       id: randomUUID(),
@@ -305,6 +307,72 @@ export class SessionRegistry extends EventEmitter<SessionRegistryEvents> {
     });
 
     return result;
+  }
+
+  /**
+   * Deliver text the fleet relay is moving between workers.
+   *
+   * The same control path and the same capability check as an instruction,
+   * but not the developer's words: nothing is appended to the session's
+   * conversation. The relay records what it moved in its own table.
+   */
+  async relayToWorker(sessionId: string, text: string): Promise<InstructionResult> {
+    const { adapter, current } = await this.controllable(sessionId);
+    return adapter.sendInstruction(current.providerSessionId, text);
+  }
+
+  /**
+   * Answer a question the worker is blocked on, in place. False when the
+   * provider is not holding it (any more), or cannot hold questions at all.
+   */
+  async answerQuestion(sessionId: string, questionId: string, answer: string): Promise<boolean> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new UnknownSessionError(sessionId);
+    const adapter = this.requireAdapter(session.provider);
+    if (!adapter.answerQuestion) return false;
+    return adapter.answerQuestion(session.providerSessionId, questionId, answer);
+  }
+
+  /** How the session's latest turn ended, where its provider can tell. */
+  outcomeOf(sessionId: string): WorkerOutcome | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    return this.adapters.get(session.provider)?.outcomeOf?.(session.providerSessionId) ?? null;
+  }
+
+  /**
+   * A page of the session's transcript feed. Empty, and not live, for a
+   * session whose provider has no feed.
+   */
+  async getTranscript(
+    sessionId: string,
+    options: { before?: string; limit?: number } = {},
+  ): Promise<TranscriptPage> {
+    const session = this.sessions.get(sessionId);
+    const adapter = session ? this.adapters.get(session.provider) : undefined;
+    if (!session || !adapter?.readTranscript) return { sessionId, items: [], before: null, live: false };
+    const page = await adapter.readTranscript(session.providerSessionId, options);
+    return { ...page, sessionId };
+  }
+
+  /** Re-read capabilities, and refuse when this session cannot be instructed. */
+  private async controllable(sessionId: string): Promise<{ adapter: AgentAdapter; current: AgentSession }> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new UnknownSessionError(sessionId);
+    const adapter = this.requireAdapter(session.provider);
+
+    const fresh = await adapter.getSession(session.providerSessionId);
+    if (fresh) await this.absorb(fresh);
+    const current = this.sessions.get(sessionId) ?? session;
+
+    if (!current.capabilities.sendInstruction) {
+      throw new CapabilityUnsupportedError(
+        sessionId,
+        'sendInstruction',
+        describeWhyNoControl(current),
+      );
+    }
+    return { adapter, current };
   }
 
   async interrupt(sessionId: string): Promise<void> {

@@ -13,7 +13,7 @@ import type {
   VoweRun,
   VoweTraceItem,
 } from '../types/execution.js';
-import type { Project } from '../projects/project.js';
+import type { Project, ProjectRecord } from '../projects/project.js';
 import type { PersistedWorkbench } from '../workbench/persisted.js';
 import type {
   CommunicationDecision,
@@ -312,8 +312,12 @@ export interface EventStore {
    * Identity only: which sessions belong to a project is recorded on the
    * sessions themselves, and everything else about a project is derived. There
    * is deliberately nothing here to keep in sync.
+   *
+   * Writes the repository root as the project's default folder, and nothing
+   * the developer chose — name, folders, open, removed — so discovery can
+   * neither undo nor overwrite them.
    */
-  upsertProject(project: Project): Promise<void>;
+  upsertProject(project: ProjectRecord): Promise<void>;
   listProjects(): Project[];
   getProject(projectId: string): Project | null;
 
@@ -324,6 +328,30 @@ export interface EventStore {
    * deleted and its sessions are still observed.
    */
   setProjectOpen(projectId: string, open: boolean): Promise<void>;
+
+  /** The developer's name for a project. `null` goes back to the derived one. */
+  setProjectName(projectId: string, name: string | null): Promise<void>;
+
+  /**
+   * Remove a project, or bring it back.
+   *
+   * Removing also closes it. Nothing is deleted: its sessions keep its id, and
+   * opening or creating it again restores it with its name and folders.
+   * Opening a removed project restores it as well.
+   */
+  setProjectRemoved(projectId: string, removed: boolean): Promise<void>;
+
+  /** A folder beyond the default. Adding one the project already has is a no-op. */
+  addProjectFolder(projectId: string, path: string): Promise<void>;
+
+  /** Never removes the default folder. Says whether a folder was removed. */
+  removeProjectFolder(projectId: string, path: string): Promise<boolean>;
+
+  /**
+   * A project's record has changed. Called after the write has committed, so
+   * a listener that reads the project sees the change.
+   */
+  onProjectsChanged(listener: (projectId: string) => void): () => void;
 
   /**
    * Where a project's *derived* knowledge belongs — a code graph, what Vowe has

@@ -66,6 +66,7 @@ describe('SqliteEventStore — what survives the round trip', () => {
     // absent key are different facts and the mapper has to know which is which.
     expect(Object.keys(stored).sort()).toEqual([
       'createdAt',
+      'folders',
       'gitCommonDir',
       'id',
       'name',

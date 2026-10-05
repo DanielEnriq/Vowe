@@ -31,7 +31,7 @@ import type {
   VoweRun,
   VoweTraceItem,
 } from '../types/execution.js';
-import type { Project } from '../projects/project.js';
+import type { Project, ProjectRecord } from '../projects/project.js';
 import type { PersistedWorkbench } from '../workbench/persisted.js';
 import type {
   Design,
@@ -41,6 +41,14 @@ import type {
   DesignStore,
 } from '../studio/types.js';
 import type { DesignLayout } from '../studio/layout.js';
+import { normalizeFleetLayout, parseFleetLayout } from '../fleet/fleet-model.js';
+import type { FleetLayout, FleetLayoutChange } from '../fleet/fleet-model.js';
+import type { FleetLayoutStore } from '../fleet/fleet-store.js';
+import type {
+  CaptainExchange,
+  CaptainExchangeChange,
+  CaptainExchangeStore,
+} from '../fleet/types.js';
 import type {
   ConversationChange,
   EventQuery,
@@ -88,7 +96,7 @@ export interface SqliteEventStoreOptions {
 const EVENTS_WITHOUT_RAW = `session_id, seq, id, at, kind, summary, detail_json, NULL AS raw_json,
   raw_source, raw_byte_offset, raw_line, raw_ordinal, logical_key, active, evidence_json`;
 
-export class SqliteEventStore implements EventStore, DesignStore {
+export class SqliteEventStore implements EventStore, DesignStore, FleetLayoutStore, CaptainExchangeStore {
   private readonly root: string;
   private readonly onError: (scope: string, error: unknown) => void;
   private readonly migrations: readonly Migration[] | undefined;
@@ -99,6 +107,9 @@ export class SqliteEventStore implements EventStore, DesignStore {
     (change: ProjectConversationChange) => void
   >();
   private readonly designListeners = new Set<(change: DesignChange) => void>();
+  private readonly fleetLayoutListeners = new Set<(change: FleetLayoutChange) => void>();
+  private readonly projectListeners = new Set<(projectId: string) => void>();
+  private readonly captainListeners = new Set<(change: CaptainExchangeChange) => void>();
   private readonly cache = new Map<string, StatementSync>();
   private db: DatabaseSync | null = null;
   private evidence: EvidenceLedger | null = null;
@@ -160,50 +171,140 @@ export class SqliteEventStore implements EventStore, DesignStore {
 
   // ---------------------------------------------------------------- projects
 
-  async upsertProject(project: Project): Promise<void> {
+  async upsertProject(project: ProjectRecord): Promise<void> {
     // `createdAt` is when Vowe first saw the repository, so the original wins —
     // expressed here as COALESCE over the existing row rather than a read
     // followed by a write.
-    this.run(
-      `INSERT INTO projects (id, name, repo_root, git_common_dir, remote_url, created_at)
-       VALUES (:id, :name, :repoRoot, :gitCommonDir, :remoteUrl, :createdAt)
-       ON CONFLICT (id) DO UPDATE SET
-         name           = excluded.name,
-         repo_root      = excluded.repo_root,
-         git_common_dir = excluded.git_common_dir,
-         remote_url     = excluded.remote_url,
-         created_at     = COALESCE(projects.created_at, excluded.created_at)`,
-      {
-        id: project.id,
-        name: project.name,
-        repoRoot: project.repoRoot,
-        gitCommonDir: rows.text(project.gitCommonDir),
-        remoteUrl: rows.text(project.remoteUrl),
-        createdAt: project.createdAt,
-      },
-    );
+    this.transaction(() => {
+      this.run(
+        `INSERT INTO projects (id, name, repo_root, git_common_dir, remote_url, created_at)
+         VALUES (:id, :name, :repoRoot, :gitCommonDir, :remoteUrl, :createdAt)
+         ON CONFLICT (id) DO UPDATE SET
+           name           = excluded.name,
+           repo_root      = excluded.repo_root,
+           git_common_dir = excluded.git_common_dir,
+           remote_url     = excluded.remote_url,
+           created_at     = COALESCE(projects.created_at, excluded.created_at)`,
+        {
+          id: project.id,
+          name: project.name,
+          repoRoot: project.repoRoot,
+          gitCommonDir: rows.text(project.gitCommonDir),
+          remoteUrl: rows.text(project.remoteUrl),
+          createdAt: project.createdAt,
+        },
+      );
+      // The default folder follows the repository root. A folder the developer
+      // added at the same path stops being an extra one.
+      this.run(
+        'DELETE FROM project_folders WHERE project_id = :id AND path = :path AND is_default = 0',
+        { id: project.id, path: project.repoRoot },
+      );
+      const moved = this.run(
+        'UPDATE project_folders SET path = :path WHERE project_id = :id AND is_default = 1',
+        { id: project.id, path: project.repoRoot },
+      );
+      if (Number(moved.changes) === 0) {
+        this.run(
+          `INSERT INTO project_folders (project_id, path, is_default, added_at)
+           VALUES (:id, :path, 1, :at)`,
+          { id: project.id, path: project.repoRoot, at: project.createdAt },
+        );
+      }
+    });
+    this.notifyProject(project.id);
   }
 
   /**
    * Open a project in the projects panel, or close it.
    *
    * Attention only, like archiving a session: a closed project is still
-   * discovered, still observed, and keeps everything it had.
+   * discovered, still observed, and keeps everything it had. Opening a
+   * removed project is a deliberate act too, so it restores it.
    */
   async setProjectOpen(projectId: string, open: boolean): Promise<void> {
-    this.run('UPDATE projects SET opened_at = :at WHERE id = :id', {
+    this.run(
+      `UPDATE projects SET opened_at = :at,
+         removed_at = CASE WHEN :at IS NULL THEN removed_at ELSE NULL END
+       WHERE id = :id`,
+      { id: projectId, at: open ? new Date().toISOString() : null },
+    );
+    this.notifyProject(projectId);
+  }
+
+  async setProjectName(projectId: string, name: string | null): Promise<void> {
+    const trimmed = name?.trim() ?? '';
+    this.run('UPDATE projects SET display_name = :name WHERE id = :id', {
       id: projectId,
-      at: open ? new Date().toISOString() : null,
+      name: trimmed === '' ? null : trimmed,
     });
+    this.notifyProject(projectId);
+  }
+
+  async setProjectRemoved(projectId: string, removed: boolean): Promise<void> {
+    this.run(
+      removed
+        ? 'UPDATE projects SET removed_at = :at, opened_at = NULL WHERE id = :id'
+        : 'UPDATE projects SET removed_at = NULL WHERE id = :id',
+      removed ? { id: projectId, at: new Date().toISOString() } : { id: projectId },
+    );
+    this.notifyProject(projectId);
+  }
+
+  async addProjectFolder(projectId: string, folder: string): Promise<void> {
+    this.run(
+      `INSERT INTO project_folders (project_id, path, is_default, added_at)
+       VALUES (:id, :path, 0, :at)
+       ON CONFLICT (project_id, path) DO NOTHING`,
+      { id: projectId, path: folder, at: new Date().toISOString() },
+    );
+    this.notifyProject(projectId);
+  }
+
+  async removeProjectFolder(projectId: string, folder: string): Promise<boolean> {
+    const result = this.run(
+      'DELETE FROM project_folders WHERE project_id = :id AND path = :path AND is_default = 0',
+      { id: projectId, path: folder },
+    );
+    const removed = Number(result.changes) > 0;
+    if (removed) this.notifyProject(projectId);
+    return removed;
+  }
+
+  onProjectsChanged(listener: (projectId: string) => void): () => void {
+    this.projectListeners.add(listener);
+    return () => {
+      this.projectListeners.delete(listener);
+    };
   }
 
   listProjects(): Project[] {
-    return this.all('SELECT * FROM projects ORDER BY rowid').map(rows.toProject);
+    const folders = rows.groupFolders(
+      this.all('SELECT * FROM project_folders ORDER BY is_default DESC, added_at, path'),
+    );
+    return this.all('SELECT * FROM projects ORDER BY rowid').map((row) =>
+      rows.toProject(row, folders.get(String(row['id'])) ?? []),
+    );
   }
 
   getProject(projectId: string): Project | null {
     const row = this.get('SELECT * FROM projects WHERE id = ?', projectId);
-    return row ? rows.toProject(row) : null;
+    if (!row) return null;
+    const folders = this.all(
+      'SELECT * FROM project_folders WHERE project_id = ? ORDER BY is_default DESC, added_at, path',
+      projectId,
+    ).map(rows.toProjectFolder);
+    return rows.toProject(row, folders);
+  }
+
+  private notifyProject(projectId: string): void {
+    for (const listener of this.projectListeners) {
+      try {
+        listener(projectId);
+      } catch (error) {
+        this.onError('project-listener', error);
+      }
+    }
   }
 
   /**
@@ -795,6 +896,115 @@ export class SqliteEventStore implements EventStore, DesignStore {
         this.onError('design-listener', error);
       }
     }
+  }
+
+  // ------------------------------------------------------------------- fleet
+
+  getFleetLayout(projectId: string): FleetLayout {
+    const row = this.get('SELECT layout_json FROM fleet_layouts WHERE project_id = ?', projectId);
+    return parseFleetLayout(typeof row?.['layout_json'] === 'string' ? row['layout_json'] : null);
+  }
+
+  async saveFleetLayout(projectId: string, layout: FleetLayout): Promise<FleetLayout> {
+    const stored = normalizeFleetLayout(layout);
+    this.transaction(() =>
+      this.run(
+        `INSERT INTO fleet_layouts (project_id, layout_json, updated_at) VALUES (:projectId, :layout, :at)
+         ON CONFLICT (project_id) DO UPDATE SET layout_json = excluded.layout_json, updated_at = excluded.updated_at`,
+        { projectId, layout: JSON.stringify(stored), at: new Date().toISOString() },
+      ),
+    );
+    this.notifyFleetLayout({ projectId });
+    return stored;
+  }
+
+  onFleetLayoutChanged(listener: (change: FleetLayoutChange) => void): () => void {
+    this.fleetLayoutListeners.add(listener);
+    return () => {
+      this.fleetLayoutListeners.delete(listener);
+    };
+  }
+
+  private notifyFleetLayout(change: FleetLayoutChange): void {
+    for (const listener of this.fleetLayoutListeners) {
+      try {
+        listener(change);
+      } catch (error) {
+        this.onError('fleet-layout-listener', error);
+      }
+    }
+  }
+
+  // ------------------------------------------------------- captain exchanges
+
+  async saveCaptainExchange(exchange: CaptainExchange): Promise<CaptainExchange> {
+    const saved = this.transaction(() => {
+      const row = this.get(
+        `INSERT INTO captain_exchanges (id, project_id, asker_session_id, question_id, tool_use_id,
+           captain_session_id, question, options_json, captain_answer, route, passed_to_you_reason,
+           user_answer, status, delivery, asked_at, answered_at)
+         VALUES (:id, :projectId, :askerSessionId, :questionId, :toolUseId, :captainSessionId,
+           :question, :options, :captainAnswer, :route, :passedToYouReason, :userAnswer, :status,
+           :delivery, :askedAt, :answeredAt)
+         ON CONFLICT (id) DO UPDATE SET
+           captain_session_id = excluded.captain_session_id,
+           captain_answer = excluded.captain_answer,
+           route = excluded.route,
+           passed_to_you_reason = excluded.passed_to_you_reason,
+           user_answer = excluded.user_answer,
+           status = excluded.status,
+           delivery = excluded.delivery,
+           answered_at = excluded.answered_at
+         RETURNING *`,
+        {
+          id: exchange.id,
+          projectId: exchange.projectId,
+          askerSessionId: exchange.askerSessionId,
+          questionId: exchange.questionId,
+          toolUseId: rows.text(exchange.toolUseId),
+          captainSessionId: rows.text(exchange.captainSessionId),
+          question: exchange.question,
+          options: rows.json(exchange.options),
+          captainAnswer: rows.text(exchange.captainAnswer),
+          route: exchange.route,
+          passedToYouReason: rows.text(exchange.passedToYouReason),
+          userAnswer: rows.text(exchange.userAnswer),
+          status: exchange.status,
+          delivery: rows.text(exchange.delivery),
+          askedAt: exchange.askedAt,
+          answeredAt: rows.text(exchange.answeredAt),
+        },
+      );
+      return rows.toCaptainExchange(row!);
+    });
+    const change = { exchangeId: saved.id, projectId: saved.projectId };
+    for (const listener of this.captainListeners) {
+      try {
+        listener(change);
+      } catch (error) {
+        this.onError('captain-exchange-listener', error);
+      }
+    }
+    return saved;
+  }
+
+  getCaptainExchange(exchangeId: string): CaptainExchange | null {
+    const row = this.get('SELECT * FROM captain_exchanges WHERE id = ?', exchangeId);
+    return row ? rows.toCaptainExchange(row) : null;
+  }
+
+  listCaptainExchanges(projectId: string): CaptainExchange[] {
+    return this.all(
+      'SELECT * FROM captain_exchanges WHERE project_id = ? ORDER BY asked_at DESC, rowid DESC',
+      projectId,
+    ).map(rows.toCaptainExchange);
+  }
+
+  onCaptainExchangeChanged(listener: (change: CaptainExchangeChange) => void): () => void {
+    this.captainListeners.add(listener);
+    return () => {
+      this.captainListeners.delete(listener);
+    };
   }
 
   // --------------------------------------------------------------- delivery

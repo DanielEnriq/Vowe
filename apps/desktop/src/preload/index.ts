@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AppearanceSetting,
   ContextRef,
+  CreateProjectInput,
   DesignChange,
   InvestigationProgress,
   StudioProgress,
@@ -18,6 +19,9 @@ import type {
   VoicePreference,
   VoweRunActivity,
 } from '@vowe/core';
+import type { FleetLayoutChange } from '@vowe/core';
+import type { CaptainExchangeChange } from '@vowe/core';
+import type { TranscriptDelta } from '@vowe/core';
 import { IPC, type VoweApi } from '../shared/ipc.js';
 
 const api: VoweApi = {
@@ -95,6 +99,14 @@ const api: VoweApi = {
   setProjectOpen: (projectId: string, open: boolean) =>
     ipcRenderer.invoke(IPC.setProjectOpen, projectId, open),
   openProjectAt: (directory: string) => ipcRenderer.invoke(IPC.openProjectAt, directory),
+  createProject: (input: CreateProjectInput) => ipcRenderer.invoke(IPC.createProject, input),
+  renameProject: (projectId: string, name: string) =>
+    ipcRenderer.invoke(IPC.renameProject, projectId, name),
+  removeProject: (projectId: string) => ipcRenderer.invoke(IPC.removeProject, projectId),
+  addProjectFolder: (projectId: string, folder: string) =>
+    ipcRenderer.invoke(IPC.addProjectFolder, projectId, folder),
+  removeProjectFolder: (projectId: string, folder: string) =>
+    ipcRenderer.invoke(IPC.removeProjectFolder, projectId, folder),
   openArtifact: (ref: ContextRef) => ipcRenderer.invoke(IPC.openArtifact, ref),
   findFiles: (sessionId: string, query: string) =>
     ipcRenderer.invoke(IPC.findFiles, sessionId, query),
@@ -176,6 +188,13 @@ const api: VoweApi = {
     ipcRenderer.on(IPC.designChanged, handler);
     return () => ipcRenderer.off(IPC.designChanged, handler);
   },
+  getFleetLayout: (projectId) => ipcRenderer.invoke(IPC.getFleetLayout, projectId),
+  saveFleetLayout: (projectId, layout) => ipcRenderer.invoke(IPC.saveFleetLayout, projectId, layout),
+  onFleetLayoutChanged: (listener) => {
+    const handler = (_: unknown, change: FleetLayoutChange) => listener(change);
+    ipcRenderer.on(IPC.fleetLayoutChanged, handler);
+    return () => ipcRenderer.off(IPC.fleetLayoutChanged, handler);
+  },
   onInvestigationProgress: (listener) => {
     const handler = (_: unknown, progress: InvestigationProgress) => listener(progress);
     ipcRenderer.on(IPC.investigationProgress, handler);
@@ -186,6 +205,30 @@ const api: VoweApi = {
     ipcRenderer.on(IPC.runActivityChanged, handler);
     return () => ipcRenderer.off(IPC.runActivityChanged, handler);
   },
+  launchCaptain: (projectId, folder) => ipcRenderer.invoke(IPC.launchCaptain, projectId, folder),
+  listCaptainExchanges: (projectId) => ipcRenderer.invoke(IPC.listCaptainExchanges, projectId),
+  answerQuestion: (exchangeId, text, alsoTellCaptain) =>
+    ipcRenderer.invoke(IPC.answerQuestion, exchangeId, text, alsoTellCaptain),
+  onCaptainExchangeChanged: (listener) => {
+    const handler = (_: unknown, change: CaptainExchangeChange) => listener(change);
+    ipcRenderer.on(IPC.captainExchangeChanged, handler);
+    return () => ipcRenderer.off(IPC.captainExchangeChanged, handler);
+  },
+  getFleetStatuses: (sessionIds) => ipcRenderer.invoke(IPC.getFleetStatuses, sessionIds),
+  onFleetStatusChanged: (listener) => {
+    const handler = (_: unknown, sessionId: string) => listener(sessionId);
+    ipcRenderer.on(IPC.fleetStatusChanged, handler);
+    return () => ipcRenderer.off(IPC.fleetStatusChanged, handler);
+  },
+  getAttemptSummaries: (sessionIds) => ipcRenderer.invoke(IPC.getAttemptSummaries, sessionIds),
+  getTranscript: (sessionId, options) => ipcRenderer.invoke(IPC.getTranscript, sessionId, options),
+  onTranscriptDelta: (listener) => {
+    const handler = (_: unknown, delta: TranscriptDelta) => listener(delta);
+    ipcRenderer.on(IPC.transcriptDelta, handler);
+    return () => ipcRenderer.off(IPC.transcriptDelta, handler);
+  },
+  sendToAgent: (sessionId, text) => ipcRenderer.invoke(IPC.sendToAgent, sessionId, text),
+  interruptAgent: (sessionId) => ipcRenderer.invoke(IPC.interruptAgent, sessionId),
 };
 
 contextBridge.exposeInMainWorld('vowe', api);

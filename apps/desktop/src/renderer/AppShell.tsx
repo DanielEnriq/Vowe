@@ -8,16 +8,23 @@ import {
   type ReactElement,
 } from 'react';
 
-import type { UserProfile } from '@vowe/core';
+import type { AgentSession, Project, UserProfile } from '@vowe/core';
 import { DEFAULT_USER_PROFILE } from '@vowe/core/projections';
 
 import { NewSessionSheet } from './components/NewSessionSheet.js';
+import { AgentView } from './fleet/AgentView.js';
+import { FleetHome } from './fleet/FleetHome.js';
+import { FleetRoom } from './fleet/FleetRoom.js';
+import { NewProjectSheet } from './project/NewProjectSheet.js';
+import { FleetSidebar, ModeSwitch } from './sidebar/FleetSidebar.js';
 import { ComposeIcon } from './shell/icons.js';
 import { PanelToggle } from './shell/PanelToggle.js';
 import { TopChrome } from './shell/TopChrome.js';
 import {
   useAppStatus,
   useAppearance,
+  useFleetLayout,
+  useFleetStatuses,
   usePresenceProfile,
   useProjectBrief,
   useTemperament,
@@ -37,7 +44,23 @@ import {
   withExpanded,
   writeExpanded,
 } from './state/disclosure.js';
-import { projectOf, reconcileRoute, type Route } from './state/navigation.js';
+import {
+  fleetHandlers,
+  fleetRoute,
+  fleetTabOf,
+  projectOf,
+  reconcileRoute,
+  type Route,
+} from './state/navigation.js';
+import {
+  modeLanding,
+  modeOf,
+  readModeMemory,
+  rememberRoute,
+  routeForMode,
+  writeModeMemory,
+  type AppMode,
+} from './state/mode.js';
 import { isOpenProject, panelProjects } from './state/project-visibility.js';
 import { sessionShortcutNumbers, sessionShortcutTargets } from './state/session-shortcuts.js';
 
@@ -98,14 +121,17 @@ const WIDTHS = {
  * finish and disappear while their room is open.
  */
 export function AppShell(): ReactElement {
-  const { projects, sessions, refresh } = useWorkspace();
+  const { projects, sessions, loaded: workspaceLoaded, refresh } = useWorkspace();
   const status = useAppStatus();
   const [presence, savePresence] = usePresenceProfile();
   const [appearance, saveAppearance] = useAppearance();
   const [temperament, saveTemperament] = useTemperament();
   const [voice, saveVoice] = useVoicePreference();
-  const [route, setRoute] = useState<Route>({ kind: 'none' });
+  // Vowe or Fleet, and where each was last: the window reopens where it was left.
+  const [modeMemory, setModeMemory] = useState(readModeMemory);
+  const [route, setRoute] = useState<Route>(() => routeForMode(modeMemory, modeMemory.mode));
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [creatingProject, setCreatingProject] = useState(false);
   const [commandHeld, setCommandHeld] = useState(false);
   const [user, setUser] = useState<UserProfile>(DEFAULT_USER_PROFILE);
   const [expanded, setExpanded] = useState<string[]>(readExpanded);
@@ -123,10 +149,22 @@ export function AppShell(): ReactElement {
 
   // A room whose subject has gone is not a room. Reconciling here keeps every
   // screen below from having to handle an absent session of its own.
+  // Not before the workspace has loaded, or a remembered route would be judged
+  // against an empty list and dropped.
   const live = useMemo(
-    () => reconcileRoute(route, { projects, sessions }),
-    [route, projects, sessions],
+    () => (workspaceLoaded ? reconcileRoute(route, { projects, sessions }) : route),
+    [workspaceLoaded, route, projects, sessions],
   );
+  const mode = modeOf(live);
+  useEffect(() => {
+    setModeMemory((current) => rememberRoute(current, live));
+  }, [live]);
+  useEffect(() => {
+    writeModeMemory(modeMemory);
+  }, [modeMemory]);
+  const switchMode = (next: AppMode) => {
+    if (next !== mode) setRoute(routeForMode(modeMemory, next));
+  };
 
   // Studio is a destination, not a place in the browser: while it is open
   // there are no projects, sessions or new work to reach — the panel, its
@@ -171,12 +209,19 @@ export function AppShell(): ReactElement {
   const closeProject = async (projectId: string) => {
     await window.vowe.setProjectOpen(projectId, false).catch(() => undefined);
     await refresh().catch(() => undefined);
-    if (routeProject === projectId) setRoute({ kind: 'none' });
+    if (routeProject === projectId) setRoute(modeLanding(mode));
   };
+  // Removing hides the project everywhere, so the room it was showing goes too.
+  const removeProject = async (projectId: string) => {
+    await window.vowe.removeProject(projectId).catch(() => undefined);
+    await refresh().catch(() => undefined);
+    if (routeProject === projectId) setRoute(modeLanding(mode));
+  };
+  // The Vowe panel's disclosure follows Vowe's rooms, not Fleet's.
   useEffect(() => {
-    if (!routeProject) return;
+    if (!routeProject || mode !== 'vowe') return;
     setExpanded((current) => withExpanded(current, routeProject));
-  }, [routeProject]);
+  }, [routeProject, mode]);
 
   // Repositories that have gone are dropped rather than remembered forever.
   const projectKey = projects.map((project) => project.id).join(',');
@@ -196,6 +241,13 @@ export function AppShell(): ReactElement {
     live.kind === 'session' ? sessions.find((item) => item.id === live.sessionId) ?? null : null;
   const project =
     live.kind === 'project' ? projects.find((item) => item.id === live.projectId) ?? null : null;
+  const fleetProject =
+    live.kind === 'fleet' || live.kind === 'fleet-agent'
+      ? projects.find((item) => item.id === live.projectId) ?? null
+      : null;
+  const fleetSession =
+    live.kind === 'fleet-agent' ? sessions.find((item) => item.id === live.sessionId) ?? null : null;
+  const fleet = fleetProject ? fleetHandlers(fleetProject.id, setRoute) : null;
   const shortcutTargets = useMemo(
     () =>
       sessionShortcutTargets({
@@ -219,7 +271,8 @@ export function AppShell(): ReactElement {
       return Number(digit);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (inStudio) return;
+      // The shortcuts open Vowe's session rooms, which Fleet never does.
+      if (inStudio || mode === 'fleet') return;
       if (event.key === 'Meta') setCommandHeld(true);
       if (!event.metaKey) return;
       setCommandHeld(true);
@@ -242,7 +295,7 @@ export function AppShell(): ReactElement {
       window.removeEventListener('keyup', onKeyUp, true);
       window.removeEventListener('blur', onBlur);
     };
-  }, [shortcutTargets, inStudio]);
+  }, [shortcutTargets, inStudio, mode]);
   const brief = useProjectBrief(project?.id ?? null);
 
   return (
@@ -287,8 +340,9 @@ export function AppShell(): ReactElement {
               away with the panel — and a panel is closed precisely when
               somebody wants the room, which is when a new task is most
               likely. On the band it is always where it was last clicked.
+              Fleet starts its work from its own rooms.
             */}
-            <button
+            {mode === 'vowe' && <button
               className="icon-button chrome-button"
               type="button"
               aria-label="New task"
@@ -296,7 +350,7 @@ export function AppShell(): ReactElement {
               onClick={() => setSheetOpen(true)}
             >
               <ComposeIcon />
-            </button>
+            </button>}
           </>
         )}
       >
@@ -315,22 +369,35 @@ export function AppShell(): ReactElement {
           aria-hidden={!showSidebar}
           inert={!showSidebar}
         >
-          <ProjectSidebar
-            projects={panel}
-            allProjects={projects}
-            sessions={sessions}
-            route={live}
-            expandedProjectIds={expanded}
-            onToggleExpanded={(projectId) =>
-              setExpanded((current) => toggleExpanded(current, projectId))
-            }
-            presence={presence}
-            presenceState={presenceState}
-            sessionShortcuts={sessionShortcuts}
-            showSessionShortcuts={commandHeld && shortcutTargets.length > 0}
-            onNavigate={setRoute}
-            onCloseProject={(projectId) => void closeProject(projectId)}
-          />
+          <ModeSwitch mode={mode} onMode={switchMode} />
+          {mode === 'fleet' ? (
+            <FleetSidebar
+              projects={panel}
+              sessions={sessions}
+              route={live}
+              onNavigate={setRoute}
+              onNewProject={() => setCreatingProject(true)}
+            />
+          ) : (
+            <ProjectSidebar
+              projects={panel}
+              allProjects={projects}
+              sessions={sessions}
+              route={live}
+              expandedProjectIds={expanded}
+              onToggleExpanded={(projectId) =>
+                setExpanded((current) => toggleExpanded(current, projectId))
+              }
+              presence={presence}
+              presenceState={presenceState}
+              sessionShortcuts={sessionShortcuts}
+              showSessionShortcuts={commandHeld && shortcutTargets.length > 0}
+              onNavigate={setRoute}
+              onCloseProject={(projectId) => void closeProject(projectId)}
+              onRemoveProject={(projectId) => void removeProject(projectId)}
+              onNewProject={() => setCreatingProject(true)}
+            />
+          )}
         </aside>
 
         {/*
@@ -378,6 +445,31 @@ export function AppShell(): ReactElement {
             onHome={() => setRoute({ kind: 'project', projectId: project.id })}
             onOpenSession={(sessionId) => setRoute({ kind: 'session', sessionId })}
           />
+        ) : fleetProject && fleet && fleetSession ? (
+          <FleetAgent
+            key={fleetSession.id}
+            project={fleetProject}
+            session={fleetSession}
+            onBack={fleet.onBack}
+            onOpenAgent={fleet.onOpenAgent}
+            onCompare={fleet.onCompare}
+          />
+        ) : fleetProject && fleet ? (
+          <FleetRoom
+            key={fleetProject.id}
+            project={fleetProject}
+            sessions={sessions}
+            tab={fleetTabOf(live)}
+            providers={status?.launchCapableProviders ?? []}
+            onTab={fleet.onTab}
+            onOpenSession={fleet.onOpenSession}
+          />
+        ) : mode === 'fleet' ? (
+          <FleetHome
+            projects={panel}
+            onOpenProject={(projectId) => setRoute(fleetRoute(projectId))}
+            onNewProject={() => setCreatingProject(true)}
+          />
         ) : project ? (
           <ProjectSpace
             key={project.id}
@@ -417,6 +509,17 @@ export function AppShell(): ReactElement {
         )}
       </TopChrome>
 
+      {creatingProject && (
+        <NewProjectSheet
+          onClose={() => setCreatingProject(false)}
+          onCreated={(created) => {
+            setCreatingProject(false);
+            void refresh().catch(() => undefined);
+            setRoute(mode === 'fleet' ? fleetRoute(created.id) : { kind: 'project', projectId: created.id });
+          }}
+        />
+      )}
+
       {sheetOpen && (
         <NewSessionSheet
           onClose={() => setSheetOpen(false)}
@@ -427,6 +530,36 @@ export function AppShell(): ReactElement {
         />
       )}
     </div>
+  );
+}
+
+/** One of a fleet's agents, with the canvas and status it is read against. */
+function FleetAgent({
+  project,
+  session,
+  onBack,
+  onOpenAgent,
+  onCompare,
+}: {
+  project: Project;
+  session: AgentSession;
+  onBack: () => void;
+  onOpenAgent: (sessionId: string) => void;
+  onCompare: (clusterId: string) => void;
+}): ReactElement {
+  const { layout } = useFleetLayout(project.id);
+  const ids = useMemo(() => [session.id], [session.id]);
+  const statuses = useFleetStatuses(ids);
+  return (
+    <AgentView
+      project={project}
+      session={session}
+      layout={layout}
+      status={statuses[session.id]}
+      onBack={onBack}
+      onOpenAgent={onOpenAgent}
+      onCompare={onCompare}
+    />
   );
 }
 

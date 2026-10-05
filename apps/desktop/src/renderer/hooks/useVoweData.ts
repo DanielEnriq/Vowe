@@ -21,6 +21,10 @@ import type {
   VoicePreference,
   WorkerMilestone,
 } from '@vowe/core';
+import type { FleetLayout } from '@vowe/core';
+import { emptyFleetLayout } from '@vowe/core/fleet-model';
+import type { AttemptSummary, CaptainExchange, FleetStatus } from '@vowe/core';
+import type { StreamingText, TranscriptItem } from '@vowe/core';
 import { DEFAULT_PRESENCE_PROFILE } from '@vowe/core/presence';
 import {
   DEFAULT_APPEARANCE_SETTING,
@@ -29,6 +33,12 @@ import {
 } from '@vowe/core/projections';
 
 import type { AppStatus } from '../../shared/ipc.js';
+import {
+  emptyTranscriptFeed,
+  feedWithDelta,
+  feedWithOlder,
+  feedWithPage,
+} from '../state/transcript-feed.js';
 import {
   NOTHING_STREAMED,
   QUIET,
@@ -63,10 +73,13 @@ export type { LiveInvestigation } from '../state/live-investigation.js';
 export function useWorkspace(): {
   projects: Project[];
   sessions: AgentSession[];
+  /** Both lists have been read at least once. */
+  loaded: boolean;
   refresh: () => Promise<void>;
 } {
   const [projects, setProjects] = useState<Project[]>([]);
   const [sessions, setSessions] = useState<AgentSession[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
   const refresh = useCallback(async () => {
     const [nextProjects, nextSessions] = await Promise.all([
@@ -75,6 +88,7 @@ export function useWorkspace(): {
     ]);
     setProjects(nextProjects);
     setSessions(nextSessions);
+    setLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -82,7 +96,7 @@ export function useWorkspace(): {
     return window.vowe.onSessionsChanged(() => void refresh());
   }, [refresh]);
 
-  return { projects, sessions, refresh };
+  return { projects, sessions, loaded, refresh };
 }
 
 export function useAppStatus(): AppStatus | null {
@@ -684,6 +698,68 @@ export function useDesigns(projectId: string | null): { designs: DesignSummary[]
   return { designs, loaded };
 }
 
+/**
+ * A project's fleet canvas, as stored, with a `save` that shows the change at
+ * once. While a save is in flight a change notice does not re-read — that read
+ * could return the layout from before a later save — and the newest save's
+ * stored (normalised) result is what the canvas settles on.
+ */
+export function useFleetLayout(projectId: string | null): {
+  layout: FleetLayout;
+  loaded: boolean;
+  save: (next: FleetLayout) => Promise<FleetLayout | null>;
+} {
+  const [layout, setLayout] = useState<FleetLayout>(emptyFleetLayout);
+  const [loaded, setLoaded] = useState(false);
+  const generation = useRef(0);
+  const saves = useRef({ pending: 0, latest: 0 });
+  useEffect(() => {
+    setLayout(emptyFleetLayout());
+    setLoaded(false);
+    if (!projectId) return;
+    const scope = ++generation.current;
+    const load = () => {
+      if (saves.current.pending > 0) return;
+      void window.vowe.getFleetLayout(projectId)
+        .then((next) => {
+          if (scope === generation.current && saves.current.pending === 0) {
+            setLayout(next);
+            setLoaded(true);
+          }
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const off = window.vowe.onFleetLayoutChanged((change) => {
+      if (change.projectId === projectId) load();
+    });
+    return () => { generation.current += 1; off(); };
+  }, [projectId]);
+  const save = useCallback(async (next: FleetLayout): Promise<FleetLayout | null> => {
+    if (!projectId) return null;
+    const scope = generation.current;
+    const ticket = ++saves.current.latest;
+    saves.current.pending += 1;
+    setLayout(next);
+    let stored: FleetLayout | null = null;
+    try {
+      stored = await window.vowe.saveFleetLayout(projectId, next);
+      if (scope === generation.current && ticket === saves.current.latest) setLayout(stored);
+    } catch {
+      // Not saved: fall back to what the store holds once nothing else is in flight.
+    } finally {
+      saves.current.pending -= 1;
+    }
+    if (stored === null && saves.current.pending === 0) {
+      void window.vowe.getFleetLayout(projectId)
+        .then((held) => { if (scope === generation.current && saves.current.pending === 0) setLayout(held); })
+        .catch(() => undefined);
+    }
+    return stored;
+  }, [projectId]);
+  return { layout, loaded, save };
+}
+
 /** One design as committed: its conversation and every revision. */
 export function useDesign(designId: string | null): DesignView | null {
   const [view, setView] = useState<DesignView | null>(null);
@@ -794,4 +870,148 @@ export function useStudioTurn(
   }, [designLanded]);
 
   return state;
+}
+
+/** Every question a worker in this project asked, newest first. */
+export function useCaptainExchanges(projectId: string | null): { exchanges: CaptainExchange[]; loaded: boolean } {
+  const [exchanges, setExchanges] = useState<CaptainExchange[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    setExchanges([]);
+    setLoaded(false);
+    if (!projectId) return;
+    let live = true;
+    const load = () => {
+      void window.vowe.listCaptainExchanges(projectId)
+        .then((next) => { if (live) { setExchanges(next); setLoaded(true); } })
+        .catch(() => undefined);
+    };
+    load();
+    const off = window.vowe.onCaptainExchangeChanged((change) => {
+      if (change.projectId === projectId) load();
+    });
+    return () => { live = false; off(); };
+  }, [projectId]);
+  return { exchanges, loaded };
+}
+
+/** Status words for these sessions, kept current as their turns and questions move. */
+export function useFleetStatuses(sessionIds: readonly string[]): Record<string, FleetStatus> {
+  const [statuses, setStatuses] = useState<Record<string, FleetStatus>>({});
+  const key = sessionIds.join('\n');
+  useEffect(() => {
+    const ids = key ? key.split('\n') : [];
+    setStatuses({});
+    if (!ids.length) return;
+    let live = true;
+    const load = () => {
+      void window.vowe.getFleetStatuses(ids)
+        .then((next) => { if (live) setStatuses(next); })
+        .catch(() => undefined);
+    };
+    load();
+    const watched = new Set(ids);
+    const offs = [
+      window.vowe.onSessionsChanged(load),
+      window.vowe.onFleetStatusChanged((sessionId) => { if (watched.has(sessionId)) load(); }),
+      window.vowe.onSessionEvent((event) => { if (watched.has(event.sessionId)) load(); }),
+      window.vowe.onCaptainExchangeChanged(load),
+    ];
+    return () => { live = false; offs.forEach((off) => off()); };
+  }, [key]);
+  return statuses;
+}
+
+/** Compare data for parallel attempts, re-read as they work. */
+export function useAttemptSummaries(sessionIds: readonly string[]): AttemptSummary[] {
+  const [summaries, setSummaries] = useState<AttemptSummary[]>([]);
+  const key = sessionIds.join('\n');
+  useEffect(() => {
+    const ids = key ? key.split('\n') : [];
+    setSummaries([]);
+    if (!ids.length) return;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const load = () => {
+      void window.vowe.getAttemptSummaries(ids)
+        .then((next) => { if (live) setSummaries(next); })
+        .catch(() => undefined);
+    };
+    // Events arrive in bursts while a worker edits; one read per burst.
+    const soon = () => {
+      if (timer !== null) return;
+      timer = setTimeout(() => { timer = null; load(); }, 1000);
+    };
+    load();
+    const watched = new Set(ids);
+    const offs = [
+      window.vowe.onSessionEvent((event) => { if (watched.has(event.sessionId)) soon(); }),
+      window.vowe.onCaptainExchangeChanged(soon),
+    ];
+    return () => {
+      live = false;
+      if (timer !== null) clearTimeout(timer);
+      offs.forEach((off) => off());
+    };
+  }, [key]);
+  return summaries;
+}
+
+/**
+ * Fleet's transcript of one agent: the newest page, kept current by deltas
+ * for that session only. `loadOlder` reads the page before the oldest held.
+ */
+export function useTranscript(sessionId: string | null): {
+  items: TranscriptItem[];
+  streaming: Record<string, StreamingText>;
+  loaded: boolean;
+  live: boolean;
+  /** Whether an older page is there to load. */
+  hasOlder: boolean;
+  loadOlder(): Promise<void>;
+} {
+  const [feed, setFeed] = useState(() => emptyTranscriptFeed(sessionId));
+  const latest = useRef(feed);
+  latest.current = feed;
+  const loadingOlder = useRef(false);
+
+  useEffect(() => {
+    setFeed(emptyTranscriptFeed(sessionId));
+    if (!sessionId) return;
+    let live = true;
+    // Subscribed before reading, so nothing between the read and the
+    // subscription is missed; the page is laid under what already arrived.
+    const off = window.vowe.onTranscriptDelta((delta) => {
+      if (live) setFeed((current) => feedWithDelta(current, delta));
+    });
+    void window.vowe.getTranscript(sessionId)
+      .then((page) => { if (live) setFeed((current) => feedWithPage(current, page)); })
+      .catch(() => {
+        if (live) setFeed((current) => (current.sessionId === sessionId ? { ...current, loaded: true } : current));
+      });
+    return () => { live = false; off(); };
+  }, [sessionId]);
+
+  const loadOlder = useCallback(async () => {
+    const current = latest.current;
+    if (!current.sessionId || !current.before || loadingOlder.current) return;
+    loadingOlder.current = true;
+    try {
+      const page = await window.vowe.getTranscript(current.sessionId, { before: current.before });
+      setFeed((now) => feedWithOlder(now, page));
+    } finally {
+      loadingOlder.current = false;
+    }
+  }, []);
+
+  // Until the effect resets it, the state may still be the previous session's.
+  const shown = feed.sessionId === sessionId ? feed : emptyTranscriptFeed(sessionId);
+  return {
+    items: shown.items,
+    streaming: shown.streaming,
+    loaded: shown.loaded,
+    live: shown.live,
+    hasOlder: shown.before !== null,
+    loadOlder,
+  };
 }

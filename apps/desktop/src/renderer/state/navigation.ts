@@ -1,5 +1,7 @@
 import type { AgentSession, Project } from '@vowe/core';
 
+import type { FleetTab } from '../fleet/types.js';
+
 /**
  * Where the developer is.
  *
@@ -15,7 +17,42 @@ export type Route =
   | { kind: 'session'; sessionId: string }
   /** Your Vowe: how Vowe looks, sounds and talks. Presence Studio in code. */
   | { kind: 'presence' }
-  | { kind: 'none' };
+  | { kind: 'none' }
+  /** Fleet, before a project is chosen. */
+  | { kind: 'fleet-home' }
+  /** A project's fleet: the canvas, or one of its other views. Without a `tab`, the canvas. */
+  | { kind: 'fleet'; projectId: string; tab?: FleetTab }
+  /** One of a fleet's agents, in Fleet's own view of it. */
+  | { kind: 'fleet-agent'; projectId: string; sessionId: string };
+
+export const FLEET_TABS: readonly FleetTab[] = ['overview', 'canvas', 'panes', 'compare', 'questions'];
+
+/** The fleet's tab a route shows: the canvas unless it names another. */
+export function fleetTabOf(route: Route): FleetTab {
+  return route.kind === 'fleet' && route.tab && FLEET_TABS.includes(route.tab) ? route.tab : 'canvas';
+}
+
+export function fleetRoute(projectId: string, tab?: FleetTab): Route {
+  return tab && tab !== 'canvas' ? { kind: 'fleet', projectId, tab } : { kind: 'fleet', projectId };
+}
+
+export function fleetAgentRoute(projectId: string, sessionId: string): Route {
+  return { kind: 'fleet-agent', projectId, sessionId };
+}
+
+/**
+ * Every way out of a fleet screen, as routes that stay in Fleet. Nothing here
+ * leads to a Vowe session room, Ask or conversation.
+ */
+export function fleetHandlers(projectId: string, navigate: (route: Route) => void) {
+  return {
+    onOpenSession: (sessionId: string) => navigate(fleetAgentRoute(projectId, sessionId)),
+    onOpenAgent: (sessionId: string) => navigate(fleetAgentRoute(projectId, sessionId)),
+    onTab: (tab: FleetTab) => navigate(fleetRoute(projectId, tab)),
+    onCompare: () => navigate(fleetRoute(projectId, 'compare')),
+    onBack: () => navigate(fleetRoute(projectId)),
+  };
+}
 
 export interface NavigationContext {
   projects: readonly Project[];
@@ -40,6 +77,17 @@ export function reconcileRoute(route: Route, context: NavigationContext): Route 
       const project = context.projects.find((candidate) => candidate.id === route.projectId);
       return project ? route : { kind: 'none' };
     }
+    case 'fleet': {
+      if (!context.projects.some((candidate) => candidate.id === route.projectId)) return { kind: 'fleet-home' };
+      // A tab that is not one of the fleet's is the canvas.
+      if (route.tab !== undefined && !FLEET_TABS.includes(route.tab)) return fleetRoute(route.projectId);
+      return route;
+    }
+    case 'fleet-agent': {
+      if (!context.projects.some((candidate) => candidate.id === route.projectId)) return { kind: 'fleet-home' };
+      const session = context.sessions.find((candidate) => candidate.id === route.sessionId);
+      return session && session.projectId === route.projectId ? route : fleetRoute(route.projectId);
+    }
     default:
       return route;
   }
@@ -47,7 +95,7 @@ export function reconcileRoute(route: Route, context: NavigationContext): Route 
 
 /** Which project a route is "in", for keeping the sidebar's expansion honest. */
 export function projectOf(route: Route, context: NavigationContext): string | null {
-  if (route.kind === 'project') return route.projectId;
+  if (route.kind === 'project' || route.kind === 'fleet' || route.kind === 'fleet-agent') return route.projectId;
   if (route.kind === 'session') {
     return (
       context.sessions.find((session) => session.id === route.sessionId)?.projectId ?? null

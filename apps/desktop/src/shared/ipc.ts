@@ -2,6 +2,7 @@ import type {
   AgentSession,
   AppearanceSetting,
   ContextRef,
+  CreateProjectInput,
   ConversationChange,
   DesignChange,
   DesignElementKind,
@@ -41,6 +42,9 @@ import type {
   WorkbenchArtifact,
   WorkbenchCandidate,
 } from '@vowe/core';
+import type { FleetLayout, FleetLayoutChange } from '@vowe/core';
+import type { AttemptSummary, CaptainExchange, CaptainExchangeChange, FleetStatus } from '@vowe/core';
+import type { TranscriptDelta, TranscriptPage } from '@vowe/core';
 
 /**
  * The renderer's view of the main process.
@@ -314,6 +318,21 @@ export interface VoweApi {
    */
   openProjectAt(directory: string): Promise<Project>;
 
+  /**
+   * Make a project: a name and a folder, plus any further folders. The
+   * identity is the folder's repository, so a folder Vowe already knows names
+   * that project — and restores it if it was removed. Opened on creation.
+   */
+  createProject(input: CreateProjectInput): Promise<Project>;
+  /** An empty name goes back to the repository's. */
+  renameProject(projectId: string, name: string): Promise<Project>;
+  /** Hidden and closed, across restarts. Creating it again restores it. */
+  removeProject(projectId: string): Promise<void>;
+  /** Rejects a folder another project already has. */
+  addProjectFolder(projectId: string, folder: string): Promise<Project>;
+  /** Rejects the root folder. */
+  removeProjectFolder(projectId: string, folder: string): Promise<Project>;
+
   openArtifact(ref: ContextRef): Promise<WorkbenchArtifact>;
 
   /**
@@ -434,6 +453,41 @@ export interface VoweApi {
   onStudioProgress(listener: (progress: StudioProgress) => void): () => void;
   /** A design's conversation or revisions changed, after commit. */
   onDesignChanged(listener: (change: DesignChange) => void): () => void;
+
+  /** A project's fleet canvas; empty until something is placed. */
+  getFleetLayout(projectId: string): Promise<FleetLayout>;
+  /** Replaces the whole layout. Resolves with what was stored, after normalising. */
+  saveFleetLayout(projectId: string, layout: FleetLayout): Promise<FleetLayout>;
+  /** A project's fleet layout was saved, after commit. */
+  onFleetLayoutChanged(listener: (change: FleetLayoutChange) => void): () => void;
+  // ------------------------------------------------------------------ fleet
+
+  /**
+   * A captain: a read-only Claude worker given the captain brief. Wiring it
+   * to agents is fleet layout; until wired, nothing is routed to it.
+   */
+  launchCaptain(projectId: string, folder: string): Promise<AgentSession>;
+  /** Every question a worker in this project asked, newest first. */
+  listCaptainExchanges(projectId: string): Promise<CaptainExchange[]>;
+  /** The developer answers a question that came to them. */
+  answerQuestion(exchangeId: string, text: string, alsoTellCaptain: boolean): Promise<CaptainExchange>;
+  /** After commit. */
+  onCaptainExchangeChanged(listener: (change: CaptainExchangeChange) => void): () => void;
+  getFleetStatuses(sessionIds: string[]): Promise<Record<string, FleetStatus>>;
+  /** A worker's turn started or ended; its fleet status may have changed. */
+  onFleetStatusChanged(listener: (sessionId: string) => void): () => void;
+  /** Compare data, in the order asked. Unknown sessions are left out. */
+  getAttemptSummaries(sessionIds: string[]): Promise<AttemptSummary[]>;
+  /**
+   * Fleet's transcript feed: newest page by default, items oldest first.
+   * Separate from session events; empty for a provider without one.
+   */
+  getTranscript(sessionId: string, options?: { before?: string; limit?: number }): Promise<TranscriptPage>;
+  onTranscriptDelta(listener: (delta: TranscriptDelta) => void): () => void;
+  /** Straight to the agent over the control channel; no Vowe conversation entry. */
+  sendToAgent(sessionId: string, text: string): Promise<InstructionResult>;
+  /** False when the session cannot be interrupted. */
+  interruptAgent(sessionId: string): Promise<boolean>;
 }
 
 /**
@@ -544,6 +598,11 @@ export const IPC = {
   archiveSession: 'vowe:session:archive',
   setProjectOpen: 'vowe:project:set-open',
   openProjectAt: 'vowe:project:open-at',
+  createProject: 'vowe:project:create',
+  renameProject: 'vowe:project:rename',
+  removeProject: 'vowe:project:remove',
+  addProjectFolder: 'vowe:project:add-folder',
+  removeProjectFolder: 'vowe:project:remove-folder',
   openArtifact: 'vowe:artifact:open',
   findFiles: 'vowe:workbench:find-files',
   getWorkbench: 'vowe:workbench:get',
@@ -586,4 +645,18 @@ export const IPC = {
   tidyDesign: 'vowe:studio:tidy',
   studioProgress: 'vowe:studio:progress',
   designChanged: 'vowe:studio:design-changed',
+  getFleetLayout: 'vowe:fleet:layout:get',
+  saveFleetLayout: 'vowe:fleet:layout:save',
+  fleetLayoutChanged: 'vowe:fleet:layout:changed',
+  launchCaptain: 'vowe:fleet:launch-captain',
+  listCaptainExchanges: 'vowe:fleet:exchanges',
+  answerQuestion: 'vowe:fleet:answer',
+  captainExchangeChanged: 'vowe:fleet:exchange-changed',
+  getFleetStatuses: 'vowe:fleet:statuses',
+  fleetStatusChanged: 'vowe:fleet:status-changed',
+  getAttemptSummaries: 'vowe:fleet:attempts',
+  getTranscript: 'vowe:fleet:transcript:get',
+  transcriptDelta: 'vowe:fleet:transcript:delta',
+  sendToAgent: 'vowe:fleet:agent:send',
+  interruptAgent: 'vowe:fleet:agent:interrupt',
 } as const;
