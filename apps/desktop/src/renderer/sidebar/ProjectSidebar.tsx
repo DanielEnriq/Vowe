@@ -23,7 +23,6 @@ import {
   type Route,
 } from '../state/navigation.js';
 import { ProviderGlyph, statusLabel } from '../components/ui.js';
-import { projectLine } from '../state/project-fleet.js';
 import { sessionActivity, sessionTitle } from '@vowe/core/projections';
 
 interface Props {
@@ -315,12 +314,11 @@ function ProjectBlock({
           <RenameField name={project.name} projectId={project.id} onDone={() => setRenaming(false)} />
         ) : (
           <button
-            className="open stacked"
+            className="open"
             type="button"
             onClick={() => onNavigate({ kind: 'project', projectId: project.id })}
           >
             <Fading className="name">{project.name}</Fading>
-            <Fading className="sub">{projectLine(project, sessions)}</Fading>
           </button>
         )}
         {/*

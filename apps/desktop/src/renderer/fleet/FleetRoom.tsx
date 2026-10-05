@@ -3,8 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } 
 import type { AgentSession, FleetLayout, FleetPoint, Project } from '@vowe/core';
 
 import { messageOf } from '../components/ui.js';
-import { useCaptainExchanges, useFleetLayout, useFleetStatuses } from '../hooks/useVoweData.js';
-import { BackIcon, PlusIcon } from '../shell/icons.js';
+import { useCaptainExchanges, useFleetLayout, useFleetStatuses, useProjectBrief } from '../hooks/useVoweData.js';
+import { PlusIcon } from '../shell/icons.js';
 import { RoomIdentity } from '../shell/TopChrome.js';
 import { needsYouCount, placeCaptain, placeUnplaced } from '../state/fleet-canvas.js';
 import type { RunMode } from '../state/fleet-run.js';
@@ -12,6 +12,7 @@ import { countParts, fleetCounts, ipcMessage } from '../state/project-fleet.js';
 import { isCurrent } from '../state/session-visibility.js';
 import { FleetCanvas } from './FleetCanvas.js';
 import { FleetCompare } from './FleetCompare.js';
+import { FleetOverview } from './FleetOverview.js';
 import { FleetPanes } from './FleetPanes.js';
 import { FleetQuestions } from './FleetQuestions.js';
 import { NewRunSheet } from './NewRunSheet.js';
@@ -25,11 +26,12 @@ interface Props {
   /** Providers that can launch here. */
   providers: readonly string[];
   onTab: (tab: FleetTab) => void;
-  onHome: () => void;
+  /** Opens the agent in Fleet's own view; never a Vowe room. */
   onOpenSession: (sessionId: string) => void;
 }
 
 const TABS: { tab: FleetTab; label: string }[] = [
+  { tab: 'overview', label: 'Overview' },
   { tab: 'canvas', label: 'Canvas' },
   { tab: 'panes', label: 'Panes' },
   { tab: 'compare', label: 'Compare' },
@@ -37,15 +39,16 @@ const TABS: { tab: FleetTab; label: string }[] = [
 ];
 
 /**
- * The fleet: a band saying how the project's agents are doing, and the canvas
+ * A project in Fleet: a band saying how the project's agents are doing, and the canvas
  * or one of the views beside it.
  *
  * The room owns the layout — every change from the canvas or the run sheet is
  * applied to the newest copy and saved — and puts any current session of the
  * project that has no node yet into free space, never moving one that has.
  */
-export function FleetRoom({ project, sessions, tab, providers, onTab, onHome, onOpenSession }: Props): ReactElement {
+export function FleetRoom({ project, sessions, tab, providers, onTab, onOpenSession }: Props): ReactElement {
   const { layout, loaded, save } = useFleetLayout(project.id);
+  const brief = useProjectBrief(tab === 'overview' ? project.id : null);
   const latest = useRef(layout);
   latest.current = layout;
   const apply = useCallback((change: (current: FleetLayout) => FleetLayout) => {
@@ -118,11 +121,7 @@ export function FleetRoom({ project, sessions, tab, providers, onTab, onHome, on
   return (
     <main className="session-room fc-room">
       <RoomIdentity>
-        <button className="fc-back" type="button" onClick={onHome} title={project.name}>
-          <BackIcon />
-          <span className="fc-back-name">{project.name}</span>
-        </button>
-        <h1>Fleet</h1>
+        <h1 className="fm-title" title={project.name}>{project.name}</h1>
         <span className="fc-band-spacer" />
         <div className="fc-tally" aria-label="Fleet status">
           {parts.map((part) => (
@@ -153,7 +152,9 @@ export function FleetRoom({ project, sessions, tab, providers, onTab, onHome, on
       </RoomIdentity>
 
       <div className="fc-body">
-        {tab === 'canvas' ? (
+        {tab === 'overview' ? (
+          <FleetOverview project={project} brief={brief} onOpenTab={onTab} onOpenSession={onOpenSession} />
+        ) : tab === 'canvas' ? (
           <FleetCanvas
             sessions={shownSessions}
             layout={layout}

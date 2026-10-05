@@ -1,4 +1,6 @@
-import type { AgentSession, FleetStatus, Project, ProjectBrief, ProjectSessionSummary } from '@vowe/core';
+import type { AgentSession, FleetLayout, FleetRole, FleetStatus, ProjectBrief, ProjectSessionSummary } from '@vowe/core';
+
+import { memberLabel } from './fleet-views.js';
 
 /**
  * What a project's home, its row in the panel and the fleet band say about the
@@ -118,18 +120,31 @@ export function ipcMessage(message: string): string {
   return message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 }
 
-/** The line under a project's name in the panel: `5 agents · 1 folder`, or `idle · 2 folders`. */
-export function projectLine(
-  project: Pick<Project, 'id' | 'folders'>,
-  sessions: readonly AgentSession[],
-): string {
-  const agents = sessions.filter(
-    (session) =>
-      session.projectId === project.id &&
-      !session.archivedAt &&
-      (session.status === 'working' || session.status === 'starting' || session.status === 'waiting'),
-  ).length;
-  const folders = Math.max(project.folders.length, 1);
-  const work = agents > 0 ? `${agents} agent${agents === 1 ? '' : 's'}` : 'idle';
-  return `${work} · ${folders} folder${folders === 1 ? '' : 's'}`;
+/** The line under a project's name in Fleet's panel: `5 agents · 1 folder`. */
+export function projectLine(agents: number, folders: number): string {
+  const shown = Math.max(folders, 1);
+  return `${agents} agent${agents === 1 ? '' : 's'} · ${shown} folder${shown === 1 ? '' : 's'}`;
+}
+
+export interface PanelMember {
+  sessionId: string;
+  role: FleetRole;
+  label: string;
+}
+
+/**
+ * A fleet's members as its panel lists them: captains first, then agents,
+ * each in the canvas's own order. Placeholders that were never started have
+ * nothing to open, so they are left out.
+ */
+export function panelMembers(layout: FleetLayout, sessions: readonly AgentSession[]): PanelMember[] {
+  const byId = new Map(sessions.map((session) => [session.id, session]));
+  const members: PanelMember[] = [];
+  for (const role of ['captain', 'agent'] as const) {
+    for (const node of layout.nodes) {
+      if (node.role !== role || !node.sessionId) continue;
+      members.push({ sessionId: node.sessionId, role, label: memberLabel(node.label, byId.get(node.sessionId) ?? null, role) });
+    }
+  }
+  return members;
 }

@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSS
 import type { ContextRef, PresenceProfile, PresenceState, Project, ProjectBrief } from '@vowe/core';
 import { resolvePresenceState } from '@vowe/core/presence';
 import { useVo } from '../components/VoPanel.js';
+import { useActivityImpulse } from '../presence/index.js';
 import { VoweMark } from '../session/VoweMark.js';
+import { SettledInvestigation } from '../session/SettledInvestigation.js';
+import { LiveInvestigation } from '../session/LiveInvestigation.js';
 import { planSurfacing } from '../state/artifact-surfacing.js';
 import { formatRef } from '@vowe/core/refs';
 import { useDesigns, useProjectInvestigation, useProjectMemories, useProjectThread } from '../hooks/useVoweData.js';
@@ -10,7 +13,6 @@ import { useDeskResize } from '../hooks/useDeskResize.js';
 import { Fading } from '../shell/Fading.js';
 import { RoomActions, RoomIdentity } from '../shell/TopChrome.js';
 import { PanelToggle } from '../shell/PanelToggle.js';
-import { PlusIcon } from '../shell/icons.js';
 import { tildePath } from '../components/ui.js';
 import type { Attachment } from '../session/Composer.js';
 import { activeTab, EMPTY_WORKBENCH, workbenchReducer } from '../state/workbench.js';
@@ -19,8 +21,7 @@ import { projectChanges, projectRef } from '../state/project-home.js';
 import { Workbench } from '../workbench/Workbench.js';
 import { ProjectAsk } from './ProjectAsk.js';
 import { ProjectConversation } from './ProjectConversation.js';
-import { ProjectHome } from './ProjectHome.js';
-import type { FleetTab } from '../fleet/types.js';
+import { ProjectRoom } from './ProjectRoom.js';
 
 interface Props {
   project: Project;
@@ -34,23 +35,22 @@ interface Props {
   /** Into Studio: a particular design, or the most recent one. */
   onOpenStudio: (designId?: string) => void;
   onOpenSession: (sessionId: string) => void;
-  onOpenFleet: (tab?: FleetTab) => void;
-  /** Opens the sheet that runs agents. */
-  onRunAgents: () => void;
 }
 
 /** Home and conversation share live state, while keeping their own reading surfaces. */
 export function ProjectSpace({ project, brief, presence, presenceState, view, entryId,
-  narrow, onNavigate, onOpenStudio, onOpenSession, onOpenFleet, onRunAgents }: Props): ReactElement {
+  narrow, onNavigate, onOpenStudio, onOpenSession }: Props): ReactElement {
   const { designs } = useDesigns(project.id);
   const { entries, deliveries, loaded } = useProjectThread(project.id);
   const vo = useVo({ projectId: project.id });
   const inVoice = vo.phase === 'live' || vo.phase === 'joining';
   const [caption, setCaption] = useState<string | null>(null);
   const captionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [voiceAnswerId, setVoiceAnswerId] = useState<string | null>(null);
   const memories = useProjectMemories(project.id);
   const entryIds = useMemo(() => entries.map((entry) => entry.id), [entries]);
   const live = useProjectInvestigation(project.id, entryIds);
+  const investigationActivity = useActivityImpulse(live.beat, live.active);
   const voiceState = resolvePresenceState({
     voweAvailable: inVoice || presenceState !== 'unavailable',
     liveJoining: vo.phase === 'joining', liveConnected: vo.phase === 'live',
@@ -62,6 +62,7 @@ export function ProjectSpace({ project, brief, presence, presenceState, view, en
     if (!inVoice) { setCaption(null); return; }
     const off = window.vowe.onLiveTranscript((delta) => {
       if (delta.scope?.projectId !== project.id) return;
+      if (delta.speaker === 'user') setVoiceAnswerId(null);
       setCaption(delta.text);
       if (captionTimer.current) clearTimeout(captionTimer.current);
       captionTimer.current = setTimeout(() => setCaption(null), 5000);
@@ -110,6 +111,7 @@ export function ProjectSpace({ project, brief, presence, presenceState, view, en
       if (seenAnswers.current.has(entry.id)) continue;
       seenAnswers.current.add(entry.id);
       if (entry.role !== 'companion_answer') continue;
+      if (inVoice) setVoiceAnswerId(entry.id);
       const ref = planSurfacing(entry);
       if (ref) void openRef(ref, 'surface');
     }
@@ -137,6 +139,7 @@ export function ProjectSpace({ project, brief, presence, presenceState, view, en
     }
   };
 
+  const voiceAnswer = entries.find((entry) => entry.id === voiceAnswerId);
   const voiceControl = <button className="project-talk" type="button"
     aria-label={inVoice ? 'End voice conversation' : 'Talk to Vowe'} aria-pressed={inVoice}
     disabled={!inVoice && (!vo.status?.available || asking || live.active)}
@@ -178,8 +181,15 @@ export function ProjectSpace({ project, brief, presence, presenceState, view, en
       </Fading>
     </div></RoomIdentity>
     {!full && (view === 'home'
-      ? <ProjectHome project={project} brief={brief} onOpenFleet={onOpenFleet} onOpenSession={onOpenSession}
-          onOpenConversation={() => onNavigate('conversation')} onOpenStudio={() => onOpenStudio(designs[0]?.id)} />
+      ? <ProjectRoom brief={brief} changes={changes} presence={presence} presenceState={inVoice || live.active ? voiceState : presenceState}
+          activity={live.active && !vo.status?.playbackActive ? investigationActivity : vo.level}
+          voice={voiceSurface} investigation={live.active ? <div className="project-voice-investigation">
+            <LiveInvestigation live={live} presence={presence} activity={investigationActivity} onOpenRef={(ref) => void openRef(ref)} />
+          </div> : inVoice && (caption || vo.status?.playbackActive) && voiceAnswer?.investigation ?
+            <SettledInvestigation entryId={voiceAnswer.id} receipt={voiceAnswer.investigation} onOpenRef={(ref) => void openRef(ref)} /> : null}
+          composer={composer} hasConversation={entries.length > 0} investigating={asking || live.active}
+          latestDesign={designs[0] ?? null} onOpenStudio={onOpenStudio}
+          onOpenConversation={() => onNavigate('conversation')} onOpenSession={onOpenSession} onOpenRef={(ref) => void openRef(ref)} />
       : <ProjectConversation entries={entries} deliveries={deliveries} voice={voiceSurface} live={live} asking={asking} entryId={entryId} presence={presence}
           composer={composer} onHome={() => onNavigate('home')} onSelectEntry={(id) => onNavigate('conversation', id)} onOpenRef={(ref) => void openRef(ref)} />)}
     {desk.open && !full && <button className={`resize-handle right${deskResizing ? ' active' : ''}`} type="button"
@@ -187,8 +197,7 @@ export function ProjectSpace({ project, brief, presence, presenceState, view, en
     {desk.open && <Workbench state={desk} full={full} entries={objects} findFiles={async () => []}
       onActivate={(id) => dispatch({ type: 'activate', id })} onClose={(id) => dispatch({ type: 'closeTab', id })}
       onKeep={(id) => dispatch({ type: 'keep', id })} onOpenRef={(ref) => void openRef(ref)} onOpenSession={onOpenSession} />}
-    <RoomActions>{view === 'home' && <button className="button solid compact" type="button" onClick={onRunAgents}>
-      <PlusIcon />Run agents</button>}{full && inVoice && <button className="link-button" type="button" onClick={() => void vo.end()}>End voice</button>}<PanelToggle side="right" open={desk.open} label={desk.open ? 'Close workbench' : 'Open workbench'}
+    <RoomActions>{full && inVoice && <button className="link-button" type="button" onClick={() => void vo.end()}>End voice</button>}<PanelToggle side="right" open={desk.open} label={desk.open ? 'Close workbench' : 'Open workbench'}
       onToggle={() => dispatch({ type: 'setOpen', open: !desk.open })} /></RoomActions>
   </main>;
 }

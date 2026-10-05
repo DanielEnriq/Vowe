@@ -66,10 +66,13 @@ export type { LiveInvestigation } from '../state/live-investigation.js';
 export function useWorkspace(): {
   projects: Project[];
   sessions: AgentSession[];
+  /** Both lists have been read at least once. */
+  loaded: boolean;
   refresh: () => Promise<void>;
 } {
   const [projects, setProjects] = useState<Project[]>([]);
   const [sessions, setSessions] = useState<AgentSession[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
   const refresh = useCallback(async () => {
     const [nextProjects, nextSessions] = await Promise.all([
@@ -78,6 +81,7 @@ export function useWorkspace(): {
     ]);
     setProjects(nextProjects);
     setSessions(nextSessions);
+    setLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -85,7 +89,7 @@ export function useWorkspace(): {
     return window.vowe.onSessionsChanged(() => void refresh());
   }, [refresh]);
 
-  return { projects, sessions, refresh };
+  return { projects, sessions, loaded, refresh };
 }
 
 export function useAppStatus(): AppStatus | null {

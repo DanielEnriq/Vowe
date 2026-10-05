@@ -8,8 +8,8 @@ export interface FleetViewProps {
   /** The current canvas layout. */
   layout: FleetLayout;
   statuses: Record<string, FleetStatus>;
-  /** Navigate to the session's room. */
+  /** Open the agent in Fleet's own view of it. */
   onOpenSession(sessionId: string): void;
 }
 
-export type FleetTab = 'canvas' | 'panes' | 'compare' | 'questions';
+export type FleetTab = 'overview' | 'canvas' | 'panes' | 'compare' | 'questions';

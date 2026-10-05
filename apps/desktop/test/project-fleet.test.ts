@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentSession, Project, ProjectBrief, ProjectSessionSummary } from '@vowe/core';
-import { ProjectHome } from '../src/renderer/project/ProjectHome.js';
+import { FleetOverview } from '../src/renderer/fleet/FleetOverview.js';
 import {
   STATUS_TONE,
   briefSessionIds,
@@ -11,6 +11,7 @@ import {
   fleetCounts,
   fleetSummary,
   ipcMessage,
+  panelMembers,
   projectLine,
   statusFromBrief,
   statusWord,
@@ -131,28 +132,36 @@ describe('Fleet status', () => {
   });
 });
 
-describe('The line under a project in the panel', () => {
-  const one = { id: 'p', folders: [{ path: '/code/p', isDefault: true, addedAt: '' }] };
-  const two = { id: 'p', folders: [...one.folders, { path: '/code/q', isDefault: false, addedAt: '' }] };
-
-  it('counts live agents and folders', () => {
-    const sessions = [
-      session({ id: 'a' }),
-      session({ id: 'b', status: 'waiting' }),
-      session({ id: 'c', status: 'finished' }),
-      session({ id: 'd', projectId: 'other' }),
-      session({ id: 'e', archivedAt: '2026-10-01T00:00:00.000Z' }),
-    ];
-    expect(projectLine(one, sessions)).toBe('2 agents · 1 folder');
-    expect(projectLine(two, [session({ id: 'a' })])).toBe('1 agent · 2 folders');
+describe('A project in Fleet\'s panel', () => {
+  it('counts agents and folders', () => {
+    expect(projectLine(2, 1)).toBe('2 agents · 1 folder');
+    expect(projectLine(1, 2)).toBe('1 agent · 2 folders');
+    expect(projectLine(0, 0)).toBe('0 agents · 1 folder');
   });
 
-  it('says idle when nothing is running', () => {
-    expect(projectLine(two, [])).toBe('idle · 2 folders');
+  it('lists captains first, then agents, each in canvas order, leaving out what was never started', () => {
+    const layout = {
+      version: 1 as const,
+      clusters: [],
+      wires: [],
+      nodes: [
+        { id: 'n1', sessionId: 'a', role: 'agent' as const, x: 0, y: 0 },
+        { id: 'n2', sessionId: 'cap', role: 'captain' as const, x: 300, y: 0, label: 'Lead' },
+        { id: 'n3', sessionId: null, role: 'agent' as const, x: 0, y: 200 },
+        { id: 'n4', sessionId: 'b', role: 'agent' as const, x: 0, y: 400, label: 'Retry policy' },
+      ],
+    };
+    const members = panelMembers(layout, [session({ id: 'a', displayLabel: 'Split the parser' })]);
+    expect(members.map((member) => [member.sessionId, member.role])).toEqual([
+      ['cap', 'captain'],
+      ['a', 'agent'],
+      ['b', 'agent'],
+    ]);
+    expect(members.map((member) => member.label)).toEqual(['Lead', 'Split the parser', 'Retry policy']);
   });
 });
 
-describe('A project home', () => {
+describe('A fleet overview', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('shows each folder, marks the root, and offers removal only for the others', () => {
@@ -168,13 +177,11 @@ describe('A project home', () => {
       ],
     };
     const html = renderToStaticMarkup(
-      createElement(ProjectHome, {
+      createElement(FleetOverview, {
         project,
         brief: brief([summary({ sessionId: 'a', title: 'Split the retry policy' })]),
-        onOpenFleet() {},
+        onOpenTab() {},
         onOpenSession() {},
-        onOpenConversation() {},
-        onOpenStudio() {},
       }),
     );
     expect(html).toContain('/code/payments-api');
@@ -182,7 +189,10 @@ describe('A project home', () => {
     expect(html.match(/>Root</g)).toHaveLength(1);
     expect(html.match(/aria-label="Remove /g)).toHaveLength(1);
     expect(html).toContain('Split the retry policy');
-    expect(html).toContain('Open Fleet');
+    expect(html).toContain('Open canvas');
+    // Fleet's overview leads nowhere in Vowe.
+    expect(html).not.toContain('Conversation');
+    expect(html).not.toContain('Studio');
   });
 });
 

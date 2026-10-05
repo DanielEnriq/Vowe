@@ -3,7 +3,7 @@ import { useState, type ReactElement, type ReactNode } from 'react';
 import type { Project, ProjectBrief } from '@vowe/core';
 
 import { messageOf, tildePath } from '../components/ui.js';
-import type { FleetTab } from '../fleet/types.js';
+import type { FleetTab } from './types.js';
 import { useFleetStatuses } from '../hooks/useVoweData.js';
 import { Fading } from '../shell/Fading.js';
 import { CloseIcon, FolderIcon, PlusIcon } from '../shell/icons.js';
@@ -12,26 +12,21 @@ import { briefSessionIds, fleetSummary, ipcMessage, type StatusTone } from '../s
 interface Props {
   project: Project;
   brief: ProjectBrief | null;
-  /** The fleet, on the canvas unless a tab is named. */
-  onOpenFleet: (tab?: FleetTab) => void;
+  onOpenTab: (tab: FleetTab) => void;
   onOpenSession: (sessionId: string) => void;
-  onOpenConversation: () => void;
-  onOpenStudio: () => void;
 }
 
 /**
- * A project's home: the folders it covers, and how its fleet is doing.
+ * A fleet's overview: the folders the project covers, and how its agents are doing.
  *
  * Folders are added and removed here, by hand. The root is the one the
  * project's identity comes from, so it stays.
  */
-export function ProjectHome({
+export function FleetOverview({
   project,
   brief,
-  onOpenFleet,
+  onOpenTab,
   onOpenSession,
-  onOpenConversation,
-  onOpenStudio,
 }: Props): ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -95,7 +90,7 @@ export function ProjectHome({
           <section className="card grow">
             <header className="card-head">
               <h2 className="caps">Fleet</h2>
-              <button className="link-button tint" type="button" onClick={() => onOpenFleet()}>Open Fleet</button>
+              <button className="link-button tint" type="button" onClick={() => onOpenTab('canvas')}>Open canvas</button>
             </header>
             <div className="card-body stats">
               <Stat tone="ask" value={fleet.running} label="Running" />
@@ -119,11 +114,9 @@ export function ProjectHome({
               <h2 className="caps">Jump to</h2>
             </header>
             <nav className="jump-list">
-              <Jump label="Panes" onClick={() => onOpenFleet('panes')} />
-              <Jump label="Compare attempts" onClick={() => onOpenFleet('compare')} />
-              <Jump label="Questions" onClick={() => onOpenFleet('questions')} count={fleet.needsYou || null} />
-              <Jump label="Conversation" onClick={onOpenConversation} />
-              <Jump label="Studio" onClick={onOpenStudio} />
+              <Jump label="Panes" onClick={() => onOpenTab('panes')} />
+              <Jump label="Compare attempts" onClick={() => onOpenTab('compare')} />
+              <Jump label="Questions" onClick={() => onOpenTab('questions')} count={fleet.needsYou || null} />
             </nav>
           </aside>
         </div>
